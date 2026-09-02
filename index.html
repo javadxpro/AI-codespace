@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0c1016" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="کیمیا" />
+  <title>کیمیا — ویرایشگر جهان</title>
+  <link rel="icon" href="assets/icon.png" />
+  <link rel="apple-touch-icon" href="assets/icon.png" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="boot">
+    <div class="boot-card">
+      <img src="assets/icon.png" alt="" width="96" height="96" />
+      <h1>کیمیا</h1>
+      <p>ویرایشگر جهان</p>
+      <span class="boot-spin"></span>
+    </div>
+  </div>
+
+  <div id="hud" class="hud">
+    <div class="vignette"></div>
+    <div class="crosshair" id="crosshair"></div>
+
+    <header class="topbar panel">
+      <div class="brand">
+        <img src="assets/icon.png" alt="" />
+        <div>
+          <strong>کیمیا</strong>
+          <input id="world-name" type="text" maxlength="42" value="جهان نو" aria-label="نام جهان" />
+        </div>
+      </div>
+      <nav id="modes" class="modes">
+        <button data-mode="observe" class="active">تماشا</button>
+        <button data-mode="build">ساخت</button>
+        <button data-mode="terrain">زمین</button>
+        <button data-mode="select">انتخاب</button>
+      </nav>
+      <div class="top-actions">
+        <button id="btn-undo" title="واگرد">↶</button>
+        <button id="btn-redo" title="بازگردانی">↷</button>
+        <button id="btn-cam">اول شخص</button>
+        <button id="btn-menu" class="gold">منو</button>
+      </div>
+    </header>
+
+    <div id="toast" class="toast"></div>
+    <div id="fps" class="fps">—</div>
+
+    <div id="joystick" class="joystick">
+      <div class="joystick-knob"></div>
+    </div>
+    <button id="btn-jump" class="round-btn jump-btn" aria-label="پرش">↑</button>
+    <button id="btn-action" class="round-btn action-btn hidden" aria-label="قرار بده">+</button>
+
+    <footer class="bottombar panel">
+      <div id="tools-observe" class="tools">
+        <p class="hint">آزاد بگرد. با منو ذخیره کن. حالت ساخت یا زمین را برای خلق جهان انتخاب کن.</p>
+      </div>
+
+      <div id="tools-build" class="tools hidden">
+        <div class="row scroll">
+          <button data-prim="cube" class="active">مکعب</button>
+          <button data-prim="sphere">کره</button>
+          <button data-prim="cylinder">استوانه</button>
+          <button data-prim="cone">مخروط</button>
+          <button data-prim="pyramid">هرم</button>
+          <button data-prim="prism">منشور</button>
+          <button data-prim="slab">تخته</button>
+          <button data-prim="torus">حلقه</button>
+        </div>
+        <div class="row scroll mats">
+          <button data-mat="dirt">خاک</button>
+          <button data-mat="stone">سنگ</button>
+          <button data-mat="wood" class="active">چوب</button>
+          <button data-mat="metal">فلز</button>
+          <button data-mat="glass">شیشه</button>
+          <button id="btn-snap" class="active">شبکه</button>
+        </div>
+        <div class="row color-row">
+          <label>رنگ <input id="color-input" type="color" value="#c4a36a" /></label>
+          <div id="presets" class="presets">
+            <button data-hex="#e8d9b8" style="background:#e8d9b8"></button>
+            <button data-hex="#c4a36a" style="background:#c4a36a"></button>
+            <button data-hex="#8b5a2b" style="background:#8b5a2b"></button>
+            <button data-hex="#6b4f2a" style="background:#6b4f2a"></button>
+            <button data-hex="#7a7d82" style="background:#7a7d82"></button>
+            <button data-hex="#3ecfb8" style="background:#3ecfb8"></button>
+            <button data-hex="#e4b34a" style="background:#e4b34a"></button>
+            <button data-hex="#e56b5a" style="background:#e56b5a"></button>
+            <button data-hex="#7dcb7a" style="background:#7dcb7a"></button>
+            <button data-hex="#1f2430" style="background:#1f2430"></button>
+          </div>
+        </div>
+      </div>
+
+      <div id="tools-terrain" class="tools hidden">
+        <div class="row scroll">
+          <button data-brush="raise" class="active">تپه</button>
+          <button data-brush="lower">چاله</button>
+          <button data-brush="flatten">صاف</button>
+          <button data-brush="smooth">هموار</button>
+          <button data-brush="paint">رنگ زمین</button>
+        </div>
+        <div class="sliders">
+          <label>شعاع <input id="radius" type="range" min="0.8" max="10" step="0.1" value="3.4" /><span id="radius-val">3.4</span></label>
+          <label>قدرت <input id="strength" type="range" min="0.08" max="1" step="0.02" value="0.48" /><span id="strength-val">0.48</span></label>
+        </div>
+      </div>
+
+      <div id="tools-select" class="tools hidden">
+        <p id="select-empty" class="hint">جسمی انتخاب نشده. روی یک شیء بزن.</p>
+        <div id="select-ops" class="hidden">
+          <div class="row color-row">
+            <label>رنگ <input id="color-select" type="color" value="#c4a36a" /></label>
+          </div>
+          <div class="row scroll">
+            <button data-xform="move" class="active">جابجایی</button>
+            <button data-xform="rotate">چرخش</button>
+            <button data-xform="scale">اندازه</button>
+            <button id="btn-dup">کپی</button>
+            <button id="btn-delete" class="danger">حذف</button>
+          </div>
+          <div id="nudge" class="row scroll">
+            <button data-nudge="move:up">↑ بالا</button>
+            <button data-nudge="move:down">↓ پایین</button>
+            <button data-nudge="move:x-">←</button>
+            <button data-nudge="move:x+">→</button>
+            <button data-nudge="move:z-">نزديك</button>
+            <button data-nudge="move:z+">دور</button>
+            <button data-nudge="rot:-">↻</button>
+            <button data-nudge="rot:+">↺</button>
+            <button data-nudge="scl:-">−</button>
+            <button data-nudge="scl:+">+</button>
+          </div>
+          <div class="row scroll mats">
+            <button data-mat="dirt">خاک</button>
+            <button data-mat="stone">سنگ</button>
+            <button data-mat="wood">چوب</button>
+            <button data-mat="metal">فلز</button>
+            <button data-mat="glass">شیشه</button>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-card panel">
+      <header>
+        <h2 id="overlay-title">منو</h2>
+        <button id="overlay-close">بستن</button>
+      </header>
+      <div id="overlay-body"></div>
+    </div>
+  </div>
+
+  <input id="file-input" type="file" accept=".json,application/json" hidden />
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

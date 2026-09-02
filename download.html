@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>دانلود کیمیا برای Termux</title>
+  <style>
+    :root { --gold: #e4b34a; --ink: #f3ecd9; --bg: #0c1016; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh;
+      font-family: Tahoma, "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(ellipse at top, #1a2230, var(--bg));
+      color: var(--ink);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(440px, 100%);
+      background: rgba(16, 20, 28, 0.9);
+      border: 1px solid rgba(228, 179, 74, 0.25);
+      border-radius: 20px;
+      padding: 28px 24px 24px;
+      text-align: center;
+      box-shadow: 0 24px 60px rgba(0,0,0,.4);
+    }
+    img { width: 88px; height: 88px; border-radius: 20px; }
+    h1 { color: #f0d48a; font-size: 28px; margin: 14px 0 4px; }
+    p { color: #b7ae99; line-height: 1.8; font-size: 15px; }
+    .dl {
+      display: block;
+      margin: 18px 0 10px;
+      background: linear-gradient(180deg, #f0d48a, #c4922c);
+      color: #1a1408;
+      text-decoration: none;
+      font-weight: 800;
+      font-size: 18px;
+      padding: 16px 18px;
+      border-radius: 14px;
+    }
+    .dl:active { transform: scale(0.98); }
+    code {
+      display: block; text-align: right; direction: ltr;
+      background: #0a0d12; color: #d7c9a3;
+      padding: 12px; border-radius: 10px;
+      font-size: 12px; overflow: auto; margin-top: 8px;
+    }
+    a.back { color: var(--gold); font-size: 14px; }
+    .size { font-size: 13px; color: #8a8270; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="assets/icon.png" alt="کیمیا" />
+    <h1>کیمیا</h1>
+    <p>ویرایشگر جهان برای Termux — حدود ۲ مگابایت، بدون نیاز به اینترنت بعد از دانلود.</p>
+    <a class="dl" href="kimiya-world-editor.zip" download="kimiya-world-editor.zip">دانلود فایل ZIP</a>
+    <div class="size">kimiya-world-editor.zip</div>
+    <p>بعد از انتقال به گوشی:</p>
+    <code>pkg install python unzip
+termux-setup-storage
+cd ~
+unzip -o ~/storage/downloads/kimiya-world-editor.zip
+cd kimiya-world-editor
+python -m http.server 8080 --bind 0.0.0.0</code>
+    <p>بعد در مرورگر گوشی: <b>http://127.0.0.1:8080</b></p>
+    <p><a class="back" href="index.html">بازگشت به ویرایشگر</a></p>
+  </div>
+</body>
+</html>

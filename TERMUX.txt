@@ -1,0 +1,35 @@
+کیمیا — اجرای روی Termux
+========================
+
+1) زیپ را به گوشی ببر (Download، Telegram، USB، …).
+
+2) در Termux:
+
+pkg update
+pkg install python unzip
+cd ~
+unzip -o /sdcard/Download/kimiya-world-editor.zip
+cd kimiya-world-editor
+python -m http.server 8080 --bind 0.0.0.0
+
+اگر unzip در مسیر دیگر است، مسیر فایل زیپ را عوض کن.
+مثال‌های رایج مسیر زیپ:
+
+  ~/storage/downloads/kimiya-world-editor.zip
+  /sdcard/Download/kimiya-world-editor.zip
+
+اگر storage نداری:
+
+  termux-setup-storage
+
+3) در مرورگر همان گوشی باز کن:
+
+  http://127.0.0.1:8080
+
+4) از منوی مرورگر می‌توانی Add to Home Screen بزنی.
+
+توقف سرور: Ctrl+C
+
+اگر python3 بود به‌جای python:
+
+  python3 -m http.server 8080 --bind 0.0.0.0
