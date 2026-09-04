@@ -114,9 +114,10 @@ add_executable(kimia_tests
     Tests/src/WebTests.cpp
     Tests/src/RendererTests.cpp
     Tests/src/GolfTests.cpp
+    Tests/src/WorldTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf kimia_world)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
@@ -218,6 +219,26 @@ target_link_libraries(kimia_remote PRIVATE kimia_app)
 target_compile_options(kimia_remote PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_remote PRIVATE -Werror)
+endif()
+
+# --- World (option-driven editor + SceneIO-v1-compatible world files) ---
+add_library(kimia_world STATIC
+    Engine/World/src/World.cpp
+    Engine/World/src/WorldIO.cpp
+)
+target_include_directories(kimia_world PUBLIC Engine/World/include)
+target_link_libraries(kimia_world PUBLIC kimia_golf kimia_scene kimia_physics)
+target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_world PRIVATE -Werror)
+endif()
+
+add_executable(kimia_world_app Examples/WorldEditorApp.cpp)
+set_target_properties(kimia_world_app PROPERTIES OUTPUT_NAME kimia_world)
+target_link_libraries(kimia_world_app PRIVATE kimia_app kimia_world)
+target_compile_options(kimia_world_app PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_world_app PRIVATE -Werror)
 endif()
 
 # --- Golf (reference game logic + the kimia_golf example) ---
