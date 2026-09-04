@@ -3,6 +3,7 @@ project(KIMIA VERSION 0.1.0 LANGUAGES C CXX)
 
 option(KIMIA_WERROR "Treat warnings as errors" ON)
 option(KIMIA_BUILD_TOOLS "Build the kimia_assets CLI tool" ON)
+option(KIMIA_ENABLE_SDL2 "Use SDL2 for the window backend when available" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +11,37 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
 
 set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wdouble-promotion)
+
+find_package(Threads REQUIRED)
+
+# --- SDL2 (optional window backend) ---
+set(KIMIA_HAS_SDL2 OFF)
+set(KIMIA_SDL_TARGET "")
+set(KIMIA_SDL_INCLUDE_DIRS "")
+if(KIMIA_ENABLE_SDL2)
+  find_package(SDL2 CONFIG QUIET)
+  if(TARGET SDL2::SDL2-static)
+    set(KIMIA_SDL_TARGET SDL2::SDL2-static)
+    set(KIMIA_HAS_SDL2 ON)
+  elseif(TARGET SDL2::SDL2)
+    set(KIMIA_SDL_TARGET SDL2::SDL2)
+    set(KIMIA_HAS_SDL2 ON)
+  else()
+    find_package(SDL2 MODULE QUIET)
+    if(SDL2_FOUND)
+      set(KIMIA_SDL_TARGET ${SDL2_LIBRARIES})
+      set(KIMIA_SDL_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
+      set(KIMIA_HAS_SDL2 ON)
+    endif()
+  endif()
+endif()
+if(KIMIA_HAS_SDL2)
+  message(STATUS "SDL2 found: window backend enabled")
+elseif(KIMIA_ENABLE_SDL2)
+  message(STATUS "SDL2 not found: headless-only (WebViewer display)")
+else()
+  message(STATUS "SDL2 disabled by KIMIA_ENABLE_SDL2=OFF: headless-only (WebViewer display)")
+endif()
 
 add_library(kimia_core
     Engine/Core/src/Log.cpp
@@ -77,9 +109,11 @@ add_executable(kimia_tests
     Tests/src/AssetsTests.cpp
     Tests/src/SceneTests.cpp
     Tests/src/PhysicsTests.cpp
+    Tests/src/WebTests.cpp
+    Tests/src/RendererTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
@@ -112,6 +146,75 @@ if(KIMIA_BUILD_TOOLS)
   if(KIMIA_WERROR)
     target_compile_options(kimia_assets_cli PRIVATE -Werror)
   endif()
+endif()
+
+# --- Renderer (GL 3.3 loader + EGL + shaders + software rasterizer) ---
+add_library(kimia_renderer STATIC
+    Engine/Renderer/src/GLFunctions.cpp
+    Engine/Renderer/src/EGL.cpp
+    Engine/Renderer/src/Shader.cpp
+    Engine/Renderer/src/GpuMesh.cpp
+    Engine/Renderer/src/Shaders.cpp
+    Engine/Renderer/src/Renderer.cpp
+    Engine/Renderer/src/SoftwareRenderer.cpp
+)
+target_include_directories(kimia_renderer PUBLIC Engine/Renderer/include)
+target_link_libraries(kimia_renderer PUBLIC kimia_assets kimia_math)
+target_compile_options(kimia_renderer PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_renderer PRIVATE -Werror)
+endif()
+
+# --- Platform (input + optional SDL2 window) ---
+add_library(kimia_platform STATIC
+    Engine/Platform/src/InputState.cpp
+    Engine/Platform/src/Window.cpp
+)
+target_include_directories(kimia_platform PUBLIC Engine/Platform/include)
+target_link_libraries(kimia_platform PUBLIC kimia_assets kimia_math)
+if(KIMIA_HAS_SDL2)
+  target_sources(kimia_platform PRIVATE Engine/Platform/src/SDLWindow.cpp)
+  target_include_directories(kimia_platform PRIVATE ${KIMIA_SDL_INCLUDE_DIRS})
+  target_link_libraries(kimia_platform PUBLIC ${KIMIA_SDL_TARGET})
+  target_compile_definitions(kimia_platform PUBLIC KIMIA_HAS_SDL2=1)
+endif()
+target_compile_options(kimia_platform PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_platform PRIVATE -Werror)
+endif()
+
+# --- App (WebViewer + engine bootstrap) ---
+add_library(kimia_app STATIC
+    Engine/App/src/WebViewer.cpp
+    Engine/App/src/Engine.cpp
+)
+target_include_directories(kimia_app PUBLIC Engine/App/include)
+target_link_libraries(kimia_app PUBLIC kimia_platform kimia_renderer Threads::Threads)
+target_compile_options(kimia_app PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_app PRIVATE -Werror)
+endif()
+
+# --- Examples ---
+add_executable(kimia_hello Examples/HelloWindow.cpp)
+target_link_libraries(kimia_hello PRIVATE kimia_app)
+target_compile_options(kimia_hello PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_hello PRIVATE -Werror)
+endif()
+
+add_executable(kimia_first3d Examples/First3DScene.cpp)
+target_link_libraries(kimia_first3d PRIVATE kimia_app)
+target_compile_options(kimia_first3d PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_first3d PRIVATE -Werror)
+endif()
+
+add_executable(kimia_remote Examples/RemoteView.cpp)
+target_link_libraries(kimia_remote PRIVATE kimia_app)
+target_compile_options(kimia_remote PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_remote PRIVATE -Werror)
 endif()
 
 include(CTest)
