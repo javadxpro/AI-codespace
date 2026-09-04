@@ -27,6 +27,7 @@ inline constexpr f64 kWorldKickUp = 1.2;
 inline constexpr f64 kWorldKickReach = 0.55;  // horizontal distance player-ball
 inline constexpr f64 kWorldPlayerRadius = 0.35;  // XZ radius the ball collides with
 inline constexpr f64 kWorldPlayerRestitution = 0.4;  // bounce off a still player
+inline constexpr f64 kWorldJumpHeight = 1.2;  // player jump: feet apex (v = sqrt(2 g h))
 
 // Fantasy ball: high bounce, low friction, no roll decay (the spec's words).
 inline constexpr f64 kWorldFantasyRestitution = 0.85;
@@ -206,12 +207,17 @@ public:
   bool playing() const { return screen_ == Screen::Play || screen_ == Screen::Goal; }
   bool celebrating() const { return screen_ == Screen::Goal; }
   Vec3 playerPosition() const { return playerPos_; }
+  bool physicsCharacterOnGround() const { return physics_.character()->onGround; }
   Vec3 ballPosition() const;
   Vec3 ballVelocity() const;
   u32 score() const { return world_.score; }
 
   // Debug/test hooks.
-  void setPlayerPosition(const Vec3& position) { playerPos_ = position; }
+  void setPlayerPosition(const Vec3& position) {
+    playerPos_ = position;
+    physics_.resetCharacter(position);  // teleports keep the physics body in sync
+  }
+  void jumpPressed() { jumpQueued_ = true; }  // consumed in the next PLAY update
   void setBallPosition(const Vec3& position);
   void setBallVelocity(const Vec3& velocity);
   Vec3 crateVelocity(const std::string& name) const;
@@ -254,6 +260,7 @@ private:
   Vec3 playerPos_{0.0, 0.5, 4.0};
   Vec3 moveInput_{0.0, 0.0, 0.0};
   bool fine_ = false;
+  bool jumpQueued_ = false;
   f64 goalTimer_ = 0.0;
 
   // Pending object (place flow).

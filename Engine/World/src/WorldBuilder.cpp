@@ -445,7 +445,7 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
     return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
   }
   if (!playing()) return {};
-  return {{"توپ از نو", "r"}, {"منو", "b"}};
+  return {{"پرش", "j"}, {"توپ از نو", "r"}, {"منو", "b"}};
 }
 
 // --- Option handling (the builder state machine) ---

@@ -231,6 +231,7 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Num8)) editor.choose(7);
     if (input.pressed(Key::R)) editor.resetBall();
     if (input.pressed(Key::B)) editor.backToMenu();
+    if (input.pressed(Key::J) || input.pressed(Key::Space)) editor.jumpPressed();
 
     f64 moveX = 0.0;
     f64 moveZ = 0.0;

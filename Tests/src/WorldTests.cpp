@@ -579,7 +579,8 @@ KIMIA_TEST(world_play_controls_reset_and_back) {
   editor.choose(3);  // PLAY
   KIMIA_REQUIRE(editor.playing());
   KIMIA_REQUIRE(editor.holdPad().size() == 4U);  // the four direction pads
-  KIMIA_REQUIRE(editor.tapPad().size() == 2U);   // reset + menu
+  KIMIA_REQUIRE(editor.tapPad().size() == 3U);   // jump + reset + menu
+  KIMIA_REQUIRE(editor.tapPad()[0].second == "j");
   KIMIA_REQUIRE(editor.optionLabels().empty());
   editor.setBallPosition(Vec3{3.0, kGolfBallRadius, 3.0});
   editor.resetBall();
@@ -598,6 +599,63 @@ KIMIA_TEST(world_player_stays_inside_floor) {
   const Vec3 player = editor.playerPosition();
   KIMIA_REQUIRE(player.x <= kimia::kWorldFloorHalf);
   KIMIA_REQUIRE(player.x >= -kimia::kWorldFloorHalf);
+}
+
+KIMIA_TEST(world_play_player_jumps_and_lands) {
+  WorldEditor editor = editorWithWorld();
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(near(editor.playerPosition().y, 0.5));  // standing on the floor
+  editor.jumpPressed();
+  f64 maxY = 0.0;
+  for (i32 i = 0; i < 180; ++i) {  // 3 s: up and back down
+    editor.update(1.0 / 60.0);
+    maxY = std::max(maxY, editor.playerPosition().y);
+  }
+  // Feet apex ~1.18 (discrete) -> center apex ~1.68.
+  KIMIA_REQUIRE(maxY > 1.5);
+  KIMIA_REQUIRE(maxY < 1.9);
+  KIMIA_REQUIRE(near(editor.playerPosition().y, 0.5, 1e-9));  // landed back
+  KIMIA_REQUIRE(editor.physicsCharacterOnGround());
+}
+
+KIMIA_TEST(world_play_player_cannot_walk_through_blocks) {
+  WorldEditor editor = editorWithWorld();
+  addBlock(editor, 1, Vec3{2.0, 0.0, 0.0});  // medium 1x1x1 at (2, 0.5, 0)
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);  // 2 s at 4 m/s = 8 m
+  const Vec3 player = editor.playerPosition();
+  KIMIA_REQUIRE(near(player.x, 2.0 - 0.5 - 0.3, 1e-6));  // stopped at the block face
+  KIMIA_REQUIRE(near(player.y, 0.5, 1e-6));              // still standing
+  KIMIA_REQUIRE(near(player.z, 0.0, 1e-6));
+}
+
+KIMIA_TEST(world_play_player_jumps_onto_a_block) {
+  WorldEditor editor = editorWithWorld();
+  addBlock(editor, 1, Vec3{1.0, 0.0, 0.0});  // medium block, top face at y = 1.0
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setPlayerPosition(Vec3{0.1, 0.5, 0.0});  // in front of the west face
+  editor.jumpPressed();
+  editor.update(1.0 / 60.0);  // land first: the jump buffers until grounded
+  editor.update(1.0 / 60.0);  // the jump fires here (feet leave the floor)
+  // Rise at the face: with dt = 1/60 and v = sqrt(2 g h), the feet clear
+  // the 1.0 m top at step 19 of the flight.
+  for (i32 i = 0; i < 18; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playerPosition().y > 1.5);  // feet above the top face
+  // Glide over the top: 12 steps at 4 m/s = 0.8 m -> center x ~ 0.9.
+  editor.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 12; ++i) editor.update(1.0 / 60.0);
+  editor.setMoveInput(0.0, 0.0);
+  // Drop onto the top face and settle.
+  for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);
+  const Vec3 player = editor.playerPosition();
+  KIMIA_REQUIRE(near(player.y, 1.5, 1e-6));  // standing ON the block (feet at 1.0)
+  KIMIA_REQUIRE(player.x > 0.5 && player.x < 1.5);  // over the top face
+  KIMIA_REQUIRE(editor.physicsCharacterOnGround());
 }
 
 KIMIA_TEST(world_stats_line_reports_config) {
@@ -746,7 +804,11 @@ KIMIA_TEST(world_crate_kick_launches_crate) {
   // The kick only touches the crate: the ball still waits at its spawn.
   KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 0.0}, 1e-9));
   for (int i = 0; i < 30; ++i) editor.update(1.0 / 60.0);  // half a second
-  KIMIA_REQUIRE(editor.cratePosition("Crate_1").z < -2.0);  // it did slide away
+  // The character controller now stops the player at the crate's face (the
+  // player can no longer walk through crates), so the shoved crate rides
+  // just ahead of the player instead of racing ahead alone.
+  KIMIA_REQUIRE(editor.cratePosition("Crate_1").z < -1.9);  // it did slide away
+  KIMIA_REQUIRE(editor.cratePosition("Crate_1").z < editor.playerPosition().z - 0.8);
   // Back in the builder the crate snaps to its placed spot.
   editor.backToMenu();
   KIMIA_REQUIRE(near3(editor.cratePosition("Crate_1"), Vec3{2.0, 0.5, 0.0}, 1e-9));

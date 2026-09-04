@@ -356,6 +356,8 @@ bool WorldEditor::saveWorld(const std::string& path, std::string& error) {
 
 void WorldEditor::enterPlay() {
   playerPos_ = playerRest();
+  physics_.resetCharacter(playerPos_);  // feet on the ground, velocity zero
+  jumpQueued_ = false;
   moveInput_ = Vec3{0.0, 0.0, 0.0};
   goalTimer_ = 0.0;
   // Rebuild the physics world: the ball and every crate reset to their
@@ -395,8 +397,14 @@ void WorldEditor::update(f64 hostSeconds) {
     }
     const bool moving = length > kMoveEpsilon;
 
-    playerPos_.x += direction.x * world_.player.speed * hostSeconds;
-    playerPos_.z += direction.z * world_.player.speed * hostSeconds;
+    // Character controller: gravity, jumping and collisions live in the
+    // physics module; the player shoves and kicks crates/ball as before.
+    // A jump pressed in the air is buffered until the feet touch down.
+    if (jumpQueued_ && physics_.characterJump(kWorldJumpHeight)) {
+      jumpQueued_ = false;
+    }
+    physics_.moveCharacter(hostSeconds, direction * world_.player.speed);
+    playerPos_ = physics_.character()->position;
     const f64 bound = kWorldFloorHalf - kPlayerMargin;
     playerPos_.x = std::min(bound, std::max(-bound, playerPos_.x));
     playerPos_.z = std::min(bound, std::max(-bound, playerPos_.z));
