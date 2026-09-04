@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 #ifndef KIMIA_ASSET_DIR
@@ -266,6 +268,196 @@ KIMIA_TEST(audio_missing_file_returns_error) {
   KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.wav", error).has_value());
   KIMIA_REQUIRE(!error.empty());
   KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.mp3", error).has_value());
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.ogg", error).has_value());
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.flac", error).has_value());
+}
+
+KIMIA_TEST(audio_ogg_vorbis_loads_with_real_signal) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "sfx.ogg", error);
+  KIMIA_REQUIRE(audio.has_value());
+  // The asset is a real-world Vorbis file (chromium's media test "sfx"):
+  // mono, 44100 Hz, 15435 total samples (0.35 s).
+  KIMIA_REQUIRE(audio->channels == 1);
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->frameCount == 15435U);
+  KIMIA_REQUIRE(std::abs(audio->durationSeconds() - 15435.0 / 44100.0) <= 1e-6);
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.01f);  // decoded audio carries a real signal
+  KIMIA_REQUIRE(audio->writeWAV(tmpPath("sfx.kimi.wav")));
+}
+
+KIMIA_TEST(audio_flac_loads_with_real_signal) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "tone.flac", error);
+  KIMIA_REQUIRE(audio.has_value());
+  // IETF FLAC test vector "60 - mono audio": mono, 44100 Hz, 227247 samples.
+  KIMIA_REQUIRE(audio->channels == 1);
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->frameCount == 227247U);
+  KIMIA_REQUIRE(std::abs(audio->durationSeconds() - 227247.0 / 44100.0) <= 1e-3);
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.1f);  // the corpus tone is not silence
+  KIMIA_REQUIRE(audio->writeWAV(tmpPath("tone.kimi.wav")));
+}
+
+// --- OBJ materials (MTL) and FBX materials/textures ---
+
+KIMIA_TEST(obj_mtl_splits_usemtl_into_submeshes) {
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(kAssets + "cube_usemtl.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  // 12 triangle faces: usemtl mtl3 x2, mtl x3, mtl2 x4, mtl x3 again (a
+  // material can come back; the runs stay separate sub-meshes).
+  KIMIA_REQUIRE(asset->mesh.triangleCount() == 12U);
+  KIMIA_REQUIRE(asset->subMeshes.size() == 4U);
+  KIMIA_REQUIRE(asset->subMeshes[0].materialName == "mtl3");
+  KIMIA_REQUIRE(asset->subMeshes[1].materialName == "mtl");
+  KIMIA_REQUIRE(asset->subMeshes[2].materialName == "mtl2");
+  KIMIA_REQUIRE(asset->subMeshes[3].materialName == "mtl");
+  KIMIA_REQUIRE(asset->subMeshes[0].triangleCount() == 2U);
+  KIMIA_REQUIRE(asset->subMeshes[1].triangleCount() == 3U);
+  KIMIA_REQUIRE(asset->subMeshes[2].triangleCount() == 4U);
+  KIMIA_REQUIRE(asset->subMeshes[3].triangleCount() == 3U);
+  // Sub-meshes partition the combined mesh's faces; each sub-mesh is
+  // internally deduped, so its vertex count can be lower than its slice.
+  kimia::u64 totalVerts = 0U;
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    KIMIA_REQUIRE(sub.isValid());
+    for (kimia::u32 index : sub.indices) {
+      KIMIA_REQUIRE(index < sub.vertexCount());
+    }
+    totalVerts += sub.vertexCount();
+  }
+  KIMIA_REQUIRE(totalVerts <= asset->mesh.vertexCount());
+  // "mtl3" is referenced but not defined in the MTL: it becomes a
+  // default-white placeholder so the name always resolves.
+  KIMIA_REQUIRE(asset->materials.size() == 3U);
+  KIMIA_REQUIRE(asset->materials[0].name == "mtl");
+  KIMIA_REQUIRE(asset->materials[1].name == "mtl2");
+  KIMIA_REQUIRE(asset->materials[2].name == "mtl3");
+  KIMIA_REQUIRE(near3(asset->materials[2].color, Vec3{1.0, 1.0, 1.0}));
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    bool found = false;
+    for (const kimia::MaterialData& material : asset->materials) {
+      if (material.name == sub.materialName) found = true;
+    }
+    KIMIA_REQUIRE(found);
+  }
+}
+
+KIMIA_TEST(obj_mtl_spider_loads_materials_with_colors_and_textures) {
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(kAssets + "spider.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 5U);
+  KIMIA_REQUIRE(asset->materials[0].name == "Skin");
+  KIMIA_REQUIRE(asset->materials[1].name == "Brusttex");
+  KIMIA_REQUIRE(asset->materials[2].name == "HLeibTex");
+  KIMIA_REQUIRE(asset->materials[3].name == "BeinTex");
+  KIMIA_REQUIRE(asset->materials[4].name == "Augentex");
+  // Real Kd values from spider.mtl.
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{0.827451, 0.792157, 0.772549}, 1e-6));
+  // map_Kd ".\wal67ar_small.jpg" resolved against the MTL's directory.
+  KIMIA_REQUIRE(asset->materials[0].texturePath.size() > 9U);
+  KIMIA_REQUIRE(asset->materials[0].texturePath.substr(asset->materials[0].texturePath.size() - 18U) ==
+                "/wal67ar_small.jpg");
+  KIMIA_REQUIRE(!asset->subMeshes.empty());
+  kimia::u64 totalVerts = 0U;
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    KIMIA_REQUIRE(sub.isValid());
+    for (kimia::u32 index : sub.indices) {
+      KIMIA_REQUIRE(index < sub.vertexCount());
+    }
+    totalVerts += sub.vertexCount();
+  }
+  KIMIA_REQUIRE(totalVerts <= asset->mesh.vertexCount());
+}
+
+KIMIA_TEST(obj_mtl_texture_path_points_at_a_loadable_image) {
+  // A tiny authored scene: OBJ + MTL + PNG. The material entry must resolve
+  // the texture path so that placing the image on the object "just works".
+  const std::string dir = std::string(KIMIA_TEST_TMP) + "/";
+  {
+    std::ofstream obj(dir + "mtl_test.obj");
+    obj << "mtllib mtl_test.mtl\nusemtl mat\nv 0 0 0\nv 1 0 0\nv 0 0 1\nf 1 2 3\n";
+  }
+  {
+    std::ofstream mtl(dir + "mtl_test.mtl");
+    mtl << "newmtl mat\nKd 0.8 0.4 0.2\nmap_Kd tex.png\n";
+  }
+  kimia::Image image;
+  image.width = 2;
+  image.height = 2;
+  image.channels = 3;
+  image.pixels = {255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0};
+  KIMIA_REQUIRE(image.writePNG(dir + "tex.png"));
+
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(dir + "mtl_test.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 1U);
+  KIMIA_REQUIRE(asset->materials[0].name == "mat");
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{0.8, 0.4, 0.2}, 1e-9));
+  KIMIA_REQUIRE(asset->materials[0].texturePath == dir + "tex.png");
+  KIMIA_REQUIRE(asset->subMeshes.size() == 1U);
+  KIMIA_REQUIRE(asset->subMeshes[0].materialName == "mat");
+  // The resolved texture is a real, loadable image.
+  auto texture = kimia::assets::loadImage(asset->materials[0].texturePath, error);
+  KIMIA_REQUIRE(texture.has_value());
+  KIMIA_REQUIRE(texture->width == 2 && texture->height == 2);
+}
+
+KIMIA_TEST(fbx_material_mapping_reports_material_colors) {
+  std::string error;
+  auto asset = kimia::assets::loadFBXAsset(kAssets + "material_mapping.fbx", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(!asset->materials.empty());
+  KIMIA_REQUIRE(!asset->subMeshes.empty());
+  bool sawNamed = false;
+  for (const kimia::MaterialData& material : asset->materials) {
+    if (!material.name.empty()) sawNamed = true;
+    KIMIA_REQUIRE(material.color.x >= -1e-6 && material.color.x <= 1.0 + 1e-6);
+    KIMIA_REQUIRE(material.color.y >= -1e-6 && material.color.y <= 1.0 + 1e-6);
+    KIMIA_REQUIRE(material.color.z >= -1e-6 && material.color.z <= 1.0 + 1e-6);
+  }
+  KIMIA_REQUIRE(sawNamed);
+  // The combined mesh is the first sub-mesh, material name included.
+  KIMIA_REQUIRE(asset->mesh.materialName == asset->subMeshes.front().materialName);
+  KIMIA_REQUIRE(asset->subMeshes.front().isValid());
+}
+
+KIMIA_TEST(fbx_embedded_texture_extracts_next_to_file) {
+  // Copy the asset into the test tmp dir: extraction writes beside the
+  // source file and must not pollute the repository's asset directory.
+  const std::string src = kAssets + "textured.fbx";
+  std::ifstream input(src, std::ios::binary);
+  KIMIA_REQUIRE(input.good());
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  input.close();
+  const std::string dst = tmpPath("textured_copy.fbx");
+  {
+    std::ofstream output(dst, std::ios::binary);
+    output << buffer.str();
+  }
+
+  std::string error;
+  auto asset = kimia::assets::loadFBXAsset(dst, error);
+  KIMIA_REQUIRE(asset.has_value());
+  bool sawTexture = false;
+  for (const kimia::MaterialData& material : asset->materials) {
+    if (material.texturePath.empty()) continue;
+    sawTexture = true;
+    KIMIA_REQUIRE(material.texturePath.size() > 4U);
+    KIMIA_REQUIRE(material.texturePath.substr(material.texturePath.size() - 4U) == ".png");
+    auto image = kimia::assets::loadImage(material.texturePath, error);
+    KIMIA_REQUIRE(image.has_value());
+    KIMIA_REQUIRE(image->width > 0 && image->height > 0);
+  }
+  KIMIA_REQUIRE(sawTexture);  // the embedded texture was extracted and is loadable
 }
 
 // --- Pipeline dispatch ---
@@ -278,8 +470,20 @@ KIMIA_TEST(pipeline_detects_types_case_insensitive) {
   KIMIA_REQUIRE(kimia::assets::detectType("x.jpeg") == kimia::assets::AssetType::image);
   KIMIA_REQUIRE(kimia::assets::detectType("x.wav") == kimia::assets::AssetType::audio);
   KIMIA_REQUIRE(kimia::assets::detectType("x.Mp3") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.OGG") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.flac") == kimia::assets::AssetType::audio);
   KIMIA_REQUIRE(!kimia::assets::detectType("x.txt").has_value());
   KIMIA_REQUIRE(!kimia::assets::detectType("no_extension").has_value());
+  KIMIA_REQUIRE(!kimia::assets::detectType("x.mtl").has_value());   // auxiliary, read via OBJ
+  KIMIA_REQUIRE(!kimia::assets::detectType("x.blend").has_value()); // export path, not a format
+}
+
+KIMIA_TEST(pipeline_blend_error_points_at_the_export_path) {
+  std::string error;
+  KIMIA_REQUIRE(!kimia::assets::loadMesh("scene.blend", error).has_value());
+  KIMIA_REQUIRE(error.find("Export") != std::string::npos);
+  KIMIA_REQUIRE(error.find(".obj") != std::string::npos);
+  KIMIA_REQUIRE(error.find(".fbx") != std::string::npos);
 }
 
 KIMIA_TEST(pipeline_loads_each_format) {
@@ -292,4 +496,6 @@ KIMIA_TEST(pipeline_loads_each_format) {
   KIMIA_REQUIRE(kimia::assets::loadImage(kAssets + "2x2.jpg", error).has_value());
   KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "tone.wav", error).has_value());
   KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "440hz.mp3", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "sfx.ogg", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "tone.flac", error).has_value());
 }
