@@ -12,6 +12,7 @@
 #include <kimia/Mesh.h>
 #include <kimia/Renderer.h>
 #include <kimia/WebViewer.h>
+#include <kimia/AssetPipeline.h>
 #include <kimia/World.h>
 
 #include <atomic>
@@ -109,6 +110,7 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
       break;
     case ObjectKind::Block:
     case ObjectKind::Crate:
+    case ObjectKind::Model:
       scene.objects.push_back({&cube, Mat4::translation(Vec3{ghost.x, size * 0.5, ghost.z}) *
                                           Mat4::scaling(Vec3{size, size, size}),
                                kGhostColor, 0.9});
@@ -138,17 +140,21 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
 int main(int argc, char** argv) {
   int port = 8080;
   std::string worldPath = "my_world.kimia";
+  std::string assetsDir = "assets";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
       port = std::atoi(argv[++i]);
     } else if (arg == "--world" && i + 1 < argc) {
       worldPath = argv[++i];
+    } else if (arg == "--assets" && i + 1 < argc) {
+      assetsDir = argv[++i];
     }
   }
 
   WorldEditor editor;
   editor.setWorldPath(worldPath);
+  editor.setImportDirectory(assetsDir);
 
   EngineOptions options;
   options.headless = true;
@@ -169,6 +175,7 @@ int main(int argc, char** argv) {
   // r/b actions.
   const char* keymapJs =
       "var km={'1':'t:num1','2':'t:num2','3':'t:num3','4':'t:num4','5':'t:num5','6':'t:num6',"
+      "'7':'t:num7','8':'t:num8',"
       "'r':'t:r','b':'t:b','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
       "'ArrowRight':'h:right','Shift':'h:shift'};\n"
       "function kmd(e,down){var m=km[e.key];if(!m)return;e.preventDefault();"
@@ -179,7 +186,7 @@ int main(int argc, char** argv) {
   engine.server()->stop();
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
-      "everything is menus: tap 1-6 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
+      "everything is menus: tap 1-8 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
   std::printf("KIMIA World serving on port %d | GL: %s\n", static_cast<i32>(engine.server()->port()),
               engine.glAvailable() ? "yes" : "no (software)");
 
@@ -196,6 +203,7 @@ int main(int argc, char** argv) {
   const i32 height = 480;
 
   std::signal(SIGINT, onSignal);
+  std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
   f64 cameraYaw = 0.0;
   const auto frameStart = std::chrono::steady_clock::now();
   auto lastTime = frameStart;
@@ -219,6 +227,7 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Num5)) editor.choose(4);
     if (input.pressed(Key::Num6)) editor.choose(5);
     if (input.pressed(Key::Num7)) editor.choose(6);
+    if (input.pressed(Key::Num8)) editor.choose(7);
     if (input.pressed(Key::R)) editor.resetBall();
     if (input.pressed(Key::B)) editor.backToMenu();
 
@@ -247,6 +256,19 @@ int main(int argc, char** argv) {
       const MeshData* mesh = &cubeMesh;
       if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
       if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
+      if (!entity.meshFile.empty()) {
+        // Model entity: load the OBJ/FBX once, then draw it every frame.
+        auto found = loadedMeshes.find(entity.meshFile);
+        if (found == loadedMeshes.end()) {
+          std::string loadError;
+          auto loaded = kimia::assets::loadMesh(entity.meshFile, loadError);
+          if (loaded.has_value()) {
+            found = loadedMeshes.emplace(entity.meshFile, std::move(loaded->mesh)).first;
+          }
+        }
+        if (found != loadedMeshes.end()) mesh = &found->second;
+        else return;  // mesh missing/unreadable: skip this entity
+      }
       // Crates follow the physics bodies while playing.
       const Vec3 position =
           kind == ObjectKind::Crate ? editor.cratePosition(entity.name) : entity.transform.position;
