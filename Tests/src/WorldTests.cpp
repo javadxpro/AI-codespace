@@ -38,7 +38,11 @@ using kimia::kWorldFantasyFriction;
 using kimia::kWorldFantasyRadius;
 using kimia::kWorldFantasyRestitution;
 using kimia::kWorldFantasyRollingFriction;
+using kimia::kWorldCrateKickScale;
+using kimia::kWorldCrateKickUp;
 using kimia::kWorldGoalMedium;
+using kimia::kWorldKickBase;
+using kimia::kWorldKickSpeedScale;
 using kimia::kWorldPlayerFast;
 using kimia::kWorldPlayerNormal;
 using kimia::kWorldPlayerSlow;
@@ -87,6 +91,13 @@ void addGoal(WorldEditor& editor, i32 widthOption, const Vec3& ghost) {
   editor.choose(0);  // catalog
   editor.choose(4);  // goal
   editor.choose(widthOption);
+  editor.setGhostPosition(ghost);
+  editor.choose(0);  // place
+}
+
+void addCrate(WorldEditor& editor, const Vec3& ghost) {
+  editor.choose(0);  // catalog
+  editor.choose(5);  // جعبه (no size question: fixed 1x1x1)
   editor.setGhostPosition(ghost);
   editor.choose(0);  // place
 }
@@ -609,4 +620,79 @@ KIMIA_TEST(world_ball_cannot_leave_floor) {
   KIMIA_REQUIRE(near(position.x, kimia::kWorldFloorHalf - kGolfBallRadius, 1e-9));
   KIMIA_REQUIRE(position.z == 0.0);
   KIMIA_REQUIRE(editor.ballVelocity().x == 0.0);
+}
+
+KIMIA_TEST(world_catalog_places_crate) {
+  WorldEditor editor = editorWithWorld();
+  editor.choose(0);  // catalog
+  KIMIA_REQUIRE(editor.optionLabels().size() == 7U);  // ...جعبه joined the list
+  editor.choose(5);  // جعبه
+  KIMIA_REQUIRE(editor.placing());
+  KIMIA_REQUIRE(editor.ghostKind() == kimia::ObjectKind::Crate);
+  editor.setGhostPosition(Vec3{1.5, 0.0, -1.0});
+  editor.choose(0);  // place
+  exitPlace(editor);
+
+  const EntityData* crate = editor.world().scene.get(editor.world().scene.find("Crate_1"));
+  KIMIA_REQUIRE(crate != nullptr);
+  KIMIA_REQUIRE(near3(crate->transform.position, Vec3{1.5, kimia::kWorldCrateSize * 0.5, -1.0}));
+  KIMIA_REQUIRE(near3(crate->transform.scale, Vec3{kimia::kWorldCrateSize, kimia::kWorldCrateSize, kimia::kWorldCrateSize}));
+  KIMIA_REQUIRE(editor.dynamicBoxCount() == 1U);  // simulated body
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 0U);  // not a static collider
+  enterManage(editor);
+  KIMIA_REQUIRE(editor.managedKindName() == "crate");
+
+  // The crate serializes like any other entity (name-based) and reloads
+  // with its dynamic body rebuilt.
+  const std::string path = tmpPath("crate_world.kimia");
+  std::string error;
+  KIMIA_REQUIRE(editor.saveWorld(path, error));
+  WorldEditor reloaded;
+  KIMIA_REQUIRE(reloaded.loadWorld(path, error));
+  KIMIA_REQUIRE(reloaded.world().scene.find("Crate_1") != kimia::kNullEntity);
+  KIMIA_REQUIRE(reloaded.dynamicBoxCount() == 1U);
+  KIMIA_REQUIRE(near3(reloaded.cratePosition("Crate_1"), Vec3{1.5, 0.5, -1.0}, 1e-9));
+}
+
+KIMIA_TEST(world_crate_kick_launches_crate) {
+  WorldEditor editor = editorWithWorld();
+  addCrate(editor, Vec3{2.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  editor.setPlayerPosition(Vec3{2.0, 0.5, 0.9});
+  editor.setMoveInput(0.0, -1.0);  // walk toward the crate (-Z)
+  editor.update(1.0 / 60.0);
+  // Kick: direction * (kWorldKickBase + speed * kWorldKickSpeedScale) *
+  // kWorldCrateKickScale + (0, kWorldCrateKickUp, 0). Normal player (4 m/s):
+  // kickSpeed = 2 + 4 * 0.5 = 4 -> crate velocity = (0, 0.8, -2.4).
+  KIMIA_REQUIRE(near3(editor.crateVelocity("Crate_1"), Vec3{0.0, kWorldCrateKickUp, -4.0 * kWorldCrateKickScale}, 1e-6));
+  // The kick only touches the crate: the ball still waits at its spawn.
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 0.0}, 1e-9));
+  for (int i = 0; i < 30; ++i) editor.update(1.0 / 60.0);  // half a second
+  KIMIA_REQUIRE(editor.cratePosition("Crate_1").z < -2.0);  // it did slide away
+  // Back in the builder the crate snaps to its placed spot.
+  editor.backToMenu();
+  KIMIA_REQUIRE(near3(editor.cratePosition("Crate_1"), Vec3{2.0, 0.5, 0.0}, 1e-9));
+}
+
+KIMIA_TEST(world_crate_and_ball_collide_in_play) {
+  WorldEditor editor = editorWithWorld();
+  addCrate(editor, Vec3{3.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setBallPosition(Vec3{2.2, kGolfBallRadius, 0.0});
+  editor.setBallVelocity(Vec3{2.0, 0.0, 0.0});
+  bool crateMoved = false;
+  for (int i = 0; i < 300 && !crateMoved; ++i) {
+    editor.update(1.0 / 60.0);
+    // A 0.4 kg ball at ~1.9 m/s shoves the 1 kg crate ~4 cm before the
+    // crate's friction stops it (measured: rest at x = 3.0378).
+    crateMoved = editor.cratePosition("Crate_1").x > 3.03;
+  }
+  KIMIA_REQUIRE(crateMoved);  // the ball shoved the crate
+  // Ball (0.4 kg) vs crate (1.0 kg), e = 0.4: the ball transfers all its
+  // motion and stops at the crate face.
+  KIMIA_REQUIRE(editor.ballVelocity().x < 0.05);
+  KIMIA_REQUIRE(editor.ballPosition().x < 2.4);
 }
