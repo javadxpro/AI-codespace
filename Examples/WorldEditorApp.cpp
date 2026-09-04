@@ -280,11 +280,14 @@ int main(int argc, char** argv) {
         if (found != loadedMeshes.end()) mesh = &found->second;
         else return;  // mesh missing/unreadable: skip this entity
       }
-      // Crates follow the physics bodies while playing. Sphere entities
-      // store their diameter as the scale but the mesh has radius 1, so
-      // they take half scale.
+      // Crates follow the physics bodies while playing, and the player
+      // entity follows the character controller so the play character is
+      // actually visible where the physics puts it (including mid-jump).
+      const bool playCharacter = kind == ObjectKind::Player && editor.playing();
       const Vec3 position =
-          kind == ObjectKind::Crate ? editor.cratePosition(entity.name) : entity.transform.position;
+          kind == ObjectKind::Crate
+              ? editor.cratePosition(entity.name)
+              : (playCharacter ? editor.playerPosition() : entity.transform.position);
       const Vec3 scale = entity.mesh == kimia::MeshKind::sphere ? entity.transform.scale * 0.5
                                                                 : entity.transform.scale;
       const Mat4 model = Mat4::translation(position) * Mat4::scaling(scale);
@@ -292,7 +295,7 @@ int main(int argc, char** argv) {
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.
         scene.objects.push_back(
-            {&cubeMesh, Mat4::translation(entity.transform.position + Vec3{0.0, 0.65, 0.0}) *
+            {&cubeMesh, Mat4::translation(position + Vec3{0.0, 0.65, 0.0}) *
                             Mat4::scaling(Vec3{0.3, 0.3, 0.3}),
              entity.color, entity.roughness});
       }
