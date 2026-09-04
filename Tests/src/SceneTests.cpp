@@ -265,3 +265,14 @@ KIMIA_TEST(sceneio_file_roundtrip) {
   KIMIA_REQUIRE(near3(read->transform.scale, Vec3{0.56, 0.02, 0.56}));
   KIMIA_REQUIRE(near(read->roughness, 0.8));
 }
+
+KIMIA_TEST(scene_find_by_name) {
+  Scene scene;
+  const EntityHandle a = scene.create(EntityData{"Alpha", {}, MeshKind::cube, Vec3{1.0, 1.0, 1.0}, 0.5});
+  scene.create(EntityData{"Beta", {}, MeshKind::plane, Vec3{1.0, 1.0, 1.0}, 0.5});
+  KIMIA_REQUIRE(scene.find("Beta") != kimia::kNullEntity);
+  KIMIA_REQUIRE(scene.find("Alpha") == a);
+  KIMIA_REQUIRE(scene.find("Missing") == kimia::kNullEntity);
+  scene.destroy(a);
+  KIMIA_REQUIRE(scene.find("Alpha") == kimia::kNullEntity);  // destroyed -> gone
+}

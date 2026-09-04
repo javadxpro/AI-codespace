@@ -56,6 +56,9 @@ public:
   bool alive(EntityHandle handle) const;
   usize count() const { return entities_.size(); }
 
+  // First entity with this name, or kNullEntity (iteration order stable).
+  EntityHandle find(const std::string& name) const;
+
   void forEach(const std::function<void(EntityHandle, const EntityData&)>& callback) const;
   void clear();
 

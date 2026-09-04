@@ -30,6 +30,14 @@ const EntityData* Scene::get(EntityHandle handle) const {
 
 bool Scene::alive(EntityHandle handle) const { return entities_.find(handle) != entities_.end(); }
 
+EntityHandle Scene::find(const std::string& name) const {
+  EntityHandle result = kNullEntity;
+  forEach([&result, &name](EntityHandle handle, const EntityData& entity) {
+    if (result == kNullEntity && entity.name == name) result = handle;
+  });
+  return result;
+}
+
 void Scene::forEach(const std::function<void(EntityHandle, const EntityData&)>& callback) const {
   for (const auto& [handle, entity] : entities_) {
     callback(handle, entity);
