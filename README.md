@@ -8,7 +8,8 @@
 - [x] ریاضیات (Vec2/3/4، Mat4، Quat، Camera)
 - [x] گرافیک و خط لولهٔ دارایی (Primitive Meshes، OBJ، FBX، PNG/JPG، WAV/MP3)
 - [x] Scene و SceneIO (هندل‌های ۱-مبنا + فرمت متنی v1)
-- [ ] Physics
+- [x] فیزیک (گام ثابت ۱/۱۲۰، کره/صفحه/AABB، استرداد و اصطکاک)
+- [ ] Renderer و WebViewer
 - [ ] Physics
 - [ ] Renderer و WebViewer
 - [ ] GolfGame
@@ -47,6 +48,7 @@ Engine/Math      # بردارها، ماتریس‌ها، کواترنیون، �
 Engine/Graphics  # MeshData، پریمیتیوها، OBJ، Image (PNG/JPG)
 Engine/Assets    # AssetPipeline، Audio (WAV/MP3)، FBX
 Engine/Scene     # Scene (هندل‌های ۱-مبنا) و SceneIO (فرمت متنی v1)
+Engine/Physics   # PhysicsWorld: گام ثابت، کره/صفحه/AABB، استرداد و اصطکاک
 Tools/           # kimia_assets (CLI)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
 Documentation/   # مستندات هر زیرسیستم
