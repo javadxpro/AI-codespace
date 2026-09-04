@@ -15,13 +15,14 @@
 - [x] GolfGame — بازی مرجع با نشانه‌گیری/شارژ/شوت، سازندهٔ زمین و `# demo`
 - [x] KIMIA World — سازندهٔ بازی: زمین خالی، اجسام با سؤال و پاسخ، مدیریت و رنگ، PLAY در مرورگر
 - [x] فرمت‌ها — OBJ+MTL (متریال/تکسچر و زیر-مش)، متریال و تکسچر FBX، OGG/FLAC، راهنمای .blend
+- [x] فیزیک پیشرفته ۱ — جسم‌های دینامیک: جعبه‌هایی که می‌افتند، روی هم چیده می‌شوند، هل داده و شوت می‌شوند و با توپ برخورد می‌کنند
 
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 139/139 tests passed
+./build/bin/kimia_tests      # 149/149 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -37,7 +38,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 139/139 tests passed
+./build-nosdl/bin/kimia_tests    # 149/149 tests passed
 ```
 
 ## KIMIA World — ویرایشگر گزینه‌محور
