@@ -62,11 +62,14 @@ void PhysicsWorld::resolvePlane(SphereBody& body, f64 planeY) {
   if (distance >= 0.0) return;
   ++body.collisionCount;
   body.position.y = planeY + body.radius;
-  if (body.velocity.y < 0.0) body.velocity.y = -body.restitution * body.velocity.y;
-  // Tangential friction and rolling friction on the contact plane (XZ).
-  const f64 decay = std::max(0.0, (1.0 - body.friction * fixedDt_) * (1.0 - body.rollingFriction * fixedDt_));
-  body.velocity.x *= decay;
-  body.velocity.z *= decay;
+  if (body.velocity.y < 0.0) {
+    if (-body.velocity.y >= kContactRestitutionThreshold) {
+      body.velocity.y = -body.restitution * body.velocity.y;
+    } else {
+      body.velocity.y = 0.0;  // slow impact settles: no micro-bouncing
+    }
+  }
+  applyContactFriction(body, Vec3{0.0, 1.0, 0.0});
 }
 
 void PhysicsWorld::resolveBox(SphereBody& body, const StaticBox& box) {
@@ -106,12 +109,23 @@ void PhysicsWorld::resolveBox(SphereBody& body, const StaticBox& box) {
   body.position += normal * penetration;
   const f64 velocityNormal = kimia::dot(body.velocity, normal);
   if (velocityNormal < 0.0) {
-    body.velocity -= normal * ((1.0 + body.restitution) * velocityNormal);
-    // Friction decays the tangential component while in contact.
-    const Vec3 tangential = body.velocity - normal * kimia::dot(body.velocity, normal);
-    const f64 decay = std::max(0.0, 1.0 - body.friction * fixedDt_);
-    body.velocity = normal * kimia::dot(body.velocity, normal) + tangential * decay;
+    if (-velocityNormal >= kContactRestitutionThreshold) {
+      body.velocity -= normal * ((1.0 + body.restitution) * velocityNormal);
+    } else {
+      body.velocity -= normal * velocityNormal;  // settle: stop normal motion
+    }
   }
+  applyContactFriction(body, normal);
+}
+
+void PhysicsWorld::applyContactFriction(SphereBody& body, const Vec3& normal) const {
+  const Vec3 tangential = body.velocity - normal * kimia::dot(body.velocity, normal);
+  const f64 speed = tangential.length();
+  if (speed <= 0.0) return;
+  // Constant-force friction: decelerate by (friction + rollingFriction) * g.
+  const f64 deceleration = (body.friction + body.rollingFriction) * kGravity * fixedDt_;
+  const f64 scale = speed > deceleration ? 1.0 - deceleration / speed : 0.0;
+  body.velocity -= tangential * (1.0 - scale);
 }
 
 void PhysicsWorld::step() {

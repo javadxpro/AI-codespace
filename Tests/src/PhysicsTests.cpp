@@ -73,26 +73,67 @@ KIMIA_TEST(physics_restitution_bounce_height) {
   KIMIA_REQUIRE(firstApex > 0.87 && firstApex < 0.93);
 }
 
-KIMIA_TEST(physics_friction_decay) {
+KIMIA_TEST(physics_friction_slows_ball_by_constant_force) {
   PhysicsWorld world;
   world.addPlane(0.0);
   SphereBody ball;
   ball.position = Vec3{0.0, 0.12, 0.0};
   ball.velocity = Vec3{1.0, 0.0, 0.0};
   ball.radius = 0.12;
-  ball.friction = 4.0;  // strong friction -> visible decay over 1 s
+  ball.friction = 0.05;  // small friction: a measurable loss over 1 s
   ball.rollingFriction = 0.0;
   ball.restitution = 0.0;
   const u32 id = world.addSphere(ball);
   for (int i = 0; i < 120; ++i) world.advance(kDt);  // 1 s
   const Vec3 velocity = world.sphere(id)->velocity;
-  const f64 speed = velocity.length();
-  // Model: v *= (1 - f*dt) per contact step  ->  ~ exp(-4) ~= 0.0183.
-  KIMIA_REQUIRE(speed < 0.05 && speed > 0.005);
+  // Constant-force friction: v(1s) = v0 - friction * g * 1s = 1 - 0.4905.
+  KIMIA_REQUIRE(near(velocity.x, 1.0 - 0.05 * kG, 1e-6));
   KIMIA_REQUIRE(near(velocity.y, 0.0, 1e-6));
   KIMIA_REQUIRE(velocity.z == 0.0);
   // Ball stays on the plane surface.
   KIMIA_REQUIRE(near(world.sphere(id)->position.y, 0.12, 1e-6));
+}
+
+KIMIA_TEST(physics_strong_friction_stops_ball_exactly) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  SphereBody ball;
+  ball.position = Vec3{0.0, 0.12, 0.0};
+  ball.velocity = Vec3{1.0, 0.0, 0.0};
+  ball.radius = 0.12;
+  ball.friction = 4.0;  // 39.24 m/s^2: 1 m/s stops in ~25 ms
+  ball.rollingFriction = 0.0;
+  ball.restitution = 0.0;
+  const u32 id = world.addSphere(ball);
+  for (int i = 0; i < 120; ++i) world.advance(kDt);  // 1 s
+  const Vec3 velocity = world.sphere(id)->velocity;
+  KIMIA_REQUIRE(velocity.x == 0.0);  // friction never overshoots below zero
+  KIMIA_REQUIRE(near(velocity.y, 0.0, 1e-6));
+  KIMIA_REQUIRE(velocity.z == 0.0);
+  KIMIA_REQUIRE(near(world.sphere(id)->position.y, 0.12, 1e-6));
+}
+
+KIMIA_TEST(physics_resting_ball_settles_without_bouncing) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  SphereBody ball;
+  ball.position = Vec3{0.0, 0.15, 0.0};  // exactly at rest height
+  ball.radius = 0.15;
+  ball.restitution = 0.85;  // fantasy ball: must still settle
+  ball.friction = 0.05;
+  ball.rollingFriction = 0.0;
+  const u32 id = world.addSphere(ball);
+  f64 maxY = 0.15;
+  for (int i = 0; i < 600; ++i) {  // 5 s
+    world.advance(kDt);
+    maxY = std::max(maxY, world.sphere(id)->position.y);
+  }
+  // No bounce at all: slow impacts (below the threshold) settle instead.
+  KIMIA_REQUIRE(near(maxY, 0.15, 1e-9));
+  const Vec3 velocity = world.sphere(id)->velocity;
+  KIMIA_REQUIRE(velocity.x == 0.0);
+  KIMIA_REQUIRE(near(velocity.y, 0.0, 1e-12));
+  KIMIA_REQUIRE(velocity.z == 0.0);
 }
 
 KIMIA_TEST(physics_box_side_collision) {

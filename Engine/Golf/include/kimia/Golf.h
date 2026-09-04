@@ -11,11 +11,15 @@
 
 namespace kimia {
 
-// Golf tuning from the engine handoff (the "accurate" ball).
+// Golf tuning (the "accurate" ball). Friction follows the constant-force
+// contact model: the ball decelerates by (friction + rollingFriction) * g
+// m/s^2 while touching the ground, so it stops after v0 / (mu_total * g)
+// seconds. mu_total = 0.40 makes the spec demo shot (aim 0, power 0.61,
+// launch 10.735 m/s) roll 14.7 m and cross the cup at 2.3 m/s — a hole-out.
 inline constexpr f64 kGolfBallRadius = 0.12;
 inline constexpr f64 kGolfBallRestitution = 0.40;
-inline constexpr f64 kGolfBallFriction = 0.40;
-inline constexpr f64 kGolfBallRollingFriction = 0.22;
+inline constexpr f64 kGolfBallFriction = 0.25;
+inline constexpr f64 kGolfBallRollingFriction = 0.15;
 inline constexpr f64 kGolfLaunchBaseSpeed = 2.5;
 inline constexpr f64 kGolfLaunchPowerScale = 13.5;
 inline constexpr f64 kGolfCupCaptureDistance = 0.28;

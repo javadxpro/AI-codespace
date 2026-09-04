@@ -11,6 +11,10 @@ namespace kimia {
 // Gravity magnitude; pulls along -Y (acceleration vector is (0, -kGravity, 0)).
 inline constexpr f64 kGravity = 9.81;
 
+// Impacts slower than this (m/s) settle instead of bouncing: a body resting
+// on a surface stops instead of micro-bouncing forever with high restitution.
+inline constexpr f64 kContactRestitutionThreshold = 0.5;
+
 // Dynamic sphere body. Semi-implicit (symplectic) Euler integration.
 struct SphereBody {
   Vec3 position{0.0, 0.0, 0.0};
@@ -68,6 +72,7 @@ public:
 private:
   void resolvePlane(SphereBody& body, f64 planeY);
   void resolveBox(SphereBody& body, const StaticBox& box);
+  void applyContactFriction(SphereBody& body, const Vec3& normal) const;
 
   f64 fixedDt_;
   FixedTimeStep accumulator_;
