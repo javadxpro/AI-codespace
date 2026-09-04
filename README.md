@@ -13,14 +13,14 @@
 - [x] Platform (ورودی LEVEL/EDGE + پنجرهٔ SDL2 اختیاری)
 - [x] App — WebViewer (فریم‌ها در مرورگر، localhost:8080) و بوت‌استرپ Engine
 - [x] GolfGame — بازی مرجع با نشانه‌گیری/شارژ/شوت، سازندهٔ زمین و `# demo`
-- [x] KIMIA World — ویرایشگر گزینه‌محور: ساخت دنیا با سؤال و پاسخ، PLAY در مرورگر
+- [x] KIMIA World — سازندهٔ بازی: زمین خالی، اجسام با سؤال و پاسخ، مدیریت و رنگ، PLAY در مرورگر
 
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 118/118 tests passed
+./build/bin/kimia_tests      # 126/126 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -36,7 +36,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 118/118 tests passed
+./build-nosdl/bin/kimia_tests    # 126/126 tests passed
 ```
 
 ## KIMIA World — ویرایشگر گزینه‌محور
@@ -46,10 +46,11 @@ cmake --build build-nosdl -j4
 # سپس در مرورگر: http://localhost:8080
 ```
 
-همه‌چیز با دکمه‌ها: Create World → Add Player → Add Ball (سؤال
-«دقیق باشه یا فانتزی؟») → Add Environment → PLAY. دنیاها در
-فرمت SceneIO-v1 ذخیره می‌شوند و فایل‌های قدیمی `.kimia` هم بار می‌شوند.
-جزئیات در [Documentation/World.md](Documentation/World.md).
+همه‌چیز با دکمه‌ها: Create World (زمین خالی) → افزودن جسم (بازیکن، توپ،
+بلوک، دیوار، دروازه — هر کدام با سؤال فارسی مثل «توپ: دقیق باشه یا
+فانتزی؟») → مدیریت اجسام (جابه‌جایی/حذف/رنگ) → محیط → PLAY.
+دنیاها در فرمت SceneIO-v1 ذخیره می‌شوند و فایل‌های قدیمی `.kimia` هم
+بار می‌شوند. جزئیات در [Documentation/World.md](Documentation/World.md).
 
 ## بازی گلف در مرورگر (WebViewer)
 
