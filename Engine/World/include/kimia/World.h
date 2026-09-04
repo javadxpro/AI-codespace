@@ -5,6 +5,7 @@
 #include <kimia/Types.h>
 #include <kimia/Vec.h>
 
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,12 +58,25 @@ enum class EnvironmentKind { Grass, Sand, Night };
 // Game-object kinds, inferred from entity names (fully SceneIO-v1
 // compatible — nothing extra is stored in the file):
 //   "Player" -> player, "Ball" -> ball, "Wall_*" -> wall,
-//   "Block_*" -> block, "Goal*" -> goal, anything else -> decoration.
-enum class ObjectKind { Player, Ball, Block, Wall, Goal, Decoration };
+//   "Block_*" -> block, "Goal*" -> goal, "Crate_*" -> dynamic crate,
+//   anything else -> decoration.
+enum class ObjectKind { Player, Ball, Block, Wall, Goal, Crate, Decoration };
 
 ObjectKind objectKindForName(const std::string& name);
-bool isPhysicsObject(ObjectKind kind);       // block/wall/goal collide
+bool isPhysicsObject(ObjectKind kind);           // block/wall/goal: static colliders
 bool isLegacyGoalPart(const std::string& name);  // GoalPostLeft/Right/Bar
+
+// Dynamic crates: a fixed 1x1x1 box the player can shove and kick. Crates
+// fall under gravity, rest on the floor/blocks, stack on each other and
+// collide with the ball (they can push it into the goal).
+inline constexpr f64 kWorldCrateSize = 1.0;
+inline constexpr f64 kWorldCrateMass = 1.0;
+inline constexpr f64 kWorldCrateRestitution = 0.25;
+inline constexpr f64 kWorldCrateFriction = 0.5;
+inline constexpr f64 kWorldCrateRollingFriction = 0.05;
+inline constexpr f64 kWorldCrateKickScale = 0.6;  // kick speed = ball kick * 0.6
+inline constexpr f64 kWorldCrateKickUp = 0.8;     // plus a small pop
+inline constexpr f64 kWorldBallMass = 0.4;        // the ball is lighter than a crate
 
 struct PlayerConfig {
   f64 speed = kWorldPlayerNormal;
@@ -155,6 +169,10 @@ public:
   usize goalCount() const;    // goal groups (legacy trios count as one)
   usize objectCount() const;  // all entities except the ground
   usize physicsBoxCount() const { return physics_.boxCount(); }
+  usize dynamicBoxCount() const { return physics_.dynamicBoxCount(); }
+  // A crate's position: the physics body while playing, the placed entity
+  // position while building (crates reset to their placed spots on PLAY).
+  Vec3 cratePosition(const std::string& name) const;
 
   // --- Play simulation ---
   void update(f64 hostSeconds);
@@ -171,6 +189,8 @@ public:
   void setPlayerPosition(const Vec3& position) { playerPos_ = position; }
   void setBallPosition(const Vec3& position);
   void setBallVelocity(const Vec3& velocity);
+  Vec3 crateVelocity(const std::string& name) const;
+  void setCrateVelocity(const std::string& name, const Vec3& velocity);
 
   std::string statsLine() const;
 
@@ -203,6 +223,8 @@ private:
 
   PhysicsWorld physics_;
   u32 ballId_ = 0U;
+  std::map<std::string, u32> crateIds_;  // crate entity name -> dynamic box id
+  std::vector<u32> crateBodyIds_;        // dynamic box ids in scene order
   Vec3 playerPos_{0.0, 0.5, 4.0};
   Vec3 moveInput_{0.0, 0.0, 0.0};
   bool fine_ = false;

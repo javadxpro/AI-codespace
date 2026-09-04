@@ -12,6 +12,9 @@ constexpr f64 kBlockColor = 0.62;
 constexpr f64 kWallColorR = 0.7;
 constexpr f64 kWallColorG = 0.68;
 constexpr f64 kWallColorB = 0.62;
+constexpr f64 kCrateColorR = 0.55;  // wooden crate brown
+constexpr f64 kCrateColorG = 0.40;
+constexpr f64 kCrateColorB = 0.25;
 
 u32 nameNumber(const std::string& name, const char* prefix) {
   const usize prefixLength = std::strlen(prefix);
@@ -61,6 +64,8 @@ std::string WorldEditor::managedKindName() const {
       return "wall";
     case ObjectKind::Goal:
       return "goal";
+    case ObjectKind::Crate:
+      return "crate";
     default:
       return "other";
   }
@@ -154,6 +159,18 @@ void WorldEditor::confirmPlace() {
       rebuildPhysics();
       break;
     }
+    case ObjectKind::Crate: {
+      EntityData crate;
+      crate.name = "Crate_" + std::to_string(nextNumber(world_.scene, "Crate_"));
+      crate.mesh = MeshKind::cube;
+      crate.transform.position = Vec3{ghost_.x, kWorldCrateSize * 0.5, ghost_.z};
+      crate.transform.scale = Vec3{kWorldCrateSize, kWorldCrateSize, kWorldCrateSize};
+      crate.color = Vec3{kCrateColorR, kCrateColorG, kCrateColorB};
+      crate.roughness = 0.6;
+      world_.scene.create(crate);
+      rebuildPhysics();
+      break;
+    }
     default:
       break;
   }
@@ -227,7 +244,7 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::Builder:
       return {"افزودن جسم", "مدیریت اجسام", "محیط", "بازی (PLAY)", "ذخیره", "منوی اصلی"};
     case Screen::Catalog:
-      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "بازگشت"};
+      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "بازگشت"};
     case Screen::AskPlayer:
       return {"سریع", "عادی", "آرام", "بازگشت"};
     case Screen::AskBall:
@@ -317,6 +334,11 @@ void WorldEditor::choose(i32 optionIndex) {
       } else if (optionIndex == 4) {
         screen_ = Screen::AskGoal;
       } else if (optionIndex == 5) {
+        // جعبه: a dynamic crate, fixed 1x1x1 — no size question.
+        pendingKind_ = ObjectKind::Crate;
+        pendingSize_ = kWorldCrateSize;
+        beginPlace();
+      } else if (optionIndex == 6) {
         screen_ = Screen::Builder;
       }
       break;

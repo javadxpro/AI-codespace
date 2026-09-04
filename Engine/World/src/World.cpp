@@ -123,9 +123,12 @@ ObjectKind objectKindForName(const std::string& name) {
   if (name.rfind("Wall_", 0) == 0) return ObjectKind::Wall;
   if (name.rfind("Block_", 0) == 0) return ObjectKind::Block;
   if (name.rfind("Goal", 0) == 0) return ObjectKind::Goal;
+  if (name.rfind("Crate_", 0) == 0) return ObjectKind::Crate;
   return ObjectKind::Decoration;
 }
 
+// Blocks, walls and goals become STATIC colliders; the player, the ball and
+// the crates are dynamic (the crates are simulated, the player is kinematic).
 bool isPhysicsObject(ObjectKind kind) {
   return kind == ObjectKind::Block || kind == ObjectKind::Wall || kind == ObjectKind::Goal;
 }
@@ -191,6 +194,8 @@ WorldEditor::WorldEditor() { rebuildPhysics(); }
 void WorldEditor::rebuildPhysics() {
   physics_.clear();
   physics_.addPlane(0.0);
+  crateIds_.clear();
+  crateBodyIds_.clear();
   std::map<std::string, GoalGroup> goals;
   scanGoals(world_.scene, goals);
   world_.scene.forEach([this](EntityHandle, const EntityData& entity) {
@@ -208,15 +213,39 @@ void WorldEditor::rebuildPhysics() {
       physics_.addBox(Vec3{at.x, top, at.z}, Vec3{width * 0.5 + 0.06, 0.06, 0.06});
     } else if (kind == ObjectKind::Goal && isLegacyGoalPart(entity.name)) {
       physics_.addBox(entity.transform.position, entity.transform.scale * 0.5);
+    } else if (kind == ObjectKind::Crate) {
+      DynamicBox crate;
+      crate.position = entity.transform.position;
+      crate.halfExtents = entity.transform.scale * 0.5;
+      crate.mass = kWorldCrateMass;
+      crate.restitution = kWorldCrateRestitution;
+      crate.friction = kWorldCrateFriction;
+      crate.rollingFriction = kWorldCrateRollingFriction;
+      const u32 id = physics_.addDynamicBox(crate);
+      crateIds_[entity.name] = id;
+      crateBodyIds_.push_back(id);
     }
   });
   SphereBody ball;
   ball.position = ballRest();
   ball.radius = world_.ball.radius;
+  ball.mass = kWorldBallMass;
   ball.restitution = world_.ball.restitution;
   ball.friction = world_.ball.friction;
   ball.rollingFriction = world_.ball.rollingFriction;
   ballId_ = physics_.addSphere(ball);
+}
+
+Vec3 WorldEditor::cratePosition(const std::string& name) const {
+  if (playing()) {
+    const auto found = crateIds_.find(name);
+    if (found != crateIds_.end()) {
+      const DynamicBox* crate = physics_.dynamicBox(found->second);
+      if (crate != nullptr) return crate->position;
+    }
+  }
+  const EntityData* entity = world_.scene.get(world_.scene.find(name));
+  return entity != nullptr ? entity->transform.position : Vec3{0.0, 0.0, 0.0};
 }
 
 Vec3 WorldEditor::ballPosition() const {
@@ -237,6 +266,23 @@ void WorldEditor::setBallPosition(const Vec3& position) {
 void WorldEditor::setBallVelocity(const Vec3& velocity) {
   SphereBody* ball = physics_.sphere(ballId_);
   if (ball != nullptr) ball->velocity = velocity;
+}
+
+Vec3 WorldEditor::crateVelocity(const std::string& name) const {
+  const auto found = crateIds_.find(name);
+  if (found != crateIds_.end()) {
+    const DynamicBox* crate = physics_.dynamicBox(found->second);
+    if (crate != nullptr) return crate->velocity;
+  }
+  return Vec3{0.0, 0.0, 0.0};
+}
+
+void WorldEditor::setCrateVelocity(const std::string& name, const Vec3& velocity) {
+  const auto found = crateIds_.find(name);
+  if (found != crateIds_.end()) {
+    DynamicBox* crate = physics_.dynamicBox(found->second);
+    if (crate != nullptr) crate->velocity = velocity;
+  }
 }
 
 void WorldEditor::setMoveInput(f64 x, f64 z) {
@@ -305,7 +351,9 @@ void WorldEditor::enterPlay() {
   playerPos_ = playerRest();
   moveInput_ = Vec3{0.0, 0.0, 0.0};
   goalTimer_ = 0.0;
-  resetBallToCenter();
+  // Rebuild the physics world: the ball and every crate reset to their
+  // placed spots and velocities.
+  rebuildPhysics();
   lastError_.clear();
   screen_ = Screen::Play;
 }
@@ -397,6 +445,55 @@ void WorldEditor::update(f64 hostSeconds) {
       if (moving && distance < kickDistance && ball->velocity.length() < kKickMaxSpeed) {
         ball->velocity = direction * (kWorldKickBase + world_.player.speed * kWorldKickSpeedScale) +
                          Vec3{0.0, kWorldKickUp, 0.0};
+      }
+    }
+
+    // Dynamic crates: keep them on the floor area; the player can shove
+    // them by walking into them and kick them like the ball. Crates collide
+    // with the ball through the physics world, so they can push it around.
+    const f64 crateHalf = kWorldCrateSize * 0.5;
+    const f64 crateBound = kWorldFloorHalf - crateHalf;
+    for (const u32 crateId : crateBodyIds_) {
+      DynamicBox* crate = physics_.dynamicBox(crateId);
+      if (crate == nullptr) continue;
+      if (crate->position.x > crateBound) {
+        crate->position.x = crateBound;
+        if (crate->velocity.x > 0.0) crate->velocity.x = 0.0;
+      } else if (crate->position.x < -crateBound) {
+        crate->position.x = -crateBound;
+        if (crate->velocity.x < 0.0) crate->velocity.x = 0.0;
+      }
+      if (crate->position.z > crateBound) {
+        crate->position.z = crateBound;
+        if (crate->velocity.z > 0.0) crate->velocity.z = 0.0;
+      } else if (crate->position.z < -crateBound) {
+        crate->position.z = -crateBound;
+        if (crate->velocity.z < 0.0) crate->velocity.z = 0.0;
+      }
+
+      const f64 dx = crate->position.x - playerPos_.x;
+      const f64 dz = crate->position.z - playerPos_.z;
+      const f64 distance = std::sqrt(dx * dx + dz * dz);
+      const f64 contact = crateHalf + kWorldPlayerRadius;
+      if (distance < contact) {
+        Vec3 pushNormal{1.0, 0.0, 0.0};
+        if (distance > kMoveEpsilon) {
+          pushNormal = Vec3{dx / distance, 0.0, dz / distance};
+        } else if (moving) {
+          pushNormal = Vec3{direction.x, 0.0, direction.z};
+        }
+        crate->position.x = playerPos_.x + pushNormal.x * contact;
+        crate->position.z = playerPos_.z + pushNormal.z * contact;
+        // Walking into the crate shoves it along.
+        if (moving) {
+          crate->velocity.x = direction.x * world_.player.speed;
+          crate->velocity.z = direction.z * world_.player.speed;
+        }
+      }
+      const f64 crateKickDistance = crateHalf + kWorldKickReach;
+      if (moving && distance < crateKickDistance && crate->velocity.length() < kKickMaxSpeed) {
+        const f64 kickSpeed = kWorldKickBase + world_.player.speed * kWorldKickSpeedScale;
+        crate->velocity = direction * (kickSpeed * kWorldCrateKickScale) + Vec3{0.0, kWorldCrateKickUp, 0.0};
       }
     }
 

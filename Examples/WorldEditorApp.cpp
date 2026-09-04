@@ -108,6 +108,7 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
                                kGhostColor, 0.9});
       break;
     case ObjectKind::Block:
+    case ObjectKind::Crate:
       scene.objects.push_back({&cube, Mat4::translation(Vec3{ghost.x, size * 0.5, ghost.z}) *
                                           Mat4::scaling(Vec3{size, size, size}),
                                kGhostColor, 0.9});
@@ -217,6 +218,7 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Num4)) editor.choose(3);
     if (input.pressed(Key::Num5)) editor.choose(4);
     if (input.pressed(Key::Num6)) editor.choose(5);
+    if (input.pressed(Key::Num7)) editor.choose(6);
     if (input.pressed(Key::R)) editor.resetBall();
     if (input.pressed(Key::B)) editor.backToMenu();
 
@@ -245,7 +247,10 @@ int main(int argc, char** argv) {
       const MeshData* mesh = &cubeMesh;
       if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
       if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
-      const Mat4 model = Mat4::translation(entity.transform.position) * Mat4::scaling(entity.transform.scale);
+      // Crates follow the physics bodies while playing.
+      const Vec3 position =
+          kind == ObjectKind::Crate ? editor.cratePosition(entity.name) : entity.transform.position;
+      const Mat4 model = Mat4::translation(position) * Mat4::scaling(entity.transform.scale);
       scene.objects.push_back({mesh, model, entity.color, entity.roughness});
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.
