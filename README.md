@@ -17,13 +17,14 @@
 - [x] فرمت‌ها — OBJ+MTL (متریال/تکسچر و زیر-مش)، متریال و تکسچر FBX، OGG/FLAC، راهنمای .blend
 - [x] فیزیک پیشرفته ۱ — جسم‌های دینامیک: جعبه‌هایی که می‌افتند، روی هم چیده می‌شوند، هل داده و شوت می‌شوند و با توپ برخورد می‌کنند
 - [x] فایل در صحنه — «مدل از فایل» در کاتالوگ: فایل‌های OBJ/FBX پوشهٔ assets را در صحنه می‌گذاری (اندازهٔ دلخواه، نرمال‌سازی خودکار ابعاد، ذخیره/بارگذاری) + فیکس اسپاون توپ داخل جسم‌ها
+- [x] ردیاب پرتو آفلاین — رندر هر دنیای `.kimia` به PNG با path tracing: PBR Cook-Torrance، روشنایی سراسری تا N جهش، آسمان + خورشید با سایهٔ نرم، BVH، خروجی دترمینیستیک (بایت-به-بایت یکسان)
 
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 156/156 tests passed
+./build/bin/kimia_tests      # 161/161 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -39,7 +40,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 156/156 tests passed
+./build-nosdl/bin/kimia_tests    # 161/161 tests passed
 ```
 
 ## KIMIA World — ویرایشگر گزینه‌محور
@@ -54,6 +55,34 @@ cmake --build build-nosdl -j4
 فانتزی؟») → مدیریت اجسام (جابه‌جایی/حذف/رنگ) → محیط → PLAY.
 دنیاها در فرمت SceneIO-v1 ذخیره می‌شوند و فایل‌های قدیمی `.kimia` هم
 بار می‌شوند. جزئیات در [Documentation/World.md](Documentation/World.md).
+
+## ردیاب پرتو — رندر آفلاین (path tracer)
+
+هر دنیایی که در KIMIA World ساخته و ذخیره کرده‌ای را می‌توانی با
+ردیاب پرتو به PNG رندر کنی (تمام CPU؛ بدون نیاز به GPU — روی Termux
+هم اجرا می‌شود):
+
+```bash
+./build/bin/kimia_raytrace دنیای_من.kimia out.png
+./build/bin/kimia_raytrace دنیای_من.kimia big.png \
+    --width 960 --height 720 --spp 64 --bounces 4 \
+    --eye 0 4.5 10 --target 0 0.5 -1 \
+    --sun 0.45 0.5 0.45 --intensity 2.8 --sky 0.7 --exposure 1.0
+# خروجی نمونه:
+# RENDER دنیای_من.kimia -> big.png | 960x720 | 64 spp | 4 bounces | T s | 1662 triangles
+```
+
+- **PBR واقعی**: Cook-Torrance GGX + Fresnel شلیک برای خورشید، بازتاب آسمان
+  به‌عنوان محیط، روشنایی سراسری (GI) با جهش‌های مسیر تا `--bounces`.
+- **سایهٔ نرم خورشید**: خورشید یک قرص با مخروط نمونه‌برداری است (نیم‌سایهٔ واقعی).
+- **BVH**: شتاب‌دهی درخت جعبه‌ها؛ `--brute` همان تصویر را بدون BVH می‌دهد
+  (بایت-به-بایت یکسان — تست دارد).
+- **دترمینیستیک**: RNG هر پیکسل seed ثابت دارد؛ رندر یک دنیا دو بار،
+  همیشه فایل خروجی بایت-به-بایت یکسانی می‌دهد.
+- مدل‌های «مدل از فایل» (OBJ/FBX) با رنگ/زبری موجودیت رندر می‌شوند
+  (نمونه‌برداری تکسچر diffuse در ردیاب پرتو، مورد بعدی نقشهٔ راه است).
+
+جزئیات کامل در [Documentation/TechnicalSpec.md](Documentation/TechnicalSpec.md) (بخش ردیاب پرتو).
 
 ## بازی گلف در مرورگر (WebViewer)
 
@@ -96,8 +125,9 @@ Engine/Platform  # ورودی + پنجرهٔ SDL2 اختیاری
 Engine/App       # WebViewer (HTTP) و بوت‌استرپ Engine
 Engine/Golf      # بازی مرجع: حالت‌ها، سازندهٔ زمین، شات نمایشی
 Engine/World     # ویرایشگر گزینه‌محور: WorldData، WorldIO، شبیه‌سازی بازی
+Engine/Raytracer # ردیاب پرتو آفلاین: PBR + GI + BVH + خروجی PNG دترمینیستیک
 Examples/        # HelloWindow، First3DScene، RemoteView، GolfGame، WorldEditorApp
-Tools/           # kimia_assets (CLI)، kimia_asset_gen (دادهٔ تست)
+Tools/           # kimia_assets (CLI)، kimia_raytrace (رندر آفلاین)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
 Documentation/   # مستندات هر زیرسیستم
 ThirdParty/      # stb، dr_libs، ufbx (vendored)
