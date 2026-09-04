@@ -55,7 +55,9 @@ const char* screenName(int screen) {
     case 13: return "COLOR";
     case 14: return "ENV";
     case 15: return "PLAY";
-    default: return "GOAL";
+    case 16: return "GOAL";
+    case 17: return "MODELFILE";
+    default: return "MODELSIZE";
   }
 }
 
@@ -124,6 +126,7 @@ ObjectKind objectKindForName(const std::string& name) {
   if (name.rfind("Block_", 0) == 0) return ObjectKind::Block;
   if (name.rfind("Goal", 0) == 0) return ObjectKind::Goal;
   if (name.rfind("Crate_", 0) == 0) return ObjectKind::Crate;
+  if (name.rfind("Model_", 0) == 0) return ObjectKind::Model;
   return ObjectKind::Decoration;
 }
 
@@ -233,6 +236,10 @@ void WorldEditor::rebuildPhysics() {
   ball.restitution = world_.ball.restitution;
   ball.friction = world_.ball.friction;
   ball.rollingFriction = world_.ball.rollingFriction;
+  // Objects placed on the ball's spawn point must not swallow the ball:
+  // raise it on top of the overlapping colliders instead of spawning inside.
+  const f64 raised = physics_.resolveSpawnHeight(ball.position, ball.radius, kWorldFloorHalf);
+  if (raised > ball.position.y) ball.position.y = raised;
   ballId_ = physics_.addSphere(ball);
 }
 

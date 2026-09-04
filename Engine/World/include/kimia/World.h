@@ -59,8 +59,8 @@ enum class EnvironmentKind { Grass, Sand, Night };
 // compatible — nothing extra is stored in the file):
 //   "Player" -> player, "Ball" -> ball, "Wall_*" -> wall,
 //   "Block_*" -> block, "Goal*" -> goal, "Crate_*" -> dynamic crate,
-//   anything else -> decoration.
-enum class ObjectKind { Player, Ball, Block, Wall, Goal, Crate, Decoration };
+//   "Model_*" -> placed mesh file (OBJ/FBX), anything else -> decoration.
+enum class ObjectKind { Player, Ball, Block, Wall, Goal, Crate, Model, Decoration };
 
 ObjectKind objectKindForName(const std::string& name);
 bool isPhysicsObject(ObjectKind kind);           // block/wall/goal: static colliders
@@ -77,6 +77,11 @@ inline constexpr f64 kWorldCrateRollingFriction = 0.05;
 inline constexpr f64 kWorldCrateKickScale = 0.6;  // kick speed = ball kick * 0.6
 inline constexpr f64 kWorldCrateKickUp = 0.8;     // plus a small pop
 inline constexpr f64 kWorldBallMass = 0.4;        // the ball is lighter than a crate
+
+// Placed model files (OBJ/FBX): uniform size multiplier chosen from a menu.
+inline constexpr f64 kWorldModelSmall = 0.5;
+inline constexpr f64 kWorldModelMedium = 1.0;
+inline constexpr f64 kWorldModelLarge = 2.0;
 
 struct PlayerConfig {
   f64 speed = kWorldPlayerNormal;
@@ -139,6 +144,16 @@ public:
   void backToMenu();             // play: leave the game, back to the builder
   bool quitRequested() const { return quitRequested_; }
 
+  // --- Import directory (files the user can place in the scene) ---
+  // The editor lists OBJ/FBX files from this directory in the catalog and
+  // the user places them as Model_* entities (Unity-style: drop a file into
+  // the project assets folder, place it in the scene).
+  void setImportDirectory(const std::string& dir) { importDir_ = dir; }
+  const std::string& importDirectory() const { return importDir_; }
+  void refreshImportFiles();
+  usize importFileCount() const { return importFiles_.size(); }
+  const std::string& importFileAt(usize index) const { return importFiles_[index]; }
+
   // --- World lifecycle ---
   const WorldData& world() const { return world_; }
   bool hasWorld() const { return hasWorld_; }
@@ -197,7 +212,7 @@ public:
 private:
   enum class Screen {
     Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
-    Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal,
+    Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal, AskModelFile, AskModelSize,
   };
 
   Vec3 ballRest() const;
@@ -235,6 +250,12 @@ private:
   f64 pendingSize_ = kWorldBlockMedium;
   bool pendingAxisZ_ = true;
   Vec3 ghost_{0.0, 0.0, 0.0};
+
+  // Model file placement (catalog -> file list -> size -> place).
+  std::string importDir_ = "assets";
+  std::vector<std::string> importFiles_;  // OBJ/FBX names, sorted
+  usize importPage_ = 0U;                 // 5 files per screen
+  std::string pendingFile_;
 
   // Management.
   std::vector<EntityHandle> managed_;

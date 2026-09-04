@@ -232,7 +232,7 @@ add_library(kimia_world STATIC
     Engine/World/src/WorldIO.cpp
 )
 target_include_directories(kimia_world PUBLIC Engine/World/include)
-target_link_libraries(kimia_world PUBLIC kimia_golf kimia_scene kimia_physics)
+target_link_libraries(kimia_world PUBLIC kimia_golf kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_world PRIVATE -Werror)

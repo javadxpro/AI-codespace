@@ -124,6 +124,7 @@ bool SceneIO::save(const Scene& scene, std::string& out) {
   scene.forEach([&stream](EntityHandle, const EntityData& entity) {
     const Transform& t = entity.transform;
     stream << "e " << quoteName(entity.name) << " mesh " << meshName(entity.mesh);
+    if (!entity.meshFile.empty()) stream << " meshfile " << quoteName(entity.meshFile);
     stream << " pos " << format(t.position.x) << ' ' << format(t.position.y) << ' ' << format(t.position.z);
     stream << " scale " << format(t.scale.x) << ' ' << format(t.scale.y) << ' ' << format(t.scale.z);
     stream << " color " << format(entity.color.x) << ' ' << format(entity.color.y) << ' ' << format(entity.color.z);
@@ -182,6 +183,11 @@ bool SceneIO::load(const std::string& text, Scene& out, std::string& error) {
           break;
         }
         entity.mesh = *kind;
+        i += 2U;
+        continue;
+      }
+      if (keyword == "meshfile" && i + 1U < tokens.size()) {
+        entity.meshFile = tokens[i + 1U];
         i += 2U;
         continue;
       }

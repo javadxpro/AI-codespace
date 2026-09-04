@@ -26,6 +26,10 @@ struct EntityData {
   std::string name;
   Transform transform;
   MeshKind mesh = MeshKind::cube;
+  // Model entities: a mesh asset file (OBJ/FBX) placed in the scene. Empty
+  // for primitive entities. Rendering resolves this path at run time; the
+  // primitive mesh acts as the fallback shape.
+  std::string meshFile;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
 };

@@ -1,4 +1,7 @@
+#include <kimia/AssetPipeline.h>
 #include <kimia/World.h>
+
+#include <dirent.h>
 
 #include <algorithm>
 #include <cstring>
@@ -36,7 +39,33 @@ u32 nextNumber(const Scene& scene, const char* prefix) {
   return highest + 1U;
 }
 
+bool hasExtension(const std::string& name, const char* ext) {
+  const usize extLength = std::strlen(ext);
+  if (name.size() <= extLength) return false;
+  for (usize i = 0; i < extLength; ++i) {
+    char c = name[name.size() - extLength + i];
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    if (c != ext[i]) return false;
+  }
+  return true;
+}
+
 }  // namespace
+
+void WorldEditor::refreshImportFiles() {
+  importFiles_.clear();
+  DIR* dir = ::opendir(importDir_.c_str());
+  if (dir != nullptr) {
+    while (dirent* entry = ::readdir(dir)) {
+      const std::string name = entry->d_name;
+      if (!hasExtension(name, ".obj") && !hasExtension(name, ".fbx")) continue;
+      importFiles_.push_back(name);
+    }
+    ::closedir(dir);
+  }
+  std::sort(importFiles_.begin(), importFiles_.end());
+  if (importPage_ * 5U >= importFiles_.size()) importPage_ = 0U;
+}
 
 // --- Management accessors ---
 
@@ -66,6 +95,8 @@ std::string WorldEditor::managedKindName() const {
       return "goal";
     case ObjectKind::Crate:
       return "crate";
+    case ObjectKind::Model:
+      return "model";
     default:
       return "other";
   }
@@ -171,6 +202,44 @@ void WorldEditor::confirmPlace() {
       rebuildPhysics();
       break;
     }
+    case ObjectKind::Model: {
+      EntityData model;
+      model.name = "Model_" + std::to_string(nextNumber(world_.scene, "Model_"));
+      model.mesh = MeshKind::cube;  // fallback shape; meshFile drives rendering
+      model.transform.position = Vec3{ghost_.x, ghost_.y, ghost_.z};
+      model.transform.scale = Vec3{pendingSize_, pendingSize_, pendingSize_};
+      model.color = Vec3{1.0, 1.0, 1.0};
+      model.roughness = 0.5;
+      if (!pendingFile_.empty()) {
+        const std::string& dir = importDir_;
+        model.meshFile = (!dir.empty() && dir.back() != '/') ? dir + "/" + pendingFile_ : dir + pendingFile_;
+        // Unity-style import normalization: fit the model's largest bounding
+        // dimension to the chosen size, so any OBJ/FBX becomes a prop of the
+        // requested size regardless of the source file's units.
+        std::string loadError;
+        auto loaded = kimia::assets::loadMesh(model.meshFile, loadError);
+        if (loaded.has_value() && !loaded->mesh.positions.empty()) {
+          Vec3 lo = loaded->mesh.positions[0];
+          Vec3 hi = loaded->mesh.positions[0];
+          for (const Vec3& p : loaded->mesh.positions) {
+            lo.x = std::min(lo.x, p.x);
+            lo.y = std::min(lo.y, p.y);
+            lo.z = std::min(lo.z, p.z);
+            hi.x = std::max(hi.x, p.x);
+            hi.y = std::max(hi.y, p.y);
+            hi.z = std::max(hi.z, p.z);
+          }
+          const f64 size = std::max(hi.x - lo.x, std::max(hi.y - lo.y, hi.z - lo.z));
+          if (size > 1e-6) {
+            const f64 fit = pendingSize_ / size;
+            model.transform.scale = Vec3{fit, fit, fit};
+          }
+        }
+      }
+      world_.scene.create(model);
+      pendingFile_.clear();
+      break;
+    }
     default:
       break;
   }
@@ -232,6 +301,10 @@ std::string WorldEditor::menuTitle() const {
       return "محیط: چه فضایی؟";
     case Screen::Play:
       return "در حال بازی — با جهت‌ها حرکت کن";
+    case Screen::AskModelFile:
+      return "مدل از فایل: کدام فایل؟";
+    case Screen::AskModelSize:
+      return "مدل: چه اندازه‌ای؟";
     default:
       return "گل شد!";
   }
@@ -244,7 +317,21 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::Builder:
       return {"افزودن جسم", "مدیریت اجسام", "محیط", "بازی (PLAY)", "ذخیره", "منوی اصلی"};
     case Screen::Catalog:
-      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "بازگشت"};
+      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "مدل از فایل", "بازگشت"};
+    case Screen::AskModelFile: {
+      std::vector<std::string> labels;
+      const usize begin = importPage_ * 5U;
+      const usize end = begin + 5U < importFiles_.size() ? begin + 5U : importFiles_.size();
+      for (usize i = begin; i < end; ++i) labels.push_back(importFiles_[i]);
+      if (end < importFiles_.size()) {
+        labels.push_back("بیشتر…");
+      } else {
+        labels.push_back("بازگشت");
+      }
+      return labels;
+    }
+    case Screen::AskModelSize:
+      return {"کوچک", "متوسط", "بزرگ", "بازگشت"};
     case Screen::AskPlayer:
       return {"سریع", "عادی", "آرام", "بازگشت"};
     case Screen::AskBall:
@@ -339,8 +426,49 @@ void WorldEditor::choose(i32 optionIndex) {
         pendingSize_ = kWorldCrateSize;
         beginPlace();
       } else if (optionIndex == 6) {
+        // مدل از فایل: list the OBJ/FBX files of the import directory.
+        refreshImportFiles();
+        screen_ = Screen::AskModelFile;
+      } else if (optionIndex == 7) {
         screen_ = Screen::Builder;
       }
+      break;
+    }
+    case Screen::AskModelFile: {
+      const usize begin = importPage_ * 5U;
+      const usize shown = begin + 5U < importFiles_.size() ? 5U : importFiles_.size() - begin;
+      if (importFiles_.empty()) {
+        screen_ = Screen::Catalog;
+        break;
+      }
+      if (optionIndex >= 0 && static_cast<usize>(optionIndex) < shown) {
+        pendingFile_ = importFiles_[begin + static_cast<usize>(optionIndex)];
+        importPage_ = 0U;
+        screen_ = Screen::AskModelSize;
+      } else if (optionIndex == static_cast<i32>(shown)) {
+        if (begin + 5U < importFiles_.size()) {
+          ++importPage_;
+        } else {
+          screen_ = Screen::Catalog;
+        }
+      } else {
+        screen_ = Screen::Catalog;
+      }
+      break;
+    }
+    case Screen::AskModelSize: {
+      if (optionIndex == 0) {
+        pendingSize_ = kWorldModelSmall;
+      } else if (optionIndex == 1) {
+        pendingSize_ = kWorldModelMedium;
+      } else if (optionIndex == 2) {
+        pendingSize_ = kWorldModelLarge;
+      } else {
+        screen_ = Screen::AskModelFile;
+        break;
+      }
+      pendingKind_ = ObjectKind::Model;
+      beginPlace();
       break;
     }
     case Screen::AskPlayer: {
