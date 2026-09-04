@@ -1,0 +1,213 @@
+// KIMIA World — the option-driven editor (spec section 8).
+//
+//   kimia_world [--port N] [--world <file.kimia>]
+//
+// Everything is menus: Create World -> Add Player -> Add Ball (with the
+// "دقیق باشه یا فانتزی؟" question) -> Add Environment -> PLAY. The questions
+// and options are tappable buttons on the WebViewer page; nothing needs a
+// keyboard. Worlds save as SceneIO-v1-compatible text.
+#include <kimia/Engine.h>
+#include <kimia/Image.h>
+#include <kimia/MathUtils.h>
+#include <kimia/Mesh.h>
+#include <kimia/Renderer.h>
+#include <kimia/WebViewer.h>
+#include <kimia/World.h>
+
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <thread>
+#include <vector>
+
+using kimia::Engine;
+using kimia::EngineOptions;
+using kimia::Image;
+using kimia::Key;
+using kimia::Mat4;
+using kimia::MeshData;
+using kimia::RenderScene;
+using kimia::Renderer;
+using kimia::Vec3;
+using kimia::WorldEditor;
+using kimia::clamp;
+using kimia::f64;
+using kimia::i32;
+using kimia::u8;
+using kimia::u16;
+using kimia::usize;
+
+namespace {
+
+std::atomic<bool> running{true};
+
+void onSignal(int) { running.store(false); }
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  int port = 8080;
+  std::string worldPath = "my_world.kimia";
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--port" && i + 1 < argc) {
+      port = std::atoi(argv[++i]);
+    } else if (arg == "--world" && i + 1 < argc) {
+      worldPath = argv[++i];
+    }
+  }
+
+  WorldEditor editor;
+  editor.setWorldPath(worldPath);
+
+  EngineOptions options;
+  options.headless = true;
+  options.enableWeb = true;
+  options.webPort = static_cast<u16>(port);
+  options.windowTitle = "KIMIA World";
+  Engine engine;
+  if (!engine.initialize(options)) {
+    std::printf("engine init failed\n");
+    return 1;
+  }
+  if (engine.server() == nullptr) {
+    std::printf("web server failed to start\n");
+    return 1;
+  }
+
+  // Physical-keyboard keymap: 1-6 pick options, arrows move, r/b actions.
+  const char* keymapJs =
+      "var km={'1':'t:num1','2':'t:num2','3':'t:num3','4':'t:num4','5':'t:num5','6':'t:num6',"
+      "'r':'t:r','b':'t:b','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
+      "'ArrowRight':'h:right'};\n"
+      "function kmd(e,down){var m=km[e.key];if(!m)return;e.preventDefault();"
+      "if(m[0]==='h')post('key='+m.slice(2)+'&down='+(down?1:0));else if(down)post('tap='+m.slice(2));}\n"
+      "window.addEventListener('keydown',function(e){kmd(e,true);});\n"
+      "window.addEventListener('keyup',function(e){kmd(e,false);});";
+
+  engine.server()->stop();
+  engine.server()->start(options.webPort, kimia::web::makePageHtml(
+      "KIMIA World", {}, keymapJs,
+      "everything is menus: tap 1-6 for the options, arrows move in play, r resets the ball, b opens the menu"));
+  std::printf("KIMIA World serving on port %d | GL: %s\n", static_cast<i32>(engine.server()->port()),
+              engine.glAvailable() ? "yes" : "no (software)");
+
+  Renderer renderer;
+  std::string rendererError;
+  if (engine.glAvailable() && !renderer.initialize(rendererError)) {
+    std::printf("renderer init failed: %s\n", rendererError.c_str());
+  }
+
+  const MeshData cubeMesh = kimia::makeCube(1.0);
+  const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
+  const MeshData sphereMesh = kimia::makeSphere(16, 8);
+  const i32 width = 640;
+  const i32 height = 480;
+
+  std::signal(SIGINT, onSignal);
+  f64 cameraYaw = 0.0;
+  const auto frameStart = std::chrono::steady_clock::now();
+  auto lastTime = frameStart;
+  const std::chrono::microseconds frameBudget(33333);  // ~30 fps over the web
+
+  while (running.load() && !editor.quitRequested()) {
+    const auto now = std::chrono::steady_clock::now();
+    f64 dt = static_cast<f64>(std::chrono::duration_cast<std::chrono::microseconds>(now - lastTime).count()) /
+             1000000.0;
+    lastTime = now;
+    dt = clamp(dt, 0.0, 0.1);
+
+    if (!engine.poll()) break;
+    kimia::InputState& input = engine.input();
+
+    if (input.pressed(Key::Escape)) break;
+    if (input.pressed(Key::Num1)) editor.choose(0);
+    if (input.pressed(Key::Num2)) editor.choose(1);
+    if (input.pressed(Key::Num3)) editor.choose(2);
+    if (input.pressed(Key::Num4)) editor.choose(3);
+    if (input.pressed(Key::Num5)) editor.choose(4);
+    if (input.pressed(Key::Num6)) editor.choose(5);
+    if (input.pressed(Key::R)) editor.resetBall();
+    if (input.pressed(Key::B)) editor.backToMenu();
+
+    f64 moveX = 0.0;
+    f64 moveZ = 0.0;
+    if (input.down(Key::Left)) moveX -= 1.0;
+    if (input.down(Key::Right)) moveX += 1.0;
+    if (input.down(Key::Up)) moveZ -= 1.0;
+    if (input.down(Key::Down)) moveZ += 1.0;
+    editor.setMoveInput(moveX, moveZ);
+    cameraYaw += input.lookX * 0.006;
+    cameraYaw = clamp(cameraYaw, -1.2, 1.2);
+
+    editor.update(dt);
+
+    // --- Build the frame ---
+    const kimia::EnvironmentColors colors = kimia::environmentColors(editor.world().environment);
+    RenderScene scene;
+    editor.world().scene.forEach([&](kimia::EntityHandle, const kimia::EntityData& entity) {
+      const MeshData* mesh = &cubeMesh;
+      if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
+      if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
+      const Mat4 model = Mat4::translation(entity.transform.position) * Mat4::scaling(entity.transform.scale);
+      scene.objects.push_back({mesh, model, entity.color, entity.roughness});
+    });
+    // Player (body + head).
+    const Vec3 player = editor.playerPosition();
+    const Vec3 playerColor = editor.world().player.color;
+    scene.objects.push_back(
+        {&cubeMesh, Mat4::translation(player) * Mat4::scaling(Vec3{0.6, 1.0, 0.6}), playerColor, 0.5});
+    scene.objects.push_back({&cubeMesh, Mat4::translation(player + Vec3{0.0, 0.65, 0.0}) *
+                                            Mat4::scaling(Vec3{0.3, 0.3, 0.3}),
+                             playerColor, 0.5});
+    // Ball.
+    const f64 ballRadius = editor.world().ball.radius;
+    scene.objects.push_back(
+        {&sphereMesh, Mat4::translation(editor.ballPosition()) * Mat4::scaling(Vec3{ballRadius, ballRadius, ballRadius}),
+         editor.world().ball.color, 0.3});
+    // Camera: follows the player (menus) or the ball (play).
+    Vec3 target = player + Vec3{0.0, 0.5, 0.0};
+    if (editor.playing()) target = editor.ballPosition();
+    const Vec3 eye = target + Vec3{std::sin(cameraYaw) * 6.0, 3.4, std::cos(cameraYaw) * 6.0};
+    scene.cameraPosition = eye;
+    scene.view = Mat4::lookAt(eye, target, Vec3{0.0, 1.0, 0.0});
+    scene.projection = Mat4::perspective(kimia::radians(60.0), static_cast<f64>(width) / static_cast<f64>(height),
+                                         0.1, 100.0);
+    scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
+
+    Image image;
+    std::vector<u8> png;
+    if (renderer.ready()) {
+      renderer.render(scene, width, height);
+      if (!renderer.capturePNG(width, height, png)) png.clear();
+    }
+    if (png.empty()) {
+      kimia::renderSoftware(scene, width, height, colors.clear, image);
+      png = image.encodePNG();
+    }
+
+    // --- Menu (buttons the user sees) ---
+    kimia::web::Menu menu;
+    menu.title = editor.menuTitle();
+    const std::vector<std::string> labels = editor.optionLabels();
+    for (usize i = 0; i < labels.size(); ++i) {
+      menu.taps.push_back({labels[i], "num" + std::to_string(i + 1U)});
+    }
+    for (const auto& pad : editor.holdPad()) menu.holds.push_back({pad.first, pad.second});
+    for (const auto& pad : editor.tapPad()) menu.taps.push_back({pad.first, pad.second});
+
+    engine.server()->publishFrame(std::move(png), editor.statsLine());
+    engine.server()->setMenu(menu);
+    engine.endFrame();
+
+    const auto elapsed = std::chrono::steady_clock::now() - now;
+    const auto left = frameBudget - std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+    if (left.count() > 0) std::this_thread::sleep_for(left);
+  }
+
+  std::printf("bye | %s\n", editor.statsLine().c_str());
+  return 0;
+}
