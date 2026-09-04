@@ -13,14 +13,14 @@
 - [x] Platform (ورودی LEVEL/EDGE + پنجرهٔ SDL2 اختیاری)
 - [x] App — WebViewer (فریم‌ها در مرورگر، localhost:8080) و بوت‌استرپ Engine
 - [x] GolfGame — بازی مرجع با نشانه‌گیری/شارژ/شوت، سازندهٔ زمین و `# demo`
-- [ ] KIMIA World، ویرایشگر گزینه‌محور و PLAY در مرورگر
+- [x] KIMIA World — ویرایشگر گزینه‌محور: ساخت دنیا با سؤال و پاسخ، PLAY در مرورگر
 
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 101/101 tests passed
+./build/bin/kimia_tests      # 118/118 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -36,8 +36,20 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 101/101 tests passed
+./build-nosdl/bin/kimia_tests    # 118/118 tests passed
 ```
+
+## KIMIA World — ویرایشگر گزینه‌محور
+
+```bash
+./build/bin/kimia_world --port 8080
+# سپس در مرورگر: http://localhost:8080
+```
+
+همه‌چیز با دکمه‌ها: Create World → Add Player → Add Ball (سؤال
+«دقیق باشه یا فانتزی؟») → Add Environment → PLAY. دنیاها در
+فرمت SceneIO-v1 ذخیره می‌شوند و فایل‌های قدیمی `.kimia` هم بار می‌شوند.
+جزئیات در [Documentation/World.md](Documentation/World.md).
 
 ## بازی گلف در مرورگر (WebViewer)
 
@@ -79,7 +91,8 @@ Engine/Renderer  # GL/EGL (dlopen) + سایه + رسترایزر نرم‌افز
 Engine/Platform  # ورودی + پنجرهٔ SDL2 اختیاری
 Engine/App       # WebViewer (HTTP) و بوت‌استرپ Engine
 Engine/Golf      # بازی مرجع: حالت‌ها، سازندهٔ زمین، شات نمایشی
-Examples/        # HelloWindow، First3DScene، RemoteView، GolfGame
+Engine/World     # ویرایشگر گزینه‌محور: WorldData، WorldIO، شبیه‌سازی بازی
+Examples/        # HelloWindow، First3DScene، RemoteView، GolfGame، WorldEditorApp
 Tools/           # kimia_assets (CLI)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
 Documentation/   # مستندات هر زیرسیستم
