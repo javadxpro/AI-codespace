@@ -1,11 +1,11 @@
-// KIMIA World — the option-driven editor (spec section 8).
+// KIMIA World — the option-driven editor / object builder (spec section 8).
 //
 //   kimia_world [--port N] [--world <file.kimia>]
 //
-// Everything is menus: Create World -> Add Player -> Add Ball (with the
-// "دقیق باشه یا فانتزی؟" question) -> Add Environment -> PLAY. The questions
-// and options are tappable buttons on the WebViewer page; nothing needs a
-// keyboard. Worlds save as SceneIO-v1-compatible text.
+// Start with an EMPTY ground and build your game with menus only: add a
+// player, a ball, blocks, walls, goals — each object asks a few plain
+// questions («دقیق باشه یا فانتزی؟») — then manage them (move/delete/color)
+// and press PLAY. Worlds save as SceneIO-v1-compatible text.
 #include <kimia/Engine.h>
 #include <kimia/Image.h>
 #include <kimia/MathUtils.h>
@@ -25,10 +25,12 @@
 
 using kimia::Engine;
 using kimia::EngineOptions;
+using kimia::EntityData;
 using kimia::Image;
 using kimia::Key;
 using kimia::Mat4;
 using kimia::MeshData;
+using kimia::ObjectKind;
 using kimia::RenderScene;
 using kimia::Renderer;
 using kimia::Vec3;
@@ -45,6 +47,90 @@ namespace {
 std::atomic<bool> running{true};
 
 void onSignal(int) { running.store(false); }
+
+const Vec3 kGhostColor{1.0, 0.85, 0.2};
+const Vec3 kSelectionColor{1.0, 0.9, 0.25};
+
+// A single-entity goal (scale.x = width, scale.y = height) drawn as two
+// posts and a crossbar.
+void addGoalShape(RenderScene& scene, const EntityData& entity, const MeshData& cube) {
+  const f64 width = entity.transform.scale.x;
+  const f64 half = entity.transform.scale.y * 0.5;
+  const Vec3 at = entity.transform.position;
+  const Vec3 color = entity.color;
+  scene.objects.push_back(
+      {&cube, Mat4::translation(Vec3{at.x - width * 0.5 + 0.06, at.y, at.z}) *
+                  Mat4::scaling(Vec3{0.12, entity.transform.scale.y, 0.12}),
+       color, entity.roughness});
+  scene.objects.push_back(
+      {&cube, Mat4::translation(Vec3{at.x + width * 0.5 - 0.06, at.y, at.z}) *
+                  Mat4::scaling(Vec3{0.12, entity.transform.scale.y, 0.12}),
+       color, entity.roughness});
+  scene.objects.push_back(
+      {&cube, Mat4::translation(Vec3{at.x, at.y + half, at.z}) * Mat4::scaling(Vec3{width + 0.12, 0.12, 0.12}),
+       color, entity.roughness});
+}
+
+void addSelectionMarkers(RenderScene& scene, const EntityData& entity, const MeshData& cube) {
+  const Vec3 half = entity.transform.scale * 0.5;
+  const Vec3 at = entity.transform.position;
+  const f64 marker = 0.06;
+  for (i32 sx = -1; sx <= 1; sx += 2) {
+    for (i32 sy = -1; sy <= 1; sy += 2) {
+      for (i32 sz = -1; sz <= 1; sz += 2) {
+        const Vec3 corner{at.x + half.x * static_cast<f64>(sx), at.y + half.y * static_cast<f64>(sy),
+                          at.z + half.z * static_cast<f64>(sz)};
+        scene.objects.push_back(
+            {&cube, Mat4::translation(corner) * Mat4::scaling(Vec3{marker, marker, marker}),
+             kSelectionColor, 0.9});
+      }
+    }
+  }
+}
+
+void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData& cube,
+                   const MeshData& sphere) {
+  const Vec3 ghost = editor.ghostPosition();
+  const f64 size = editor.ghostSize();
+  switch (editor.ghostKind()) {
+    case ObjectKind::Player: {
+      scene.objects.push_back({&cube, Mat4::translation(Vec3{ghost.x, 0.5, ghost.z}) *
+                                          Mat4::scaling(Vec3{0.6, 1.0, 0.6}),
+                               kGhostColor, 0.9});
+      scene.objects.push_back({&cube, Mat4::translation(Vec3{ghost.x, 1.15, ghost.z}) *
+                                          Mat4::scaling(Vec3{0.3, 0.3, 0.3}),
+                               kGhostColor, 0.9});
+      break;
+    }
+    case ObjectKind::Ball:
+      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, 0.35, ghost.z}) *
+                                            Mat4::scaling(Vec3{0.24, 0.24, 0.24}),
+                               kGhostColor, 0.9});
+      break;
+    case ObjectKind::Block:
+      scene.objects.push_back({&cube, Mat4::translation(Vec3{ghost.x, size * 0.5, ghost.z}) *
+                                          Mat4::scaling(Vec3{size, size, size}),
+                               kGhostColor, 0.9});
+      break;
+    case ObjectKind::Wall:
+      scene.objects.push_back(
+          {&cube, Mat4::translation(Vec3{ghost.x, 0.5, ghost.z}) *
+                      Mat4::scaling(editor.ghostAxisZ() ? Vec3{0.5, 1.0, size} : Vec3{size, 1.0, 0.5}),
+           kGhostColor, 0.9});
+      break;
+    case ObjectKind::Goal: {
+      EntityData preview;
+      preview.transform.position = Vec3{ghost.x, kimia::kWorldGoalHeight * 0.5, ghost.z};
+      preview.transform.scale = Vec3{size, kimia::kWorldGoalHeight, 0.12};
+      preview.color = kGhostColor;
+      preview.roughness = 0.9;
+      addGoalShape(scene, preview, cube);
+      break;
+    }
+    default:
+      break;
+  }
+}
 
 }  // namespace
 
@@ -78,11 +164,12 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Physical-keyboard keymap: 1-6 pick options, arrows move, r/b actions.
+  // Physical-keyboard keymap: 1-6 pick options, arrows move, Shift = fine,
+  // r/b actions.
   const char* keymapJs =
       "var km={'1':'t:num1','2':'t:num2','3':'t:num3','4':'t:num4','5':'t:num5','6':'t:num6',"
       "'r':'t:r','b':'t:b','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
-      "'ArrowRight':'h:right'};\n"
+      "'ArrowRight':'h:right','Shift':'h:shift'};\n"
       "function kmd(e,down){var m=km[e.key];if(!m)return;e.preventDefault();"
       "if(m[0]==='h')post('key='+m.slice(2)+'&down='+(down?1:0));else if(down)post('tap='+m.slice(2));}\n"
       "window.addEventListener('keydown',function(e){kmd(e,true);});\n"
@@ -91,7 +178,7 @@ int main(int argc, char** argv) {
   engine.server()->stop();
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
-      "everything is menus: tap 1-6 for the options, arrows move in play, r resets the ball, b opens the menu"));
+      "everything is menus: tap 1-6 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
   std::printf("KIMIA World serving on port %d | GL: %s\n", static_cast<i32>(engine.server()->port()),
               engine.glAvailable() ? "yes" : "no (software)");
 
@@ -140,6 +227,7 @@ int main(int argc, char** argv) {
     if (input.down(Key::Up)) moveZ -= 1.0;
     if (input.down(Key::Down)) moveZ += 1.0;
     editor.setMoveInput(moveX, moveZ);
+    editor.setFineMove(input.down(Key::Shift));
     cameraYaw += input.lookX * 0.006;
     cameraYaw = clamp(cameraYaw, -1.2, 1.2);
 
@@ -148,30 +236,47 @@ int main(int argc, char** argv) {
     // --- Build the frame ---
     const kimia::EnvironmentColors colors = kimia::environmentColors(editor.world().environment);
     RenderScene scene;
-    editor.world().scene.forEach([&](kimia::EntityHandle, const kimia::EntityData& entity) {
+    editor.world().scene.forEach([&](kimia::EntityHandle, const EntityData& entity) {
+      const ObjectKind kind = kimia::objectKindForName(entity.name);
+      if (kind == ObjectKind::Goal && !kimia::isLegacyGoalPart(entity.name)) {
+        addGoalShape(scene, entity, cubeMesh);
+        return;
+      }
       const MeshData* mesh = &cubeMesh;
       if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
       if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
       const Mat4 model = Mat4::translation(entity.transform.position) * Mat4::scaling(entity.transform.scale);
       scene.objects.push_back({mesh, model, entity.color, entity.roughness});
+      if (kind == ObjectKind::Player) {
+        // A little head so the player reads as a character.
+        scene.objects.push_back(
+            {&cubeMesh, Mat4::translation(entity.transform.position + Vec3{0.0, 0.65, 0.0}) *
+                            Mat4::scaling(Vec3{0.3, 0.3, 0.3}),
+             entity.color, entity.roughness});
+      }
     });
-    // Player (body + head).
-    const Vec3 player = editor.playerPosition();
-    const Vec3 playerColor = editor.world().player.color;
-    scene.objects.push_back(
-        {&cubeMesh, Mat4::translation(player) * Mat4::scaling(Vec3{0.6, 1.0, 0.6}), playerColor, 0.5});
-    scene.objects.push_back({&cubeMesh, Mat4::translation(player + Vec3{0.0, 0.65, 0.0}) *
-                                            Mat4::scaling(Vec3{0.3, 0.3, 0.3}),
-                             playerColor, 0.5});
-    // Ball.
+    // The ball follows the physics body.
     const f64 ballRadius = editor.world().ball.radius;
     scene.objects.push_back(
         {&sphereMesh, Mat4::translation(editor.ballPosition()) * Mat4::scaling(Vec3{ballRadius, ballRadius, ballRadius}),
          editor.world().ball.color, 0.3});
-    // Camera: follows the player (menus) or the ball (play).
-    Vec3 target = player + Vec3{0.0, 0.5, 0.0};
-    if (editor.playing()) target = editor.ballPosition();
-    const Vec3 eye = target + Vec3{std::sin(cameraYaw) * 6.0, 3.4, std::cos(cameraYaw) * 6.0};
+    // Ghost preview while placing, selection markers while managing.
+    if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
+    if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
+      addSelectionMarkers(scene, *editor.selectedEntity(), cubeMesh);
+    }
+
+    // Camera: above the ghost while placing/moving, above the ball in play,
+    // an overview of the field otherwise.
+    Vec3 target = Vec3{0.0, 0.2, 0.0};
+    if (editor.placing() || editor.movingObject()) {
+      target = Vec3{editor.ghostPosition().x, 0.2, editor.ghostPosition().z};
+    } else if (editor.playing()) {
+      target = editor.ballPosition();
+    } else if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
+      target = editor.selectedEntity()->transform.position;
+    }
+    const Vec3 eye = target + Vec3{std::sin(cameraYaw) * 6.0, 3.6, std::cos(cameraYaw) * 6.0};
     scene.cameraPosition = eye;
     scene.view = Mat4::lookAt(eye, target, Vec3{0.0, 1.0, 0.0});
     scene.projection = Mat4::perspective(kimia::radians(60.0), static_cast<f64>(width) / static_cast<f64>(height),
