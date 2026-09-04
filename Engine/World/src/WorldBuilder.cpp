@@ -4,12 +4,20 @@
 #include <dirent.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <sstream>
 
 namespace kimia {
 
 namespace {
+
+// Human-readable numbers for the inspector title («x 2.00» etc.).
+std::string format1f(f64 value) {
+  char buffer[32];
+  std::snprintf(buffer, sizeof(buffer), "%.2f", value);
+  return std::string(buffer);
+}
 
 constexpr f64 kBlockColor = 0.62;
 constexpr f64 kWallColorR = 0.7;
@@ -256,6 +264,32 @@ void WorldEditor::deleteManaged() {
   resetBallToCenter();
 }
 
+void WorldEditor::selectManagedAt(usize listIndex) {
+  refreshManaged();
+  if (listIndex >= managed_.size()) return;
+  managedIndex_ = listIndex;
+  inspectorPage_ = 0U;
+  screen_ = Screen::Inspector;
+}
+
+void WorldEditor::nudgeSelectedPosition(f64 dx, f64 dy, f64 dz) {
+  EntityData* entity = selectedEntity() != nullptr ? world_.scene.get(managed_[managedIndex_]) : nullptr;
+  if (entity == nullptr) return;
+  const f64 bound = kWorldFloorHalf - 0.5;
+  entity->transform.position.x = std::clamp(entity->transform.position.x + dx, -bound, bound);
+  entity->transform.position.y = std::clamp(entity->transform.position.y + dy, 0.05, 20.0);
+  entity->transform.position.z = std::clamp(entity->transform.position.z + dz, -bound, bound);
+  rebuildPhysics();
+}
+
+void WorldEditor::nudgeSelectedScale(f64 delta) {
+  EntityData* entity = selectedEntity() != nullptr ? world_.scene.get(managed_[managedIndex_]) : nullptr;
+  if (entity == nullptr) return;
+  const f64 value = std::clamp(entity->transform.scale.x + delta, kWorldNudgeStep, 10.0);
+  entity->transform.scale = Vec3{value, value, value};
+  rebuildPhysics();
+}
+
 void WorldEditor::applyManagedColor(const Vec3& color) {
   if (managedIndex_ >= managed_.size()) return;
   EntityData* entity = world_.scene.get(managed_[managedIndex_]);
@@ -290,7 +324,14 @@ std::string WorldEditor::menuTitle() const {
     case Screen::Place:
       return "جای‌گذاری: با جهت‌ها حرکت کن";
     case Screen::Manage:
-      return "مدیریت اجسام";
+      return "اجسام — کدام را ویرایش کنیم؟";
+    case Screen::Inspector: {
+      const EntityData* entity = selectedEntity();
+      if (entity == nullptr) return "بازرس";
+      return entity->name + " — x " + format1f(entity->transform.position.x) + " y " +
+             format1f(entity->transform.position.y) + " z " + format1f(entity->transform.position.z) +
+             " | اندازه " + format1f(entity->transform.scale.x);
+    }
     case Screen::Move:
       return "جابه‌جایی: با جهت‌ها حرکت کن";
     case Screen::ConfirmDelete:
@@ -347,8 +388,31 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::Place:
       return {"قرار دادن", "بازگشت"};
     case Screen::Manage: {
+      // Hierarchy: a paged list of every object by name (5 per screen).
       if (managed_.empty()) return {"بازگشت"};
-      return {"قبلی", "بعدی", "جابه‌جایی", "حذف", "رنگ", "بازگشت"};
+      const usize begin = managePage_ * 5U;
+      const usize shown = begin + 5U < managed_.size() ? 5U : managed_.size() - begin;
+      std::vector<std::string> labels;
+      for (usize i = begin; i < begin + shown; ++i) {
+        const EntityData* entity = world_.scene.get(managed_[i]);
+        labels.push_back(entity != nullptr ? entity->name : "?");
+      }
+      if (begin + 5U < managed_.size()) {
+        labels.push_back("بیشتر…");
+      } else {
+        labels.push_back("بازگشت");
+      }
+      return labels;
+    }
+    case Screen::Inspector: {
+      if (selectedEntity() == nullptr) return {"بازگشت"};
+      if (inspectorPage_ == 0U) {
+        return {"X +۰٫۱", "X −۰٫۱", "Z +۰٫۱", "Z −۰٫۱", "بیشتر…"};
+      }
+      if (inspectorPage_ == 1U) {
+        return {"بالا +۰٫۱", "پایین −۰٫۱", "بزرگ‌تر +۰٫۱", "کوچک‌تر −۰٫۱", "بیشتر…"};
+      }
+      return {"جابه‌جایی با جهت", "رنگ", "حذف", "بازگشت"};
     }
     case Screen::Move:
       return {"پایان"};
@@ -364,6 +428,11 @@ std::vector<std::string> WorldEditor::optionLabels() const {
 }
 
 std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
+  if (cameraControlled()) {
+    // Orbit camera: the arrows rotate the view around the scene (or around
+    // the selected object in the hierarchy/inspector screens).
+    return {{"بالا", "up"}, {"چرخش ←", "left"}, {"پایین", "down"}, {"چرخش →", "right"}};
+  }
   if (!playing() && screen_ != Screen::Place && screen_ != Screen::Move) return {};
   if (playing()) {
     return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}};
@@ -372,6 +441,9 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
 }
 
 std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
+  if (cameraControlled()) {
+    return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
+  }
   if (!playing()) return {};
   return {{"توپ از نو", "r"}, {"منو", "b"}};
 }
@@ -396,6 +468,7 @@ void WorldEditor::choose(i32 optionIndex) {
         screen_ = Screen::Catalog;
       } else if (optionIndex == 1) {
         refreshManaged();
+        managePage_ = 0U;
         screen_ = Screen::Manage;
       } else if (optionIndex == 2) {
         screen_ = Screen::AskEnvironment;
@@ -569,25 +642,67 @@ void WorldEditor::choose(i32 optionIndex) {
         if (optionIndex == 0) screen_ = Screen::Builder;
         break;
       }
-      if (optionIndex == 0) {
-        managedIndex_ = managedIndex_ == 0U ? managed_.size() - 1U : managedIndex_ - 1U;
-      } else if (optionIndex == 1) {
-        managedIndex_ = (managedIndex_ + 1U) % managed_.size();
-      } else if (optionIndex == 2) {
-        screen_ = Screen::Move;
-      } else if (optionIndex == 3) {
-        screen_ = Screen::ConfirmDelete;
-      } else if (optionIndex == 4) {
-        screen_ = Screen::AskColor;
-      } else if (optionIndex == 5) {
+      const usize begin = managePage_ * 5U;
+      const usize shown = begin + 5U < managed_.size() ? 5U : managed_.size() - begin;
+      if (optionIndex >= 0 && static_cast<usize>(optionIndex) < shown) {
+        selectManagedAt(begin + static_cast<usize>(optionIndex));
+      } else if (optionIndex == static_cast<i32>(shown)) {
+        if (begin + 5U < managed_.size()) {
+          ++managePage_;
+        } else {
+          screen_ = Screen::Builder;
+        }
+      } else {
         screen_ = Screen::Builder;
+      }
+      break;
+    }
+    case Screen::Inspector: {
+      if (selectedEntity() == nullptr) {
+        screen_ = Screen::Manage;
+        break;
+      }
+      if (inspectorPage_ == 0U) {
+        if (optionIndex == 0) {
+          nudgeSelectedPosition(kWorldNudgeStep, 0.0, 0.0);
+        } else if (optionIndex == 1) {
+          nudgeSelectedPosition(-kWorldNudgeStep, 0.0, 0.0);
+        } else if (optionIndex == 2) {
+          nudgeSelectedPosition(0.0, 0.0, kWorldNudgeStep);
+        } else if (optionIndex == 3) {
+          nudgeSelectedPosition(0.0, 0.0, -kWorldNudgeStep);
+        } else if (optionIndex == 4) {
+          inspectorPage_ = 1U;
+        }
+      } else if (inspectorPage_ == 1U) {
+        if (optionIndex == 0) {
+          nudgeSelectedPosition(0.0, kWorldNudgeStep, 0.0);
+        } else if (optionIndex == 1) {
+          nudgeSelectedPosition(0.0, -kWorldNudgeStep, 0.0);
+        } else if (optionIndex == 2) {
+          nudgeSelectedScale(kWorldNudgeStep);
+        } else if (optionIndex == 3) {
+          nudgeSelectedScale(-kWorldNudgeStep);
+        } else if (optionIndex == 4) {
+          inspectorPage_ = 2U;
+        }
+      } else {
+        if (optionIndex == 0) {
+          screen_ = Screen::Move;  // free drag with the arrows
+        } else if (optionIndex == 1) {
+          screen_ = Screen::AskColor;
+        } else if (optionIndex == 2) {
+          screen_ = Screen::ConfirmDelete;
+        } else if (optionIndex == 3) {
+          screen_ = Screen::Manage;
+        }
       }
       break;
     }
     case Screen::Move: {
       if (optionIndex == 0) {
         rebuildPhysics();
-        screen_ = Screen::Manage;
+        screen_ = Screen::Inspector;
       }
       break;
     }
@@ -596,7 +711,7 @@ void WorldEditor::choose(i32 optionIndex) {
         deleteManaged();
         screen_ = Screen::Manage;
       } else {
-        screen_ = Screen::Manage;
+        screen_ = Screen::Inspector;
       }
       break;
     }
@@ -612,7 +727,7 @@ void WorldEditor::choose(i32 optionIndex) {
       } else if (optionIndex == 4) {
         applyManagedColor(Vec3{0.92, 0.92, 0.92});
       }
-      screen_ = Screen::Manage;
+      screen_ = Screen::Inspector;
       break;
     }
     case Screen::AskEnvironment: {

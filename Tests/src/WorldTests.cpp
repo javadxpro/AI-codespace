@@ -235,7 +235,7 @@ KIMIA_TEST(world_ball_question_accurate_vs_fantasy) {
   KIMIA_REQUIRE(editor.objectCount() == 1U);
 }
 
-KIMIA_TEST(world_manage_lists_moves_deletes_and_colors) {
+KIMIA_TEST(world_manage_hierarchy_inspector_move_color_delete) {
   WorldEditor editor = editorWithWorld();
   addBlock(editor, 1, Vec3{2.0, 0.0, 0.0});
   exitPlace(editor);
@@ -243,40 +243,114 @@ KIMIA_TEST(world_manage_lists_moves_deletes_and_colors) {
   exitPlace(editor);
   KIMIA_REQUIRE(editor.objectCount() == 2U);
 
+  // Hierarchy: the manage screen lists every object by name.
   enterManage(editor);
   KIMIA_REQUIRE(editor.managedCount() == 2U);
-  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // prev/next/move/delete/color/back
-  const std::string first = editor.managedName();
-  editor.choose(1);  // بعدی
-  const std::string second = editor.managedName();
-  KIMIA_REQUIRE(first != second);
-  editor.choose(0);  // قبلی
-  KIMIA_REQUIRE(editor.managedName() == first);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // Block_1, Goal_1, بازگشت
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "Block_1");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "Goal_1");
 
-  // Move: arrows move the selected object live.
-  editor.choose(2);  // جابه‌جایی
+  // Pick Block_1 -> Inspector with live values in the title.
+  editor.choose(0);
+  KIMIA_REQUIRE(editor.managedName() == "Block_1");
+  const std::string title = editor.menuTitle();
+  KIMIA_REQUIRE(title.find("Block_1") != std::string::npos);
+  KIMIA_REQUIRE(title.find("x 2.00") != std::string::npos);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 5U);  // X+/X-/Z+/Z-/بیشتر
+
+  // Precise numeric nudges (0.1 per tap).
+  editor.choose(0);  // X +0.1
+  editor.choose(1);  // X -0.1 (back to 2.0)
+  editor.choose(2);  // Z +0.1
+  const EntityData* block = editor.world().scene.get(editor.world().scene.find("Block_1"));
+  KIMIA_REQUIRE(block != nullptr);
+  KIMIA_REQUIRE(near3(block->transform.position, Vec3{2.0, 0.5, 0.1}));
+
+  // Page 2: height and scale.
+  editor.choose(4);  // بیشتر…
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بالا +۰٫۱");
+  editor.choose(0);  // بالا +0.1
+  editor.choose(2);  // بزرگتر +0.1
+  KIMIA_REQUIRE(near3(block->transform.position, Vec3{2.0, 0.6, 0.1}));
+  KIMIA_REQUIRE(near3(block->transform.scale, Vec3{1.1, 1.1, 1.1}));
+  editor.choose(3);  // کوچکتر -0.1
+  KIMIA_REQUIRE(near3(block->transform.scale, Vec3{1.0, 1.0, 1.0}));
+
+  // Page 3: free drag with the arrows (2 units/s), color, delete.
+  editor.choose(4);  // بیشتر…
+  editor.choose(0);  // جابه‌جایی با جهت
   KIMIA_REQUIRE(editor.optionLabels().size() == 1U);  // پایان
   editor.setMoveInput(1.0, 0.0);
-  editor.update(0.5);  // 2 units/s * 0.5 s = +1.0 on x
+  editor.update(0.5);  // +1.0 on x
   editor.setMoveInput(0.0, 0.0);
-  editor.choose(0);  // پایان
-  const EntityData* moved = editor.selectedEntity();
-  KIMIA_REQUIRE(moved != nullptr);
-  KIMIA_REQUIRE(near3(moved->transform.position, Vec3{3.0, 0.5, 0.0}));  // the block at (2,0.5,0)
+  editor.choose(0);  // پایان -> back to the inspector
+  KIMIA_REQUIRE(editor.managedName() == "Block_1");
+  KIMIA_REQUIRE(near3(block->transform.position, Vec3{3.0, 0.6, 0.1}));
 
-  // Color: pick red.
-  editor.choose(4);  // رنگ
+  // Color: the flow returns to the inspector afterwards.
+  editor.choose(1);  // رنگ (still on page 3)
   editor.choose(0);  // قرمز
-  KIMIA_REQUIRE(near3(moved->color, Vec3{0.85, 0.15, 0.15}));
+  KIMIA_REQUIRE(near3(block->color, Vec3{0.85, 0.15, 0.15}));
+  KIMIA_REQUIRE(editor.managedName() == "Block_1");
 
-  // Delete: confirm yes.
-  editor.choose(3);  // حذف
+  // Delete: confirm yes -> back on the hierarchy list.
+  editor.choose(2);  // حذف (still on page 3)
   KIMIA_REQUIRE(editor.optionLabels().size() == 2U);  // بله/نه
   editor.choose(0);  // بله
   KIMIA_REQUIRE(editor.objectCount() == 1U);
   KIMIA_REQUIRE(editor.world().scene.find("Block_1") == kimia::kNullEntity);
-  editor.choose(5);  // بازگشت
+  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);  // Goal_1 + بازگشت
+  editor.choose(1);  // بازگشت
   KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // back on the builder
+}
+
+KIMIA_TEST(world_hierarchy_pages_with_more_than_five_objects) {
+  WorldEditor editor = editorWithWorld();
+  for (i32 i = 0; i < 6; ++i) {
+    addBlock(editor, 1, Vec3{static_cast<f64>(i), 0.0, 0.0});
+    exitPlace(editor);
+  }
+  KIMIA_REQUIRE(editor.objectCount() == 6U);
+  enterManage(editor);
+  KIMIA_REQUIRE(editor.managedCount() == 6U);
+  // Page 1: Block_1..Block_5 + «بیشتر…».
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "Block_1");
+  KIMIA_REQUIRE(editor.optionLabels()[5] == "بیشتر…");
+  editor.choose(5);  // page 2
+  // Page 2: Block_6 + «بازگشت».
+  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "Block_6");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازگشت");
+  editor.choose(1);  // بازگشت -> builder
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
+}
+
+KIMIA_TEST(world_inspector_edits_survive_save_and_load) {
+  WorldEditor editor = editorWithWorld();
+  addBlock(editor, 1, Vec3{2.0, 0.0, 0.0});
+  exitPlace(editor);
+  enterManage(editor);
+  editor.choose(0);       // Block_1 -> inspector
+  editor.choose(0);       // X +0.1
+  editor.choose(4);       // page 2
+  editor.choose(0);       // بالا +0.1
+  editor.choose(2);       // بزرگتر +0.1
+  const EntityData* block = editor.world().scene.get(editor.world().scene.find("Block_1"));
+  KIMIA_REQUIRE(block != nullptr);
+  KIMIA_REQUIRE(near3(block->transform.position, Vec3{2.1, 0.6, 0.0}));
+  KIMIA_REQUIRE(near3(block->transform.scale, Vec3{1.1, 1.1, 1.1}));
+
+  const std::string path = tmpPath("inspector_world.kimia");
+  std::string error;
+  KIMIA_REQUIRE(editor.saveWorld(path, error));
+  WorldEditor reloaded;
+  KIMIA_REQUIRE(reloaded.loadWorld(path, error));
+  const EntityData* again = reloaded.world().scene.get(reloaded.world().scene.find("Block_1"));
+  KIMIA_REQUIRE(again != nullptr);
+  KIMIA_REQUIRE(near3(again->transform.position, Vec3{2.1, 0.6, 0.0}));
+  KIMIA_REQUIRE(near3(again->transform.scale, Vec3{1.1, 1.1, 1.1}));
+  KIMIA_REQUIRE(reloaded.physicsBoxCount() == 1U);  // collider rebuilt from the edit
 }
 
 KIMIA_TEST(world_empty_manage_shows_only_back) {

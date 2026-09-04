@@ -49,6 +49,7 @@ inline constexpr f64 kWorldGoalLarge = 4.0;
 inline constexpr f64 kWorldGoalHeight = 2.0;
 inline constexpr f64 kWorldPlaceSpeed = 2.0;       // ghost/move speed
 inline constexpr f64 kWorldPlaceSpeedFine = 0.5;   // with Shift (ریز)
+inline constexpr f64 kWorldNudgeStep = 0.1;        // inspector: position/scale per tap
 
 // Ball physics presets. Accurate = the golf tuning; fantasy = bouncy/slick.
 enum class BallType { Accurate, Fantasy };
@@ -174,13 +175,22 @@ public:
   bool placing() const { return screen_ == Screen::Place; }
   bool movingObject() const { return screen_ == Screen::Move; }
   bool selectingObject() const {
-    return screen_ == Screen::Manage || screen_ == Screen::Move || screen_ == Screen::ConfirmDelete ||
-           screen_ == Screen::AskColor;
+    return screen_ == Screen::Manage || screen_ == Screen::Inspector || screen_ == Screen::Move ||
+           screen_ == Screen::ConfirmDelete || screen_ == Screen::AskColor;
+  }
+  // Screens where the arrow keys orbit the camera instead of moving anything.
+  bool cameraControlled() const {
+    return screen_ == Screen::Builder || screen_ == Screen::Manage || screen_ == Screen::Inspector ||
+           screen_ == Screen::AskColor || screen_ == Screen::ConfirmDelete ||
+           screen_ == Screen::AskEnvironment;
   }
   usize managedCount() const { return managed_.size(); }
   usize managedIndex() const { return managedIndex_; }
   std::string managedName() const;
   std::string managedKindName() const;
+  void selectManagedAt(usize listIndex);  // hierarchy pick -> Inspector
+  void nudgeSelectedPosition(f64 dx, f64 dy, f64 dz);
+  void nudgeSelectedScale(f64 delta);
   usize goalCount() const;    // goal groups (legacy trios count as one)
   usize objectCount() const;  // all entities except the ground
   usize physicsBoxCount() const { return physics_.boxCount(); }
@@ -213,6 +223,7 @@ private:
   enum class Screen {
     Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
     Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal, AskModelFile, AskModelSize,
+    Inspector,
   };
 
   Vec3 ballRest() const;
@@ -257,9 +268,11 @@ private:
   usize importPage_ = 0U;                 // 5 files per screen
   std::string pendingFile_;
 
-  // Management.
+  // Management (hierarchy list + inspector).
   std::vector<EntityHandle> managed_;
   usize managedIndex_ = 0U;
+  usize managePage_ = 0U;     // 5 names per screen
+  usize inspectorPage_ = 0U;  // 3 pages of inspector actions
 };
 
 }  // namespace kimia
