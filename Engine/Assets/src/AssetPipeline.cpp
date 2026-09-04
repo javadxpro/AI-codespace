@@ -36,6 +36,86 @@ std::string extension(const std::string& path) {
   return lowercased(path.substr(dot));
 }
 
+std::string directoryOf(const std::string& path) {
+  const usize slash = path.find_last_of("/\\");
+  if (slash == std::string::npos) return "";
+  return path.substr(0, slash);
+}
+
+std::string joinPath(const std::string& dir, const std::string& name) {
+  if (dir.empty()) return name;
+  if (name.empty()) return dir;
+  if (dir.back() == '/' || dir.back() == '\\') return dir + name;
+  return dir + "/" + name;
+}
+
+bool isAbsolute(const std::string& path) {
+  if (path.empty()) return false;
+  if (path[0] == '/' || path[0] == '\\') return true;
+  return path.size() >= 2U && path[1] == ':';  // Windows drive
+}
+
+// Normalizes a resolved path: backslashes to slashes, `./` segments dropped.
+std::string normalizePath(const std::string& path) {
+  std::string out;
+  out.reserve(path.size());
+  for (usize i = 0; i < path.size(); ++i) {
+    const char c = path[i];
+    if (c == '\\') {
+      out.push_back('/');
+      continue;
+    }
+    if (c == '.' && !out.empty() && out.back() == '/' && i + 1U < path.size() &&
+        (path[i + 1U] == '/' || path[i + 1U] == '\\')) {
+      continue;  // drop "." path segments
+    }
+    out.push_back(c);
+  }
+  return out;
+}
+
+bool readTextFile(const std::string& path, std::string& out, std::string& error) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    error = "cannot open file: " + path;
+    return false;
+  }
+  std::ostringstream buffer;
+  buffer << file.rdbuf();
+  out = buffer.str();
+  return true;
+}
+
+std::string trimmed(const std::string& line) {
+  usize begin = 0;
+  while (begin < line.size() && (line[begin] == ' ' || line[begin] == '\t' || line[begin] == '\r')) ++begin;
+  usize end = line.size();
+  while (end > begin && (line[end - 1U] == ' ' || line[end - 1U] == '\t' || line[end - 1U] == '\r')) --end;
+  return line.substr(begin, end - begin);
+}
+
+bool parseF64(const std::string& token, f64& out) {
+  if (token.empty()) return false;
+  try {
+    usize consumed = 0;
+    out = std::stod(token, &consumed);
+    return consumed == token.size();
+  } catch (...) {
+    return false;
+  }
+}
+
+// File-name-safe material name for extracted texture files.
+std::string sanitizedName(const std::string& name) {
+  std::string out;
+  for (char c : name) {
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+    out.push_back(ok ? c : '_');
+  }
+  if (out.empty()) out = "material";
+  return out;
+}
+
 Vec3 transformPoint(const ufbx_matrix& m, const ufbx_vec3& p) {
   return Vec3{
       m.m00 * p.x + m.m01 * p.y + m.m02 * p.z + m.m03,
@@ -52,7 +132,93 @@ Vec3 transformDirection(const ufbx_matrix& m, const ufbx_vec3& d) {
   };
 }
 
-std::optional<std::vector<MeshData>> loadFBXImpl(const std::string& path, std::string& error) {
+std::string ufbxString(const ufbx_string& s) { return std::string(s.data, s.length); }
+
+// --- MTL (Wavefront material library) ---
+
+// Tolerant parser for the subset we use: `newmtl`, `Kd` (diffuse color) and
+// `map_Kd` (diffuse texture). All other statements are skipped. For
+// `map_Kd`, the last token is the file name (option tokens like `-s` are
+// ignored) — this matches the common exporters.
+bool loadFromMTLText(const std::string& text, std::vector<MaterialData>& out, std::string& error) {
+  out.clear();
+  std::istringstream stream(text);
+  std::string rawLine;
+  usize current = 0U;
+  bool hasCurrent = false;
+  usize lineNumber = 0U;
+  while (std::getline(stream, rawLine)) {
+    ++lineNumber;
+    const std::string line = trimmed(rawLine);
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream tokens(line);
+    std::string keyword;
+    tokens >> keyword;
+    if (keyword == "newmtl") {
+      std::string name;
+      tokens >> name;
+      if (name.empty()) continue;
+      out.push_back(MaterialData{});
+      out.back().name = name;
+      current = out.size() - 1U;
+      hasCurrent = true;
+      continue;
+    }
+    if (!hasCurrent) continue;  // statements before the first newmtl are ignored
+    if (keyword == "Kd") {
+      f64 r = 0.0, g = 0.0, b = 0.0;
+      std::string token;
+      if (!(tokens >> token) || !parseF64(token, r)) continue;
+      if (!(tokens >> token) || !parseF64(token, g)) continue;
+      if (!(tokens >> token) || !parseF64(token, b)) continue;
+      out[current].color = Vec3{r, g, b};
+      continue;
+    }
+    if (keyword == "map_Kd") {
+      std::vector<std::string> rest;
+      std::string token;
+      while (tokens >> token) rest.push_back(token);
+      if (rest.empty()) continue;
+      out[current].texturePath = rest.back();  // last token is the file name
+      continue;
+    }
+    // Ka, Ks, Ns, d, illum, ...: skipped (tolerant).
+  }
+  static_cast<void>(lineNumber);
+  if (out.empty()) {
+    error = "MTL contains no materials";
+    return false;
+  }
+  return true;
+}
+
+// --- FBX implementation (geometry + materials) ---
+
+void writeEmbeddedTexture(const ufbx_texture* texture, const std::string& fbxPath, usize index,
+                          std::string& outPath) {
+  outPath.clear();
+  if (texture == nullptr || texture->content.data == nullptr || texture->content.size <= 4U) return;
+  const u8* bytes = static_cast<const u8*>(texture->content.data);
+  const bool isPng = bytes[0] == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G';
+  const bool isJpeg = bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
+  if (!isPng && !isJpeg) return;  // unknown embedded format: keep only the path
+
+  const usize slash = fbxPath.find_last_of("/\\");
+  const usize dot = fbxPath.find_last_of('.');
+  const std::string base = dot != std::string::npos && (slash == std::string::npos || dot > slash)
+                               ? fbxPath.substr(0, dot)
+                               : fbxPath;
+  const std::string name = texture->name.length > 0U ? ufbxString(texture->name) : "texture";
+  outPath = base + "_" + sanitizedName(name) + "_" + std::to_string(index) + (isPng ? ".png" : ".jpg");
+  std::ofstream file(outPath, std::ios::binary);
+  if (!file) {
+    outPath.clear();
+    return;
+  }
+  file.write(reinterpret_cast<const char*>(texture->content.data), static_cast<std::streamsize>(texture->content.size));
+}
+
+std::optional<MeshAsset> loadFBXImpl(const std::string& path, std::string& error) {
   ufbx_load_opts opts{};
   opts.target_axes = ufbx_axes_right_handed_y_up;
   opts.target_unit_meters = 1.0;
@@ -67,8 +233,42 @@ std::optional<std::vector<MeshData>> loadFBXImpl(const std::string& path, std::s
     return std::nullopt;
   }
 
-  std::vector<MeshData> result;
-  result.reserve(scene->meshes.count);
+  MeshAsset asset;
+  asset.materials.reserve(scene->materials.count);
+  for (usize i = 0; i < scene->materials.count; ++i) {
+    const ufbx_material* material = scene->materials.data[i];
+    MaterialData out;
+    out.name = ufbxString(material->name);
+    // Color: prefer PBR base color, fall back to the FBX diffuse color.
+    const ufbx_material_map* colorMap = nullptr;
+    if (material->pbr.base_color.has_value) {
+      colorMap = &material->pbr.base_color;
+    } else if (material->fbx.diffuse_color.has_value) {
+      colorMap = &material->fbx.diffuse_color;
+    }
+    if (colorMap != nullptr) {
+      out.color = Vec3{static_cast<f64>(colorMap->value_vec3.x), static_cast<f64>(colorMap->value_vec3.y),
+                       static_cast<f64>(colorMap->value_vec3.z)};
+    }
+    // Diffuse texture: embedded content wins; otherwise resolve the filename
+    // against the FBX file's directory.
+    const ufbx_texture* texture = nullptr;
+    if (material->pbr.base_color.texture != nullptr) {
+      texture = material->pbr.base_color.texture;
+    } else if (material->fbx.diffuse_color.texture != nullptr) {
+      texture = material->fbx.diffuse_color.texture;
+    }
+    if (texture != nullptr) {
+      writeEmbeddedTexture(texture, path, i, out.texturePath);
+      if (out.texturePath.empty() && texture->filename.length > 0U) {
+        const std::string filename = ufbxString(texture->filename);
+        out.texturePath = isAbsolute(filename) ? filename : joinPath(directoryOf(path), filename);
+      }
+    }
+    asset.materials.push_back(std::move(out));
+  }
+
+  asset.subMeshes.reserve(scene->meshes.count);
   std::vector<u32> triangleBuffer(64U);
   for (usize meshIndex = 0; meshIndex < scene->meshes.count; ++meshIndex) {
     const ufbx_mesh* mesh = scene->meshes.data[meshIndex];
@@ -81,6 +281,12 @@ std::optional<std::vector<MeshData>> loadFBXImpl(const std::string& path, std::s
                    ? std::string(node->name.data, node->name.length)
                    : (mesh->name.length > 0U ? std::string(mesh->name.data, mesh->name.length)
                                              : "Mesh" + std::to_string(meshIndex));
+    if (mesh->materials.count > 0U) {
+      usize materialIndex = 0U;
+      if (mesh->face_material.count > 0U) materialIndex = static_cast<usize>(mesh->face_material.data[0]);
+      if (materialIndex >= mesh->materials.count) materialIndex = 0U;
+      out.materialName = ufbxString(mesh->materials.data[materialIndex]->name);
+    }
 
     out.positions.reserve(mesh->num_indices);
     out.normals.reserve(mesh->num_indices);
@@ -125,15 +331,37 @@ std::optional<std::vector<MeshData>> loadFBXImpl(const std::string& path, std::s
     }
     if (!out.positions.empty()) {
       dedupeVertices(out);  // merge identical position+normal+uv tuples (lossless)
-      result.push_back(std::move(out));
+      asset.subMeshes.push_back(std::move(out));
     }
   }
   ufbx_free_scene(scene);
-  if (result.empty()) {
+  if (asset.subMeshes.empty()) {
     error = "FBX contains no meshes: " + path;
     return std::nullopt;
   }
-  return result;
+  asset.mesh = asset.subMeshes.front();
+  return asset;
+}
+
+// OBJ text scan for the material library file name.
+bool findMtlLib(const std::string& objText, std::string& out) {
+  std::istringstream stream(objText);
+  std::string rawLine;
+  while (std::getline(stream, rawLine)) {
+    const std::string line = trimmed(rawLine);
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream tokens(line);
+    std::string keyword;
+    tokens >> keyword;
+    if (keyword != "mtllib") continue;
+    std::string name;
+    tokens >> name;
+    if (!name.empty()) {
+      out = name;
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -142,25 +370,31 @@ std::optional<AssetType> detectType(const std::string& path) {
   const std::string ext = extension(path);
   if (ext == ".obj" || ext == ".fbx") return AssetType::mesh;
   if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") return AssetType::image;
-  if (ext == ".wav" || ext == ".mp3") return AssetType::audio;
-  return std::nullopt;
+  if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".flac") return AssetType::audio;
+  return std::nullopt;  // .mtl (auxiliary), .blend (export path), unknown
 }
 
 std::optional<MeshLoadResult> loadMesh(const std::string& path, std::string& error) {
   const std::string ext = extension(path);
+  if (ext == ".blend") {
+    error = "'.blend' files cannot be loaded directly. In Blender use File > Export > "
+            "Wavefront (.obj) or FBX (.fbx) and load the exported file instead: " +
+            path;
+    return std::nullopt;
+  }
   if (ext == ".obj") {
-    MeshData mesh;
-    if (!loadFromOBJFile(path, mesh, error)) return std::nullopt;
+    auto asset = loadOBJAsset(path, error);
+    if (!asset.has_value()) return std::nullopt;
     MeshLoadResult result;
-    result.mesh = std::move(mesh);
+    result.mesh = std::move(asset->mesh);
     result.sourceFormat = "obj";
     return result;
   }
   if (ext == ".fbx") {
-    auto meshes = loadFBXImpl(path, error);
-    if (!meshes.has_value()) return std::nullopt;
+    auto asset = loadFBXImpl(path, error);
+    if (!asset.has_value()) return std::nullopt;
     MeshLoadResult result;
-    result.mesh = std::move(meshes->front());
+    result.mesh = std::move(asset->mesh);
     result.sourceFormat = "fbx";
     return result;
   }
@@ -169,6 +403,76 @@ std::optional<MeshLoadResult> loadMesh(const std::string& path, std::string& err
 }
 
 std::optional<std::vector<MeshData>> loadFBXAll(const std::string& path, std::string& error) {
+  auto asset = loadFBXImpl(path, error);
+  if (!asset.has_value()) return std::nullopt;
+  return asset->subMeshes;
+}
+
+std::optional<MeshAsset> loadOBJAsset(const std::string& path, std::string& error) {
+  MeshAsset asset;
+  std::vector<OBJFaceGroup> groups;
+  if (!loadFromOBJFile(path, asset.mesh, error, false, &groups)) return std::nullopt;
+  if (groups.empty()) return asset;  // no usemtl at all: plain mesh, no materials
+
+  // The mtllib statement lives in the OBJ text (the loader skips it).
+  std::string objText;
+  if (!readTextFile(path, objText, error)) return std::nullopt;
+  std::string mtlName;
+  if (findMtlLib(objText, mtlName)) {
+    const std::string mtlPath = isAbsolute(mtlName) ? mtlName : joinPath(directoryOf(path), mtlName);
+    std::string mtlText;
+    if (!readTextFile(mtlPath, mtlText, error)) return std::nullopt;
+    if (!loadFromMTLText(mtlText, asset.materials, error)) return std::nullopt;
+    // Resolve texture paths against the MTL file's directory.
+    for (MaterialData& material : asset.materials) {
+      if (!material.texturePath.empty() && !isAbsolute(material.texturePath)) {
+        material.texturePath = normalizePath(joinPath(directoryOf(mtlPath), material.texturePath));
+      }
+    }
+  }
+
+  // Every referenced material gets a table entry; unknown names become
+  // default-white placeholders (tolerant, like Unity's default material).
+  const auto ensureMaterial = [&asset](const std::string& name) -> usize {
+    for (usize i = 0; i < asset.materials.size(); ++i) {
+      if (asset.materials[i].name == name) return i;
+    }
+    MaterialData placeholder;
+    placeholder.name = name;
+    asset.materials.push_back(placeholder);
+    return asset.materials.size() - 1U;
+  };
+
+  // Split the usemtl runs into sub-meshes (vertex/index ranges are
+  // contiguous because the loader appends faces sequentially).
+  for (const OBJFaceGroup& group : groups) {
+    MeshData sub;
+    sub.name = asset.mesh.name;
+    sub.materialName = group.material;
+    sub.positions.assign(asset.mesh.positions.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin),
+                         asset.mesh.positions.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin + group.vertexCount));
+    sub.normals.assign(asset.mesh.normals.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin),
+                       asset.mesh.normals.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin + group.vertexCount));
+    if (!asset.mesh.uvs.empty()) {
+      sub.uvs.assign(asset.mesh.uvs.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin),
+                     asset.mesh.uvs.begin() + static_cast<std::ptrdiff_t>(group.vertexBegin + group.vertexCount));
+    }
+    sub.indices.reserve(group.indexCount);
+    for (usize i = 0; i < group.indexCount; ++i) {
+      sub.indices.push_back(asset.mesh.indices[group.indexBegin + i] - static_cast<u32>(group.vertexBegin));
+    }
+    dedupeVertices(sub);
+    if (!group.material.empty()) {
+      const usize materialIndex = ensureMaterial(group.material);
+      sub.materialName = asset.materials[materialIndex].name;
+    }
+    asset.subMeshes.push_back(std::move(sub));
+  }
+  asset.mesh.materialName = asset.subMeshes.size() == 1U ? asset.subMeshes.front().materialName : "";
+  return asset;
+}
+
+std::optional<MeshAsset> loadFBXAsset(const std::string& path, std::string& error) {
   return loadFBXImpl(path, error);
 }
 

@@ -19,10 +19,12 @@ struct AudioBuffer {
   f64 durationSeconds() const;
   std::vector<f32> downmixMono() const;
 
-  // Detects WAV/MP3 by extension.
+  // Detects WAV/MP3/OGG/FLAC by extension.
   static std::optional<AudioBuffer> load(const std::string& path, std::string& error);
   static std::optional<AudioBuffer> loadWAV(const std::string& path, std::string& error);
   static std::optional<AudioBuffer> loadMP3(const std::string& path, std::string& error);
+  static std::optional<AudioBuffer> loadOGG(const std::string& path, std::string& error);
+  static std::optional<AudioBuffer> loadFLAC(const std::string& path, std::string& error);
 
   // Writes 16-bit PCM WAV.
   bool writeWAV(const std::string& path) const;

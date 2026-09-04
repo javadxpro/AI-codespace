@@ -9,11 +9,19 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #define DR_WAV_IMPLEMENTATION
 #define DR_MP3_IMPLEMENTATION
+#define DR_FLAC_IMPLEMENTATION
+#include <dr_flac.h>
 #include <dr_mp3.h>
 #include <dr_wav.h>
 #pragma GCC diagnostic pop
 
+#include <cstdlib>
 #include <limits>
+
+// stb_vorbis is compiled as C (ThirdParty/stb/stb_vorbis_impl.c); bridge the
+// one-shot whole-file decode API here. Returns the total interleaved sample
+// count into a malloc()ed short buffer, or -1 on failure.
+extern "C" int stb_vorbis_decode_filename(const char* filename, int* channels, int* sample_rate, short** output);
 
 namespace kimia {
 
@@ -95,6 +103,49 @@ std::optional<AudioBuffer> fromMP3(const std::string& path, std::string& error) 
   return buffer;
 }
 
+std::optional<AudioBuffer> fromOGG(const std::string& path, std::string& error) {
+  int channels = 0;
+  int sampleRate = 0;
+  short* decoded = nullptr;
+  const int totalSamples = stb_vorbis_decode_filename(path.c_str(), &channels, &sampleRate, &decoded);
+  if (totalSamples <= 0 || decoded == nullptr || channels <= 0 || channels > 64 || sampleRate <= 0) {
+    std::free(decoded);
+    error = "cannot decode OGG/Vorbis file: " + path;
+    return std::nullopt;
+  }
+  AudioBuffer buffer;
+  buffer.channels = static_cast<i32>(channels);
+  buffer.sampleRate = static_cast<i32>(sampleRate);
+  const usize sampleCount = static_cast<usize>(totalSamples);
+  buffer.samples.resize(sampleCount);
+  for (usize i = 0; i < sampleCount; ++i) {
+    buffer.samples[i] = static_cast<f32>(decoded[i]) / 32768.0f;
+  }
+  std::free(decoded);
+  buffer.frameCount = static_cast<u64>(sampleCount / static_cast<usize>(channels));
+  return buffer;
+}
+
+std::optional<AudioBuffer> fromFLAC(const std::string& path, std::string& error) {
+  drflac_uint32 channels = 0;
+  drflac_uint32 sampleRate = 0;
+  drflac_uint64 totalFrames = 0;
+  f32* decoded = drflac_open_file_and_read_pcm_frames_f32(path.c_str(), &channels, &sampleRate, &totalFrames, nullptr);
+  if (decoded == nullptr || channels == 0 || channels > 64 || sampleRate == 0 || totalFrames == 0) {
+    if (decoded != nullptr) drflac_free(decoded, nullptr);
+    error = "cannot decode FLAC file: " + path;
+    return std::nullopt;
+  }
+  AudioBuffer buffer;
+  buffer.channels = static_cast<i32>(channels);
+  buffer.sampleRate = static_cast<i32>(sampleRate);
+  const usize sampleCount = static_cast<usize>(totalFrames) * static_cast<usize>(channels);
+  buffer.samples.assign(decoded, decoded + sampleCount);
+  drflac_free(decoded, nullptr);
+  buffer.frameCount = totalFrames;
+  return buffer;
+}
+
 }  // namespace
 
 f64 AudioBuffer::durationSeconds() const {
@@ -121,12 +172,16 @@ std::vector<f32> AudioBuffer::downmixMono() const {
 std::optional<AudioBuffer> AudioBuffer::load(const std::string& path, std::string& error) {
   if (endsWithIgnoreCase(path, ".wav")) return loadWAV(path, error);
   if (endsWithIgnoreCase(path, ".mp3")) return loadMP3(path, error);
-  error = "unsupported audio format (expected .wav or .mp3): " + path;
+  if (endsWithIgnoreCase(path, ".ogg")) return loadOGG(path, error);
+  if (endsWithIgnoreCase(path, ".flac")) return loadFLAC(path, error);
+  error = "unsupported audio format (expected .wav, .mp3, .ogg or .flac): " + path;
   return std::nullopt;
 }
 
 std::optional<AudioBuffer> AudioBuffer::loadWAV(const std::string& path, std::string& error) { return fromWAV(path, error); }
 std::optional<AudioBuffer> AudioBuffer::loadMP3(const std::string& path, std::string& error) { return fromMP3(path, error); }
+std::optional<AudioBuffer> AudioBuffer::loadOGG(const std::string& path, std::string& error) { return fromOGG(path, error); }
+std::optional<AudioBuffer> AudioBuffer::loadFLAC(const std::string& path, std::string& error) { return fromFLAC(path, error); }
 
 bool AudioBuffer::writeWAV(const std::string& path) const {
   if (isEmpty()) return false;

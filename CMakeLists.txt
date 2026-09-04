@@ -84,6 +84,10 @@ endif()
 add_library(kimia_ufbx STATIC ThirdParty/ufbx/ufbx.c)
 target_include_directories(kimia_ufbx PUBLIC ThirdParty/ufbx)
 
+# Vendored OGG/Vorbis decoder (upstream C code; strict C++ warnings don't apply).
+add_library(kimia_stb_vorbis STATIC ThirdParty/stb/stb_vorbis_impl.c)
+target_include_directories(kimia_stb_vorbis PUBLIC ThirdParty/stb)
+
 add_library(kimia_assets STATIC
     Engine/Graphics/src/Image.cpp
     Engine/Graphics/src/Mesh.cpp
@@ -97,7 +101,7 @@ target_include_directories(kimia_assets PUBLIC
     ThirdParty/stb
     ThirdParty/dr
 )
-target_link_libraries(kimia_assets PUBLIC kimia_core kimia_math kimia_ufbx)
+target_link_libraries(kimia_assets PUBLIC kimia_core kimia_math kimia_ufbx kimia_stb_vorbis)
 target_compile_options(kimia_assets PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_assets PRIVATE -Werror)
