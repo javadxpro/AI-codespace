@@ -165,6 +165,14 @@ if(KIMIA_BUILD_TOOLS)
   if(KIMIA_WERROR)
     target_compile_options(kimia_assets_cli PRIVATE -Werror)
   endif()
+
+  add_executable(kimia_raytrace_cli Tools/src/kimia_raytrace.cpp)
+  set_target_properties(kimia_raytrace_cli PROPERTIES OUTPUT_NAME kimia_raytrace)
+  target_link_libraries(kimia_raytrace_cli PRIVATE kimia_raytracer kimia_world)
+  target_compile_options(kimia_raytrace_cli PRIVATE ${KIMIA_STRICT_WARNINGS})
+  if(KIMIA_WERROR)
+    target_compile_options(kimia_raytrace_cli PRIVATE -Werror)
+  endif()
 endif()
 
 # --- Renderer (GL 3.3 loader + EGL + shaders + software rasterizer) ---
