@@ -1,6 +1,7 @@
 #include <kimia/Camera.h>
 #include <kimia/Mat4.h>
 #include <kimia/MathUtils.h>
+#include <kimia/OrbitCamera.h>
 #include <kimia/Quat.h>
 #include <kimia/Vec.h>
 #include <kimia_test.h>
@@ -232,4 +233,52 @@ KIMIA_TEST(mathutils_lerp_clamp_angles) {
   KIMIA_REQUIRE(near(kimia::clamp(11.0, 0.0, 10.0), 10.0));
   KIMIA_REQUIRE(near(kimia::radians(180.0), kimia::kPi, kEps4));
   KIMIA_REQUIRE(near(kimia::degrees(kimia::kPi), 180.0, kEps4));
+}
+
+// --- Orbit camera (editor view control) ---
+
+KIMIA_TEST(math_orbit_camera_eye_sits_on_the_orbit_sphere) {
+  kimia::OrbitCamera camera;
+  camera.center = Vec3{1.0, 0.2, 2.0};
+  // yaw = 0: the eye is straight along +Z at the default overview angle.
+  const Vec3 eye = camera.eye();
+  const Vec3 offset = eye - camera.center;
+  KIMIA_REQUIRE(near(offset.x, 0.0));
+  KIMIA_REQUIRE(near(offset.y, 3.6));  // the classic overview height
+  KIMIA_REQUIRE(near(offset.z, 6.0));  // and its horizontal offset
+  KIMIA_REQUIRE(near(offset.length(), camera.distance));
+  // yaw = pi/2: the eye moves to +X, the height stays.
+  camera.yaw = kimia::kPi / 2.0;
+  const Vec3 side = camera.eye() - camera.center;
+  KIMIA_REQUIRE(near(side.x, std::cos(camera.pitch) * camera.distance));
+  KIMIA_REQUIRE(near(side.y, std::sin(camera.pitch) * camera.distance));
+  KIMIA_REQUIRE(near(side.z, 0.0, 1e-12));
+}
+
+KIMIA_TEST(math_orbit_camera_clamps_pitch_and_distance) {
+  kimia::OrbitCamera camera;
+  camera.orbit(0.0, 10.0);  // way above the maximum
+  KIMIA_REQUIRE(near(camera.pitch, kimia::OrbitCamera::kMaxPitch));
+  camera.orbit(0.0, -10.0);  // below the horizon
+  KIMIA_REQUIRE(near(camera.pitch, kimia::OrbitCamera::kMinPitch));
+  camera.zoom(1.0 / 1000.0);  // too close
+  KIMIA_REQUIRE(near(camera.distance, kimia::OrbitCamera::kMinDistance));
+  camera.zoom(1000.0);  // too far
+  KIMIA_REQUIRE(near(camera.distance, kimia::OrbitCamera::kMaxDistance));
+}
+
+KIMIA_TEST(math_orbit_camera_zoom_and_reset) {
+  kimia::OrbitCamera camera;
+  camera.yaw = 1.3;
+  camera.zoom(1.0 / 1.2);  // closer
+  KIMIA_REQUIRE(near(camera.distance, kimia::OrbitCamera::kDefaultDistance / 1.2));
+  camera.zoom(1.2);
+  KIMIA_REQUIRE(near(camera.distance, kimia::OrbitCamera::kDefaultDistance));
+  camera.orbit(0.5, 0.2);
+  camera.reset();
+  KIMIA_REQUIRE(near(camera.yaw, 0.0));
+  KIMIA_REQUIRE(near(camera.distance, kimia::OrbitCamera::kDefaultDistance));
+  const Vec3 offset = camera.eye() - camera.center;
+  KIMIA_REQUIRE(near(offset.y, 3.6));  // the classic overview: height 3.6
+  KIMIA_REQUIRE(near(offset.z, 6.0));
 }
