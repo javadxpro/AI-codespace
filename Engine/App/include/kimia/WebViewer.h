@@ -16,6 +16,15 @@ struct PadButton {
   bool hold = false;  // true: level (down/up); false: edge (tap)
 };
 
+// A dynamic menu served at GET /menu as JSON. The control page polls it and
+// rebuilds its buttons, which is how the option-driven editor presents
+// questions. An empty title hides the menu (static pad shown instead).
+struct Menu {
+  std::string title;
+  std::vector<PadButton> holds;
+  std::vector<PadButton> taps;
+};
+
 // Input drained from the web page. `held` is LEVEL state (server keeps it),
 // `taps`/`lookX`/`lookY`/`zoom` are EDGES cleared by drain().
 struct DrainedInput {
@@ -35,6 +44,7 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
 //   GET  /          -> 200 text/html (the control page)
 //   GET  /frame.png -> 200 image/png (latest published frame) or 503 if none
 //   GET  /stats     -> 200 text/plain (last stats line)
+//   GET  /menu      -> 200 application/json (the dynamic menu; empty by default)
 //   POST /input?key=<k>&down=0|1&tap=<k>&lookX=<dx>&lookY=<dy>&zoom=<dz> -> 200
 //   anything else   -> 404
 class Server {
@@ -53,6 +63,7 @@ public:
   void stop();
 
   void publishFrame(std::vector<u8> pngBytes, const std::string& statsLine);
+  void setMenu(const Menu& menu);
   DrainedInput drain();
 
 private:

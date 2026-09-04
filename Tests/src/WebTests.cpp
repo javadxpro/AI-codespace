@@ -189,6 +189,58 @@ KIMIA_TEST(web_make_page_contains_title_buttons_and_keymap) {
   KIMIA_REQUIRE(page.find("/stats") != std::string::npos);
 }
 
+KIMIA_TEST(web_menu_default_empty) {
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  const HttpResponse response = request(server.port(), "GET", "/menu");
+  KIMIA_REQUIRE(response.status == 200);
+  const auto contentType = response.headers.find("content-type");
+  KIMIA_REQUIRE(contentType != response.headers.end());
+  KIMIA_REQUIRE(contentType->second.find("application/json") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"title\":\"\"") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"holds\":[]") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"taps\":[]") != std::string::npos);
+  server.stop();
+}
+
+KIMIA_TEST(web_menu_roundtrip_with_persian_labels) {
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  kimia::web::Menu menu;
+  menu.title = "\xD8\xAA\xD9\x88\xD9\xBE\x3A \xD8\xAF\xD9\x82\xDB\x8C\xD9\x82 "  // "توپ: دقیق "
+              "\xD8\xA8\xD8\xA7\xD8\xB4\xD9\x87 \xDB\x8C\xD8\xA7 "
+              "\xD9\x81\xD8\xA7\xD9\x86\xD8\xAA\xD8\xB2\xDB\x8C\x3F";              // "باشه یا فانتزی؟"
+  menu.taps.push_back({"\xD8\xAF\xD9\x82\xDB\x8C\xD9\x82", "num1"});   // دقیق
+  menu.taps.push_back({"\xD9\x81\xD8\xA7\xD9\x86\xD8\xAA\xD8\xB2\xDB\x8C", "num2"});  // فانتزی
+  menu.holds.push_back({"\xD8\xA8\xD8\xA7\xD9\x84\xD8\xA7", "up"});   // بالا
+  server.setMenu(menu);
+  const HttpResponse response = request(server.port(), "GET", "/menu");
+  KIMIA_REQUIRE(response.status == 200);
+  // UTF-8 labels pass through verbatim inside the JSON strings.
+  KIMIA_REQUIRE(response.body.find("\xD8\xAF\xD9\x82\xDB\x8C\xD9\x82") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\xD9\x81\xD8\xA7\xD9\x86\xD8\xAA\xD8\xB2\xDB\x8C") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"num1\"") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"num2\"") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"up\"") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"holds\":[") != std::string::npos);
+  KIMIA_REQUIRE(response.body.find("\"taps\":[") != std::string::npos);
+  // Clearing the menu hides it again.
+  server.setMenu(kimia::web::Menu{});
+  const HttpResponse cleared = request(server.port(), "GET", "/menu");
+  KIMIA_REQUIRE(cleared.body.find("\"title\":\"\"") != std::string::npos);
+  server.stop();
+}
+
+KIMIA_TEST(web_make_page_includes_menu_machinery) {
+  const std::string page = kimia::web::makePageHtml("KIMIA World", {}, "", "");
+  KIMIA_REQUIRE(page.find("id=\"menutitle\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("id=\"pad\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("id=\"staticpad\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("/menu") != std::string::npos);
+  KIMIA_REQUIRE(page.find("showMenu") != std::string::npos);
+  KIMIA_REQUIRE(page.find("bindPad") != std::string::npos);
+}
+
 KIMIA_TEST(web_restart_and_ephemeral_port) {
   kimia::web::Server server;
   KIMIA_REQUIRE(server.start(0, makeTestPage()));

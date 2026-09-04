@@ -139,6 +139,56 @@ std::string statusLine(int code) {
   }
 }
 
+std::string jsonEscape(const std::string& text) {
+  std::string out;
+  out.reserve(text.size() + 8U);
+  for (const unsigned char c : text) {
+    switch (c) {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (c < 0x20U) {
+          char buffer[8];
+          std::snprintf(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned>(c));
+          out += buffer;
+        } else {
+          out += static_cast<char>(c);
+        }
+        break;
+    }
+  }
+  return out;
+}
+
+std::string menuJson(const Menu& menu) {
+  std::ostringstream out;
+  out << "{\"title\":\"" << jsonEscape(menu.title) << "\",\"holds\":[";
+  for (usize i = 0; i < menu.holds.size(); ++i) {
+    if (i > 0U) out << ',';
+    out << "[\"" << jsonEscape(menu.holds[i].label) << "\",\"" << jsonEscape(menu.holds[i].key) << "\"]";
+  }
+  out << "],\"taps\":[";
+  for (usize i = 0; i < menu.taps.size(); ++i) {
+    if (i > 0U) out << ',';
+    out << "[\"" << jsonEscape(menu.taps[i].label) << "\",\"" << jsonEscape(menu.taps[i].key) << "\"]";
+  }
+  out << "]}";
+  return out.str();
+}
+
 }  // namespace
 
 struct Server::Impl {
@@ -152,6 +202,7 @@ struct Server::Impl {
   f64 lookY = 0.0;
   f64 zoom = 0.0;
   std::string page;
+  Menu menu;
   int listenFd = -1;
   u16 boundPort = 0;
   std::thread acceptThread;
@@ -237,6 +288,9 @@ void handleConnection(int fd, Server::Impl* impl) {
   } else if (path == "/stats") {
     std::lock_guard<std::mutex> lock(impl->mutex);
     response = httpResponse(statusLine(200), "text/plain; charset=utf-8", impl->stats);
+  } else if (path == "/menu") {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    response = httpResponse(statusLine(200), "application/json; charset=utf-8", menuJson(impl->menu));
   } else if (path == "/input" && method == "POST") {
     applyInputParams(impl, parseQuery(query));
     response = httpResponse(statusLine(200), "text/plain; charset=utf-8", "ok");
@@ -321,6 +375,11 @@ void Server::publishFrame(std::vector<u8> pngBytes, const std::string& statsLine
   impl_->stats = statsLine;
 }
 
+void Server::setMenu(const Menu& menu) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->menu = menu;
+}
+
 DrainedInput Server::drain() {
   DrainedInput out;
   std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -347,7 +406,8 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "h1{font-size:20px;margin:4px 0}\n.hint{color:#9a9aa5;font-size:13px;margin:4px 0 10px}\n";
   out << "#frame{width:100%;max-width:720px;display:block;background:#000;border-radius:8px}\n";
   out << "#stats{font-family:monospace;font-size:12px;color:#7fd47f;margin:8px 0;white-space:pre-wrap}\n";
-  out << "#pad{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;max-width:720px}\n";
+  out << "#menutitle{font-size:16px;font-weight:600;margin:10px 0 4px}\n";
+  out << "#pad,#staticpad{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;max-width:720px}\n";
   out << ".btn{min-width:52px;min-height:44px;padding:8px 12px;font-size:16px;border:1px solid #3a3a44;"
          "border-radius:10px;background:#23232c;color:#e8e8ec;text-align:center;cursor:pointer}\n";
   out << ".btn:active{background:#3d4a7a}\n";
@@ -358,7 +418,9 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "<h1>" << htmlEscape(title) << "</h1>\n";
   if (!hint.empty()) out << "<div class=\"hint\">" << htmlEscape(hint) << "</div>\n";
   out << "<img id=\"frame\" alt=\"engine frame\">\n<div id=\"stats\">waiting for first frame...</div>\n";
-  out << "<div id=\"pad\">\n";
+  out << "<div id=\"menutitle\"></div>\n";
+  out << "<div id=\"pad\"></div>\n";  // dynamic menu buttons (from GET /menu)
+  out << "<div id=\"staticpad\">\n";
   for (const PadButton& button : padButtons) {
     out << "<div class=\"btn\" data-key=\"" << htmlEscape(button.key) << "\" data-hold=\""
         << (button.hold ? "1" : "0") << "\">" << htmlEscape(button.label) << "</div>\n";
@@ -367,18 +429,55 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "<div id=\"look\">drag here to look around</div>\n";
   out << "<script>\n";
   out << "function post(q){fetch('/input?'+q,{method:'POST'}).catch(function(){});}\n";
-  out << "var pad=document.getElementById('pad');\n";
-  out << "pad.addEventListener('pointerdown',function(e){\n";
-  out << "  var b=e.target.closest('.btn');if(!b)return;\n";
-  out << "  e.preventDefault();\n";
-  out << "  if(b.getAttribute('data-hold')==='1'){post('key='+encodeURIComponent(b.getAttribute('data-key'))+'&down=1');}\n";
-  out << "});\n";
-  out << "pad.addEventListener('pointerup',function(e){\n";
-  out << "  var b=e.target.closest('.btn');if(!b)return;\n";
-  out << "  var k=encodeURIComponent(b.getAttribute('data-key'));\n";
-  out << "  if(b.getAttribute('data-hold')==='1'){post('key='+k+'&down=0');}\n";
-  out << "  else{post('tap='+k);}\n";
-  out << "});\n";
+  out << "function bindPad(el){\n";
+  out << "  el.addEventListener('pointerdown',function(e){\n";
+  out << "    var b=e.target.closest('.btn');if(!b)return;\n";
+  out << "    e.preventDefault();\n";
+  out << "    if(b.getAttribute('data-hold')==='1'){post('key='+encodeURIComponent(b.getAttribute('data-key'))+'&down=1');}\n";
+  out << "  });\n";
+  out << "  el.addEventListener('pointerup',function(e){\n";
+  out << "    var b=e.target.closest('.btn');if(!b)return;\n";
+  out << "    var k=encodeURIComponent(b.getAttribute('data-key'));\n";
+  out << "    if(b.getAttribute('data-hold')==='1'){post('key='+k+'&down=0');}\n";
+  out << "    else{post('tap='+k);}\n";
+  out << "  });\n";
+  out << "  el.addEventListener('pointercancel',function(e){\n";
+  out << "    var b=e.target.closest('.btn');if(!b)return;\n";
+  out << "    if(b.getAttribute('data-hold')==='1'){post('key='+encodeURIComponent(b.getAttribute('data-key'))+'&down=0');}\n";
+  out << "  });\n";
+  out << "}\n";
+  out << "bindPad(document.getElementById('staticpad'));\n";
+  out << "bindPad(document.getElementById('pad'));\n";
+  out << "function escAttr(s){return String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;');}\n";
+  out << "var lastMenu='';\n";
+  out << "function showMenu(){\n";
+  out << "  fetch('/menu').then(function(r){return r.json();}).then(function(m){\n";
+  out << "    var title=document.getElementById('menutitle');\n";
+  out << "    var pad=document.getElementById('pad');\n";
+  out << "    var staticPad=document.getElementById('staticpad');\n";
+  out << "    if(m&&m.title){\n";
+  out << "      title.textContent=m.title;\n";
+  out << "      title.style.display='block';\n";
+  out << "      var html='';\n";
+  out << "      var i;\n";
+  out << "      for(i=0;i<m.holds.length;i++){\n";
+  out << "        html+='<div class=\"btn\" data-key=\"'+escAttr(m.holds[i][1])+'\" data-hold=\"1\">'+escAttr(m.holds[i][0])+'</div>';\n";
+  out << "      }\n";
+  out << "      for(i=0;i<m.taps.length;i++){\n";
+  out << "        html+='<div class=\"btn\" data-key=\"'+escAttr(m.taps[i][1])+'\" data-hold=\"0\">'+escAttr(m.taps[i][0])+'</div>';\n";
+  out << "      }\n";
+  out << "      if(html!==lastMenu){pad.innerHTML=html;lastMenu=html;}\n";
+  out << "      pad.style.display='flex';\n";
+  out << "      staticPad.style.display='none';\n";
+  out << "    }else{\n";
+  out << "      title.style.display='none';\n";
+  out << "      pad.style.display='none';\n";
+  out << "      staticPad.style.display='flex';\n";
+  out << "    }\n";
+  out << "  }).catch(function(){});\n";
+  out << "}\n";
+  out << "setInterval(showMenu,300);\n";
+  out << "showMenu();\n";
   out << "var look=document.getElementById('look');\n";
   out << "var dragging=false,lastX=0,lastY=0;\n";
   out << "look.addEventListener('pointerdown',function(e){dragging=true;lastX=e.clientX;lastY=e.clientY;"
