@@ -31,6 +31,17 @@ std::string replaceExtension(const std::string& path, const std::string& suffix)
   return path.substr(0, dotPos) + suffix;
 }
 
+std::string extensionOf(const std::string& path) {
+  const usize slash = path.find_last_of("/\\");
+  const usize dotPos = path.find_last_of('.');
+  if (dotPos == std::string::npos || (slash != std::string::npos && dotPos < slash)) return "";
+  std::string ext = path.substr(dotPos);
+  for (char& c : ext) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return ext;
+}
+
 void printUsage() {
   std::printf(
       "kimia_assets - KIMIA asset pipeline\n"
@@ -190,8 +201,16 @@ int main(int argc, char** argv) {
   for (const std::string& path : paths) {
     const auto type = detectType(path);
     if (!type.has_value()) {
-      std::fprintf(stderr, "ERROR %s: unsupported extension (expected .obj .fbx .png .jpg .jpeg .wav .mp3)\n",
-                   path.c_str());
+      if (extensionOf(path) == ".blend") {
+        std::fprintf(stderr,
+                     "ERROR %s: .blend files are not read directly. Export the model from Blender "
+                     "instead (File > Export > Wavefront .obj with materials, or FBX with embedded textures), "
+                     "then run kimia_assets on the exported file. See Documentation/Assets.md.\n",
+                     path.c_str());
+      } else {
+        std::fprintf(stderr, "ERROR %s: unsupported extension (expected .obj .fbx .ogg .flac .png .jpg .jpeg .wav .mp3)\n",
+                     path.c_str());
+      }
       ++failures;
       continue;
     }
