@@ -54,6 +54,24 @@ struct StaticBox {
   Vec3 halfExtents{0.5, 0.5, 0.5};
 };
 
+// Kinematic character: an axis-aligned capsule proxy the caller drives.
+// Gravity owns the vertical velocity; the caller supplies the desired
+// horizontal velocity. moveCharacter() collides and slides the body along
+// static planes/boxes and dynamic boxes, lands it on top faces (onGround)
+// and bumps its head on ceilings. Dynamic boxes are pushed by the caller
+// layer, not here — here they are solid obstacles.
+struct CharacterBody {
+  Vec3 position{0.0, 0.0, 0.0};  // center; feet at position.y - halfExtents.y
+  Vec3 halfExtents{0.3, 0.5, 0.3};
+  Vec3 velocity{0.0, 0.0, 0.0};
+  bool onGround = false;
+  u32 collisionCount = 0U;  // faces touched during the last move
+};
+
+// Falls faster than this are clamped so a slow frame cannot tunnel through
+// a one-unit obstacle (6 m/s * 0.1 s = 0.6 m per host frame).
+inline constexpr f64 kMaxCharacterFallSpeed = 6.0;
+
 // Fixed-timestep physics world: dynamic spheres and dynamic boxes vs static
 // planes and AABBs, plus dynamic-vs-dynamic pairs (sphere-sphere, sphere-box,
 // box-box). Fixed dt = 1/120 s; host-rate advance() uses an accumulator with
@@ -75,6 +93,21 @@ public:
 
   u32 addPlane(f64 y);
   u32 addBox(const Vec3& center, const Vec3& halfExtents);
+
+  // The single kinematic character the caller drives (see CharacterBody).
+  CharacterBody* character() { return &character_; }
+  const CharacterBody* character() const { return &character_; }
+
+  // Teleports the character to `position`, zeroing velocity and ground state.
+  void resetCharacter(const Vec3& position);
+
+  // Moves the character for dt seconds toward the desired horizontal
+  // velocity (the y component is ignored — gravity owns the vertical).
+  void moveCharacter(f64 dt, const Vec3& desiredVelocity);
+
+  // Starts a jump of the given height (meters, feet apex) when the character
+  // stands on something: v = sqrt(2 g h). Returns true when the jump began.
+  bool characterJump(f64 height);
 
   // Highest Y (starting from center.y, capped at maxHeight) at which a sphere
   // of this radius at (center.x, ?, center.z) does NOT strictly overlap any
@@ -115,6 +148,7 @@ private:
   void collectContacts(std::vector<Contact>& contacts) const;
   void resolvePair(const Contact& contact, bool countContacts);
   void applyPairFriction(const Contact& contact);
+  bool characterSupported(const CharacterBody& character) const;
 
   f64 fixedDt_;
   FixedTimeStep accumulator_;
@@ -122,6 +156,7 @@ private:
   std::map<u32, DynamicBox> dynamicBoxes_;
   std::map<u32, StaticPlane> planes_;
   std::map<u32, StaticBox> boxes_;
+  CharacterBody character_;
   u32 nextId_ = 1U;
   f64 time_ = 0.0;
   u64 steps_ = 0U;

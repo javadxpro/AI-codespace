@@ -463,3 +463,115 @@ KIMIA_TEST(physics_ids_and_removal) {
   KIMIA_REQUIRE(world.sphereCount() == 0U);
   KIMIA_REQUIRE(world.time() == 0.0);
 }
+
+// --- Character controller ---
+
+KIMIA_TEST(physics_character_falls_and_lands_exactly) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.resetCharacter(Vec3{0.0, 1.7, 0.0});  // feet at 1.2 above the floor
+  // Semi-implicit Euler free fall, closed form: feet(N) = 1.2 - g dt^2 N(N+1)/2.
+  // The landing step is the first N with feet(N) <= 0.
+  u32 expected = 0U;
+  while (kG * kDt * kDt * static_cast<f64>(expected) * static_cast<f64>(expected + 1U) / 2.0 < 1.2) {
+    ++expected;
+  }
+  u32 steps = 0U;
+  while (world.character()->position.y > 0.5) {
+    world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+    ++steps;
+    KIMIA_REQUIRE(steps < 1000U);
+  }
+  KIMIA_REQUIRE(steps == expected);
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5));  // feet exactly on the floor
+  KIMIA_REQUIRE(near(world.character()->velocity.y, 0.0));
+  KIMIA_REQUIRE(world.character()->onGround);
+  world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5));  // stays grounded
+}
+
+KIMIA_TEST(physics_character_jump_reaches_apex_height) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.resetCharacter(Vec3{0.0, 0.5, 0.0});
+  for (u32 i = 0; i < 5; ++i) world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(world.character()->onGround);
+  KIMIA_REQUIRE(world.characterJump(1.2));   // v = sqrt(2 g h)
+  KIMIA_REQUIRE(!world.characterJump(1.2));  // airborne: no double jump
+  f64 maxFeet = 0.0;
+  while (!world.character()->onGround) {
+    world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+    maxFeet = std::max(maxFeet, world.character()->position.y - 0.5);
+  }
+  // Gravity-first semi-implicit Euler (the engine's ordering), closed form:
+  // feet(N) = dt*(N*v0 - g*dt*N*(N+1)/2); the last rising step is
+  // N = floor(v0/(g*dt)).
+  const f64 v0 = std::sqrt(2.0 * kG * 1.2);
+  const u32 nApex = static_cast<u32>(std::floor(v0 / (kG * kDt)));
+  const f64 apex = kDt * (static_cast<f64>(nApex) * v0 -
+                          kG * kDt * static_cast<f64>(nApex) * static_cast<f64>(nApex + 1U) / 2.0);
+  KIMIA_REQUIRE(std::abs(maxFeet - apex) < 1e-9);
+  KIMIA_REQUIRE(apex < 1.2 && apex > 1.15);  // discrete apex sits just under the ask
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5));  // landed back
+}
+
+KIMIA_TEST(physics_character_lands_on_a_crate_and_walks_off) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.addBox(Vec3{0.0, 0.5, 0.0}, Vec3{0.5, 0.5, 0.5});  // top face at y = 1.0
+  world.resetCharacter(Vec3{0.0, 3.0, 0.0});               // dropped above the crate
+  for (u32 i = 0; i < 200; ++i) world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(world.character()->onGround);
+  KIMIA_REQUIRE(near(world.character()->position.y, 1.5));  // feet on the top (1.0)
+  // Walking off the edge drops the character to the floor.
+  for (u32 i = 0; i < 240; ++i) world.moveCharacter(kDt, Vec3{2.0, 0.0, 0.0});
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5));
+  KIMIA_REQUIRE(world.character()->onGround);
+}
+
+KIMIA_TEST(physics_character_wall_blocks_and_slides) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.addBox(Vec3{2.0, 0.5, 0.0}, Vec3{0.25, 0.5, 3.0});  // wall: 0.5 thick in X
+  world.resetCharacter(Vec3{0.0, 0.5, -1.0});
+  u32 touched = 0U;
+  // Walk diagonally into the wall: X stops at the face, Z slides along.
+  for (u32 i = 0; i < 240; ++i) {
+    world.moveCharacter(kDt, Vec3{1.0, 0.0, 1.0});
+    touched = std::max(touched, world.character()->collisionCount);
+  }
+  KIMIA_REQUIRE(touched > 0U);  // the wall really blocked the character
+  KIMIA_REQUIRE(near(world.character()->position.x, 2.0 - 0.25 - 0.3, 1e-6));
+  KIMIA_REQUIRE(near(world.character()->position.z, 1.0, 1e-6));  // slid two meters
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5, 1e-6));  // never left the floor
+}
+
+KIMIA_TEST(physics_character_stops_at_dynamic_crate_face) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  DynamicBox crate;
+  crate.position = Vec3{2.0, 0.5, 0.0};
+  crate.halfExtents = Vec3{0.5, 0.5, 0.5};
+  const u32 crateId = world.addDynamicBox(crate);
+  world.resetCharacter(Vec3{0.0, 0.5, 0.0});
+  for (u32 i = 0; i < 120; ++i) world.moveCharacter(kDt, Vec3{2.0, 0.0, 0.0});
+  // The crate is solid for the character; the game layer shoves it along.
+  KIMIA_REQUIRE(near(world.character()->position.x, 2.0 - 0.5 - 0.3, 1e-6));
+  KIMIA_REQUIRE(near(world.dynamicBox(crateId)->position.x, 2.0, 1e-9));
+  KIMIA_REQUIRE(near(world.character()->position.y, 0.5, 1e-6));
+}
+
+KIMIA_TEST(physics_character_high_fall_never_tunnels) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.addBox(Vec3{0.0, 0.25, 0.0}, Vec3{0.5, 0.25, 0.5});  // a 0.5 tall slab below
+  world.resetCharacter(Vec3{0.0, 20.0, 0.0});                // a 20 m drop
+  f64 minFeet = 20.0;
+  for (u32 i = 0; i < 2400; ++i) {  // 20 s: plenty for the capped fall
+    world.moveCharacter(kDt, Vec3{0.0, 0.0, 0.0});
+    minFeet = std::min(minFeet, world.character()->position.y - 0.5);
+  }
+  KIMIA_REQUIRE(minFeet >= -1e-9);  // never below the floor surface
+  KIMIA_REQUIRE(near(world.character()->position.y, 1.0));  // resting on the slab (top 0.5)
+  KIMIA_REQUIRE(world.character()->onGround);
+}

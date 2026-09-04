@@ -426,4 +426,143 @@ u32 PhysicsWorld::advance(f64 hostSeconds) {
   return accumulator_.advance(hostSeconds, [this](f64) { step(); });
 }
 
+// --- Character controller ---
+
+namespace {
+
+// True when the two AABBs strictly overlap on all three axes.
+bool characterBoxOverlaps(const Vec3& aPosition, const Vec3& aHalf, const Vec3& bPosition,
+                          const Vec3& bHalf) {
+  return std::abs(aPosition.x - bPosition.x) < aHalf.x + bHalf.x &&
+         std::abs(aPosition.y - bPosition.y) < aHalf.y + bHalf.y &&
+         std::abs(aPosition.z - bPosition.z) < aHalf.z + bHalf.z;
+}
+
+// After an axis move, push the character out of a box along that axis and
+// kill the velocity on it. axis: 0 = X, 1 = Y, 2 = Z.
+void characterResolveAxis(CharacterBody& character, const Vec3& boxCenter, const Vec3& boxHalf,
+                          i32 axis) {
+  if (!characterBoxOverlaps(character.position, character.halfExtents, boxCenter, boxHalf)) return;
+  f64* position = nullptr;
+  f64 half = 0.0;
+  f64 center = 0.0;
+  f64 otherHalf = 0.0;
+  f64* velocity = nullptr;
+  if (axis == 0) {
+    position = &character.position.x;
+    half = character.halfExtents.x;
+    center = boxCenter.x;
+    otherHalf = boxHalf.x;
+    velocity = &character.velocity.x;
+  } else if (axis == 1) {
+    position = &character.position.y;
+    half = character.halfExtents.y;
+    center = boxCenter.y;
+    otherHalf = boxHalf.y;
+    velocity = &character.velocity.y;
+  } else {
+    position = &character.position.z;
+    half = character.halfExtents.z;
+    center = boxCenter.z;
+    otherHalf = boxHalf.z;
+    velocity = &character.velocity.z;
+  }
+  *position = *position < center ? center - otherHalf - half : center + otherHalf + half;
+  *velocity = 0.0;
+  ++character.collisionCount;
+}
+
+}  // namespace
+
+// Feet still resting on a surface? (a plane at the feet height, or a box
+// whose top face is under the character's center)
+bool PhysicsWorld::characterSupported(const CharacterBody& character) const {
+  const f64 feet = character.position.y - character.halfExtents.y;
+  for (const auto& pair : planes_) {
+    if (std::abs(feet - pair.second.y) <= 1e-6) return true;
+  }
+  constexpr f64 kSupportTolerance = 1e-4;
+  const auto supportedByBox = [&character, feet](const Vec3& center, const Vec3& half) {
+    if (std::abs(feet - (center.y + half.y)) > kSupportTolerance) return false;
+    if (std::abs(character.position.x - center.x) > half.x - kSupportTolerance) return false;
+    if (std::abs(character.position.z - center.z) > half.z - kSupportTolerance) return false;
+    return true;
+  };
+  for (const auto& pair : boxes_) {
+    if (supportedByBox(pair.second.center, pair.second.halfExtents)) return true;
+  }
+  for (const auto& pair : dynamicBoxes_) {
+    if (supportedByBox(pair.second.position, pair.second.halfExtents)) return true;
+  }
+  return false;
+}
+
+void PhysicsWorld::resetCharacter(const Vec3& position) {
+  character_.position = position;
+  character_.velocity = Vec3{0.0, 0.0, 0.0};
+  character_.onGround = false;
+  character_.collisionCount = 0U;
+}
+
+bool PhysicsWorld::characterJump(f64 height) {
+  if (!character_.onGround) return false;
+  character_.velocity.y = std::sqrt(2.0 * kGravity * height);
+  character_.onGround = false;
+  return true;
+}
+
+void PhysicsWorld::moveCharacter(f64 dt, const Vec3& desiredVelocity) {
+  CharacterBody& character = character_;
+  character.collisionCount = 0U;
+
+  // Horizontal control is direct; gravity owns the vertical.
+  character.velocity.x = desiredVelocity.x;
+  character.velocity.z = desiredVelocity.z;
+  if (!character.onGround) {
+    character.velocity.y = std::max(character.velocity.y - kGravity * dt, -kMaxCharacterFallSpeed);
+  }
+
+  // Collide-and-slide: one axis at a time, so the character slides along
+  // walls instead of sticking to corners.
+  character.position.x += character.velocity.x * dt;
+  for (const auto& pair : boxes_) {
+    characterResolveAxis(character, pair.second.center, pair.second.halfExtents, 0);
+  }
+  for (const auto& pair : dynamicBoxes_) {
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 0);
+  }
+
+  character.position.z += character.velocity.z * dt;
+  for (const auto& pair : boxes_) {
+    characterResolveAxis(character, pair.second.center, pair.second.halfExtents, 2);
+  }
+  for (const auto& pair : dynamicBoxes_) {
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 2);
+  }
+
+  // Vertical: land on top faces while falling, bump the head while rising.
+  const bool falling = character.velocity.y <= 0.0;
+  character.position.y += character.velocity.y * dt;
+  if (falling) {
+    for (const auto& pair : planes_) {
+      if (character.position.y - character.halfExtents.y < pair.second.y) {
+        character.position.y = pair.second.y + character.halfExtents.y;
+        character.velocity.y = 0.0;
+        character.onGround = true;
+        ++character.collisionCount;
+      }
+    }
+  }
+  for (const auto& pair : boxes_) {
+    characterResolveAxis(character, pair.second.center, pair.second.halfExtents, 1);
+  }
+  for (const auto& pair : dynamicBoxes_) {
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 1);
+  }
+  if (character.velocity.y == 0.0 && falling) character.onGround = true;
+  // Standing still: verify the support is still there (walking off an edge
+  // must drop the character).
+  if (character.onGround && !characterSupported(character)) character.onGround = false;
+}
+
 }  // namespace kimia
