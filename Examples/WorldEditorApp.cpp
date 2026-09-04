@@ -13,6 +13,7 @@
 #include <kimia/Renderer.h>
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
+#include <kimia/OrbitCamera.h>
 #include <kimia/World.h>
 
 #include <atomic>
@@ -204,7 +205,7 @@ int main(int argc, char** argv) {
 
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
-  f64 cameraYaw = 0.0;
+  kimia::OrbitCamera orbitCamera;  // arrow keys orbit, q/e zoom, c resets
   const auto frameStart = std::chrono::steady_clock::now();
   auto lastTime = frameStart;
   const std::chrono::microseconds frameBudget(33333);  // ~30 fps over the web
@@ -239,8 +240,17 @@ int main(int argc, char** argv) {
     if (input.down(Key::Down)) moveZ += 1.0;
     editor.setMoveInput(moveX, moveZ);
     editor.setFineMove(input.down(Key::Shift));
-    cameraYaw += input.lookX * 0.006;
-    cameraYaw = clamp(cameraYaw, -1.2, 1.2);
+    if (editor.cameraControlled()) {
+      // Orbit the camera with the arrows (and the mouse on desktop); the
+      // same pads drive the ghost/player in placing, moving and playing.
+      orbitCamera.orbit((moveX * 1.1 + input.lookX * 0.006) * dt,
+                        (-moveZ * 0.9 + input.lookY * 0.006) * dt);
+      if (input.pressed(Key::Q)) orbitCamera.zoom(1.0 / 1.2);
+      if (input.pressed(Key::E)) orbitCamera.zoom(1.2);
+      if (input.pressed(Key::C)) orbitCamera.reset();
+    } else {
+      orbitCamera.orbit(input.lookX * 0.006, input.lookY * 0.006);
+    }
 
     editor.update(dt);
 
@@ -298,7 +308,7 @@ int main(int argc, char** argv) {
     }
 
     // Camera: above the ghost while placing/moving, above the ball in play,
-    // an overview of the field otherwise.
+    // an overview of the field otherwise; the orbit offset persists.
     Vec3 target = Vec3{0.0, 0.2, 0.0};
     if (editor.placing() || editor.movingObject()) {
       target = Vec3{editor.ghostPosition().x, 0.2, editor.ghostPosition().z};
@@ -307,9 +317,10 @@ int main(int argc, char** argv) {
     } else if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
       target = editor.selectedEntity()->transform.position;
     }
-    const Vec3 eye = target + Vec3{std::sin(cameraYaw) * 6.0, 3.6, std::cos(cameraYaw) * 6.0};
+    orbitCamera.center = target;
+    const Vec3 eye = orbitCamera.eye();
     scene.cameraPosition = eye;
-    scene.view = Mat4::lookAt(eye, target, Vec3{0.0, 1.0, 0.0});
+    scene.view = Mat4::lookAt(eye, orbitCamera.target(), Vec3{0.0, 1.0, 0.0});
     scene.projection = Mat4::perspective(kimia::radians(60.0), static_cast<f64>(width) / static_cast<f64>(height),
                                          0.1, 100.0);
     scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
