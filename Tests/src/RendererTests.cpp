@@ -104,6 +104,42 @@ KIMIA_TEST(software_invalid_input_rejected) {
   KIMIA_REQUIRE(!kimia::renderSoftware(scene, 10000, 10000, Vec3{0.0, 0.0, 0.0}, image));
 }
 
+KIMIA_TEST(software_clips_floor_at_the_near_plane) {
+  // Golf-style view: the camera stands INSIDE the floor's extent, so the
+  // floor crosses the near plane. It must be clipped, not dropped.
+  const MeshData plane = kimia::makePlane(30.0, 30.0);
+  RenderScene scene;
+  scene.view = Mat4::lookAt(Vec3{0.0, 1.5, 11.4}, Vec3{0.0, 0.0, 7.0}, Vec3{0.0, 1.0, 0.0});
+  scene.projection = Mat4::perspective(3.14159265358979323846 * 0.5, 4.0 / 3.0, 0.1, 100.0);
+  scene.cameraPosition = Vec3{0.0, 1.5, 11.4};
+  scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
+  scene.ambient = 0.2;
+  scene.objects.push_back({&plane, Mat4{}, Vec3{0.22, 0.45, 0.24}, 0.95});
+  // A ball on the floor in front of the camera: its depth must survive the
+  // huge clipped floor triangle (regression for z/w depth interpolation).
+  const MeshData sphere = kimia::makeSphere(16, 8);
+  scene.objects.push_back(
+      {&sphere, Mat4::translation(Vec3{0.0, 0.14, 7.0}) * Mat4::scaling(Vec3{0.12, 0.12, 0.12}),
+       Vec3{0.95, 0.95, 0.92}, 0.3});
+  Image image;
+  KIMIA_REQUIRE(kimia::renderSoftware(scene, 320, 240, Vec3{0.05, 0.05, 0.06}, image));
+  // The bottom of the frame is the floor right in front of the camera.
+  const u8* bottom = image.at(160, 239);
+  KIMIA_REQUIRE(bottom[1] > bottom[0] + 15);
+  KIMIA_REQUIRE(bottom[1] > bottom[2] + 15);
+  const u8* corner = image.at(10, 239);
+  KIMIA_REQUIRE(corner[1] > corner[0] + 15);
+  KIMIA_REQUIRE(corner[1] > corner[2] + 15);
+  i32 white = 0;
+  for (i32 y = 0; y < image.height; ++y) {
+    for (i32 x = 0; x < image.width; ++x) {
+      const u8* pixel = image.at(x, y);
+      if (pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200) ++white;
+    }
+  }
+  KIMIA_REQUIRE(white > 10);
+}
+
 KIMIA_TEST(egl_context_graceful_without_driver) {
   kimia::EGLContext context;
   const bool created = context.create(64, 64);
