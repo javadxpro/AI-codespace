@@ -7,7 +7,8 @@
 - [x] هستهٔ مستقل (Types، Log، Profiler، FixedTimeStep)
 - [x] ریاضیات (Vec2/3/4، Mat4، Quat، Camera)
 - [x] گرافیک و خط لولهٔ دارایی (Primitive Meshes، OBJ، FBX، PNG/JPG، WAV/MP3)
-- [ ] Scene و SceneIO
+- [x] Scene و SceneIO (هندل‌های ۱-مبنا + فرمت متنی v1)
+- [ ] Physics
 - [ ] Physics
 - [ ] Renderer و WebViewer
 - [ ] GolfGame
@@ -45,6 +46,7 @@ Engine/Core      # انواع، گزارش‌گیری، پروفایلر، گا�
 Engine/Math      # بردارها، ماتریس‌ها، کواترنیون، دوربین (header-only)
 Engine/Graphics  # MeshData، پریمیتیوها، OBJ، Image (PNG/JPG)
 Engine/Assets    # AssetPipeline، Audio (WAV/MP3)، FBX
+Engine/Scene     # Scene (هندل‌های ۱-مبنا) و SceneIO (فرمت متنی v1)
 Tools/           # kimia_assets (CLI)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
 Documentation/   # مستندات هر زیرسیستم
