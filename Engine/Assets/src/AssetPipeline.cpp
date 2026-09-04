@@ -421,14 +421,17 @@ std::optional<MeshAsset> loadOBJAsset(const std::string& path, std::string& erro
   if (findMtlLib(objText, mtlName)) {
     const std::string mtlPath = isAbsolute(mtlName) ? mtlName : joinPath(directoryOf(path), mtlName);
     std::string mtlText;
-    if (!readTextFile(mtlPath, mtlText, error)) return std::nullopt;
-    if (!loadFromMTLText(mtlText, asset.materials, error)) return std::nullopt;
-    // Resolve texture paths against the MTL file's directory.
-    for (MaterialData& material : asset.materials) {
-      if (!material.texturePath.empty() && !isAbsolute(material.texturePath)) {
-        material.texturePath = normalizePath(joinPath(directoryOf(mtlPath), material.texturePath));
+    std::string mtlError;  // a missing/unreadable MTL is tolerated
+    if (readTextFile(mtlPath, mtlText, mtlError) && loadFromMTLText(mtlText, asset.materials, mtlError)) {
+      // Resolve texture paths against the MTL file's directory.
+      for (MaterialData& material : asset.materials) {
+        if (!material.texturePath.empty() && !isAbsolute(material.texturePath)) {
+          material.texturePath = normalizePath(joinPath(directoryOf(mtlPath), material.texturePath));
+        }
       }
     }
+    // MTL missing or broken: the mesh still loads, materials fall back to
+    // default-white placeholders (Unity-style tolerance).
   }
 
   // Every referenced material gets a table entry; unknown names become
