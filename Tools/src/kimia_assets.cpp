@@ -1,9 +1,9 @@
 // kimia_assets — KIMIA asset pipeline CLI.
 //
 // Converts/verifies game assets into engine formats:
-//   .obj / .fbx        -> .kimiamesh  (KIMIA mesh text v1)
-//   .png / .jpg/.jpeg  -> .kimiimage  (info) + .kimi.png / .kimi.jpg (re-encoded)
-//   .wav / .mp3        -> .kimiaaudio (info) + .kimi.wav (16-bit PCM)
+//   .obj (+ .mtl) / .fbx  -> .kimiamesh (KIMIA mesh text v1; materials reported)
+//   .png / .jpg/.jpeg     -> .kimiimage (info) + .kimi.png / .kimi.jpg (re-encoded)
+//   .wav / .mp3 / .ogg / .flac -> .kimiaaudio (info) + .kimi.wav (16-bit PCM)
 //
 // Usage: kimia_assets [--quiet] <file> [<file> ...]
 // Exit code: 0 = everything converted, 1 = at least one failure.
@@ -38,23 +38,38 @@ void printUsage() {
       "Usage: kimia_assets [--quiet] <file> [<file> ...]\n"
       "\n"
       "Formats:\n"
-      "  .obj .fbx         -> .kimiamesh  (KIMIA mesh text v1)\n"
+      "  .obj (+.mtl) .fbx -> .kimiamesh  (KIMIA mesh text v1; materials reported)\n"
       "  .png .jpg .jpeg   -> .kimiimage  (info) + re-encoded .kimi.png / .kimi.jpg\n"
-      "  .wav .mp3         -> .kimiaaudio (info) + .kimi.wav (16-bit PCM)\n");
+      "  .wav .mp3 .ogg .flac -> .kimiaaudio (info) + .kimi.wav (16-bit PCM)\n");
 }
 
 int convertMesh(const std::string& path, bool quiet) {
   std::string error;
-  auto loaded = kimia::assets::loadMesh(path, error);
-  if (!loaded.has_value()) {
+  std::optional<kimia::assets::MeshAsset> asset;
+  std::string format;
+  if (path.size() >= 4U && path.compare(path.size() - 4U, 4U, ".obj") == 0) {
+    asset = kimia::assets::loadOBJAsset(path, error);
+    format = "obj";
+  } else {
+    asset = kimia::assets::loadFBXAsset(path, error);
+    format = "fbx";
+  }
+  if (!asset.has_value()) {
     std::fprintf(stderr, "ERROR %s: %s\n", path.c_str(), error.c_str());
     return 1;
   }
-  const kimia::MeshData& mesh = loaded->mesh;
+  const kimia::MeshData& mesh = asset->mesh;
   if (!quiet) {
-    std::printf("MESH %s : %s | %s | %llu verts | %llu triangles\n", path.c_str(), mesh.name.c_str(),
-                loaded->sourceFormat.c_str(), static_cast<unsigned long long>(mesh.vertexCount()),
-                static_cast<unsigned long long>(mesh.triangleCount()));
+    std::printf("MESH %s : %s | %s | %llu verts | %llu triangles | %llu materials | %llu sub-meshes\n",
+                path.c_str(), mesh.name.c_str(), format.c_str(), static_cast<unsigned long long>(mesh.vertexCount()),
+                static_cast<unsigned long long>(mesh.triangleCount()),
+                static_cast<unsigned long long>(asset->materials.size()),
+                static_cast<unsigned long long>(asset->subMeshes.size()));
+    for (const kimia::MaterialData& material : asset->materials) {
+      std::printf("  material %s | color %.3f %.3f %.3f | texture %s\n", material.name.c_str(), material.color.x,
+                  material.color.y, material.color.z,
+                  material.texturePath.empty() ? "(none)" : material.texturePath.c_str());
+    }
   }
   std::string text;
   if (!kimia::meshToText(mesh, text)) {
