@@ -6,6 +6,7 @@
 
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -478,9 +479,12 @@ KIMIA_TEST(world_fantasy_ball_outrolls_accurate) {
   }
   const f64 accurateSpeed = accurateWorld.sphere(accurateId)->velocity.length();
   const f64 fantasySpeed = fantasyWorld.sphere(fantasyId)->velocity.length();
-  KIMIA_REQUIRE(fantasySpeed > accurateSpeed * 3.0);
-  KIMIA_REQUIRE(accurateSpeed > 0.3);
-  KIMIA_REQUIRE(fantasySpeed > 3.5);
+  // Constant-force friction: the accurate ball (0.62 * g) stops in ~0.82 s,
+  // the fantasy ball (0.05 * g) still rolls at ~3.54 m/s after 3 s.
+  KIMIA_REQUIRE(accurateSpeed == 0.0);
+  KIMIA_REQUIRE(fantasySpeed > 3.4);
+  KIMIA_REQUIRE(fantasySpeed < 3.7);
+  KIMIA_REQUIRE(fantasySpeed > accurateSpeed * 10.0);
 }
 
 KIMIA_TEST(world_play_controls_reset_and_back) {
@@ -551,4 +555,58 @@ KIMIA_TEST(world_quit_flag_from_main_menu) {
   KIMIA_REQUIRE(!editor.quitRequested());
   editor.choose(2);  // quit
   KIMIA_REQUIRE(editor.quitRequested());
+}
+
+KIMIA_TEST(world_ball_rests_still_without_input) {
+  WorldEditor editor = editorWithWorld();
+  addBall(editor, 1, Vec3{0.0, 0.0, 0.0});  // fantasy: the bounciest ball
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  for (i32 i = 0; i < 300; ++i) editor.update(1.0 / 60.0);  // 5 s untouched
+  // The ball never moves by itself: it sits exactly at its spawn, at rest.
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kWorldFantasyRadius, 0.0}, 1e-9));
+  const Vec3 velocity = editor.ballVelocity();
+  KIMIA_REQUIRE(velocity.x == 0.0);
+  KIMIA_REQUIRE(velocity.y == 0.0);
+  KIMIA_REQUIRE(velocity.z == 0.0);
+}
+
+KIMIA_TEST(world_still_player_deflects_rolling_ball) {
+  WorldEditor editor = editorWithWorld();
+  addBall(editor, 0, Vec3{3.0, 0.0, 0.0});  // accurate ball at x=3
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{3.0, kGolfBallRadius, 0.0});
+  editor.setBallVelocity(Vec3{-3.0, 0.0, 0.0});  // rolling at the idle player
+  f64 minX = 3.0;
+  for (i32 i = 0; i < 240; ++i) {  // 4 s
+    editor.update(1.0 / 60.0);
+    minX = std::min(minX, editor.ballPosition().x);
+  }
+  const f64 contact = kGolfBallRadius + kimia::kWorldPlayerRadius;
+  // The ball bounced off the player instead of passing through...
+  KIMIA_REQUIRE(minX >= contact - 1e-9);
+  KIMIA_REQUIRE(editor.ballPosition().x > contact);
+  // ...and it came to a stop (friction) somewhere on the player side.
+  KIMIA_REQUIRE(editor.ballVelocity().x == 0.0);
+}
+
+KIMIA_TEST(world_ball_cannot_leave_floor) {
+  WorldEditor editor = editorWithWorld();
+  addBall(editor, 0, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  editor.setPlayerPosition(Vec3{-9.0, 0.5, 0.0});  // far away: no contact
+  editor.setBallPosition(Vec3{9.0, kGolfBallRadius, 0.0});
+  editor.setBallVelocity(Vec3{10.0, 0.0, 0.0});  // blasted at the boundary
+  for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);  // 2 s
+  const Vec3 position = editor.ballPosition();
+  // The ball stops exactly at the floor edge, no outward speed left.
+  KIMIA_REQUIRE(near(position.x, kimia::kWorldFloorHalf - kGolfBallRadius, 1e-9));
+  KIMIA_REQUIRE(position.z == 0.0);
+  KIMIA_REQUIRE(editor.ballVelocity().x == 0.0);
 }

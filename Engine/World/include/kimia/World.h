@@ -24,6 +24,8 @@ inline constexpr f64 kWorldKickBase = 2.0;
 inline constexpr f64 kWorldKickSpeedScale = 0.5;
 inline constexpr f64 kWorldKickUp = 1.2;
 inline constexpr f64 kWorldKickReach = 0.55;  // horizontal distance player-ball
+inline constexpr f64 kWorldPlayerRadius = 0.35;  // XZ radius the ball collides with
+inline constexpr f64 kWorldPlayerRestitution = 0.4;  // bounce off a still player
 
 // Fantasy ball: high bounce, low friction, no roll decay (the spec's words).
 inline constexpr f64 kWorldFantasyRestitution = 0.85;
@@ -168,6 +170,7 @@ public:
   // Debug/test hooks.
   void setPlayerPosition(const Vec3& position) { playerPos_ = position; }
   void setBallPosition(const Vec3& position);
+  void setBallVelocity(const Vec3& velocity);
 
   std::string statsLine() const;
 

@@ -234,6 +234,11 @@ void WorldEditor::setBallPosition(const Vec3& position) {
   if (ball != nullptr) ball->position = position;
 }
 
+void WorldEditor::setBallVelocity(const Vec3& velocity) {
+  SphereBody* ball = physics_.sphere(ballId_);
+  if (ball != nullptr) ball->velocity = velocity;
+}
+
 void WorldEditor::setMoveInput(f64 x, f64 z) {
   moveInput_.x = x;
   moveInput_.z = z;
@@ -341,19 +346,60 @@ void WorldEditor::update(f64 hostSeconds) {
     playerPos_.x = std::min(bound, std::max(-bound, playerPos_.x));
     playerPos_.z = std::min(bound, std::max(-bound, playerPos_.z));
 
+    const Vec3 previous = ballPosition();
+    physics_.advance(hostSeconds);
+
+    // The ball stays on the floor: clamp it inside the play area and stop
+    // any outward motion so it can never roll away forever.
     SphereBody* ball = physics_.sphere(ballId_);
-    if (ball != nullptr && moving) {
+    const f64 ballBound = kWorldFloorHalf - world_.ball.radius;
+    if (ball != nullptr) {
+      if (ball->position.x > ballBound) {
+        ball->position.x = ballBound;
+        if (ball->velocity.x > 0.0) ball->velocity.x = 0.0;
+      } else if (ball->position.x < -ballBound) {
+        ball->position.x = -ballBound;
+        if (ball->velocity.x < 0.0) ball->velocity.x = 0.0;
+      }
+      if (ball->position.z > ballBound) {
+        ball->position.z = ballBound;
+        if (ball->velocity.z > 0.0) ball->velocity.z = 0.0;
+      } else if (ball->position.z < -ballBound) {
+        ball->position.z = -ballBound;
+        if (ball->velocity.z < 0.0) ball->velocity.z = 0.0;
+      }
+    }
+
+    // The player is solid: resolved after physics so the ball is never
+    // rendered inside the player. Walking into the ball kicks it; a still
+    // player deflects a rolling ball.
+    if (ball != nullptr) {
       const f64 dx = ball->position.x - playerPos_.x;
       const f64 dz = ball->position.z - playerPos_.z;
       const f64 distance = std::sqrt(dx * dx + dz * dz);
-      if (distance < world_.ball.radius + kWorldKickReach && ball->velocity.length() < kKickMaxSpeed) {
+      const f64 contact = world_.ball.radius + kWorldPlayerRadius;
+      if (distance < contact) {
+        Vec3 pushNormal{1.0, 0.0, 0.0};
+        if (distance > kMoveEpsilon) {
+          pushNormal = Vec3{dx / distance, 0.0, dz / distance};
+        } else if (moving) {
+          pushNormal = Vec3{direction.x, 0.0, direction.z};
+        }
+        ball->position.x = playerPos_.x + pushNormal.x * contact;
+        ball->position.z = playerPos_.z + pushNormal.z * contact;
+        const f64 velocityNormal = ball->velocity.x * pushNormal.x + ball->velocity.z * pushNormal.z;
+        if (velocityNormal < 0.0) {
+          ball->velocity.x -= (1.0 + kWorldPlayerRestitution) * velocityNormal * pushNormal.x;
+          ball->velocity.z -= (1.0 + kWorldPlayerRestitution) * velocityNormal * pushNormal.z;
+        }
+      }
+      const f64 kickDistance = world_.ball.radius + kWorldKickReach;
+      if (moving && distance < kickDistance && ball->velocity.length() < kKickMaxSpeed) {
         ball->velocity = direction * (kWorldKickBase + world_.player.speed * kWorldKickSpeedScale) +
                          Vec3{0.0, kWorldKickUp, 0.0};
       }
     }
 
-    const Vec3 previous = ballPosition();
-    physics_.advance(hostSeconds);
     const Vec3 position = ballPosition();
     // Goal capture: the ball crosses a goal plane going -Z, inside the
     // posts and below the bar.
