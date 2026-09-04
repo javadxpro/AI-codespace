@@ -5,6 +5,8 @@
 - [x] مرحلهٔ ۳: Graphics و خط لولهٔ دارایی (Primitive Meshes + OBJ/FBX/PNG/JPG/WAV/MP3)
 - [x] مرحلهٔ ۴: Scene و SceneIO
 - [x] مرحلهٔ ۵: Physics
-- [ ] مرحلهٔ ۶: Renderer و WebViewer
-- [ ] مرحلهٔ ۷: GolfGame
-- [ ] مرحلهٔ ۸: KIMIA World، ویرایشگر گزینه‌محور و PLAY در مرورگر
+- [x] مرحلهٔ ۶: Renderer (GL/EGL + رسترایزر نرم‌افزاری)
+- [x] مرحلهٔ ۷: Platform (ورودی + پنجرهٔ SDL2 اختیاری)
+- [x] مرحلهٔ ۸: App — Engine و WebViewer (localhost:8080)
+- [ ] مرحلهٔ ۹: GolfGame
+- [ ] مرحلهٔ ۱۰: KIMIA World، ویرایشگر گزینه‌محور و PLAY در مرورگر
