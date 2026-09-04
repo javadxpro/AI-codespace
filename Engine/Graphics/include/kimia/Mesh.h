@@ -28,8 +28,23 @@ MeshData makeSphere(u32 rings = 16, u32 segments = 8);
 // kept as authored (OBJ is CCW). UVs are stored with the OBJ convention
 // v-flipped (0,0 at bottom) to match image row order (0,0 at top).
 // `dedupe` merges identical vertex tuples (position+normal+uv).
-bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error, bool dedupe = false);
-bool loadFromOBJFile(const std::string& path, MeshData& out, std::string& error, bool dedupe = false);
+//
+// With `groups` (requires dedupe=false) the loader also reports the `usemtl`
+// runs: contiguous face ranges sharing one material, with their vertex and
+// index ranges inside `out`. Faces before the first `usemtl` are one group
+// with an empty material name.
+struct OBJFaceGroup {
+  std::string material;  // usemtl value ("" = no material was active)
+  usize vertexBegin = 0;
+  usize vertexCount = 0;
+  usize indexBegin = 0;
+  usize indexCount = 0;
+};
+
+bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error, bool dedupe = false,
+                     std::vector<OBJFaceGroup>* groups = nullptr);
+bool loadFromOBJFile(const std::string& path, MeshData& out, std::string& error, bool dedupe = false,
+                     std::vector<OBJFaceGroup>* groups = nullptr);
 
 // Merges vertices with identical position+normal+uv tuples (lossless, used by
 // the FBX importer and available for any mesh).

@@ -200,12 +200,19 @@ MeshData makeSphere(u32 rings, u32 segments) {
   return mesh;
 }
 
-bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error, bool dedupe) {
+bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error, bool dedupe,
+                     std::vector<OBJFaceGroup>* groups) {
+  if (groups != nullptr && dedupe) {
+    error = "OBJ face groups require dedupe=false";
+    return false;
+  }
   std::vector<Vec3> objPositions;
   std::vector<Vec3> objNormals;
   std::vector<Vec2> objUVs;
   std::vector<ObjFaceCorner> corners;
   MeshData result;
+  std::string currentMaterial;
+  if (groups != nullptr) groups->clear();
 
   std::istringstream stream(text);
   std::string rawLine;
@@ -250,6 +257,10 @@ bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error,
         return false;
       }
       objUVs.push_back(Vec2{u, 1.0 - v});  // OBJ v=0 is bottom; images have row 0 on top
+      continue;
+    }
+    if (keyword == "usemtl" && tokens.size() >= 2U) {
+      currentMaterial = tokens[1];
       continue;
     }
     if (keyword == "f" && tokens.size() >= 4U) {
@@ -305,6 +316,8 @@ bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error,
       }
       // One vertex per face corner, then fan-triangulate by index (a quad
       // face yields 4 vertices / 6 indices, matching the canonical counts).
+      const usize faceVertexBegin = result.positions.size();
+      const usize faceIndexBegin = result.indices.size();
       std::vector<u32> cornerVertices;
       cornerVertices.reserve(corners.size());
       for (const ObjFaceCorner& corner : corners) {
@@ -341,9 +354,24 @@ bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error,
         result.indices.push_back(cornerVertices[k]);
         result.indices.push_back(cornerVertices[k + 1U]);
       }
+      if (groups != nullptr) {
+        // Consecutive faces sharing a material merge into one contiguous group.
+        if (!groups->empty() && groups->back().material == currentMaterial) {
+          groups->back().vertexCount = result.positions.size() - groups->back().vertexBegin;
+          groups->back().indexCount = result.indices.size() - groups->back().indexBegin;
+        } else {
+          OBJFaceGroup group;
+          group.material = currentMaterial;
+          group.vertexBegin = faceVertexBegin;
+          group.vertexCount = result.positions.size() - faceVertexBegin;
+          group.indexBegin = faceIndexBegin;
+          group.indexCount = result.indices.size() - faceIndexBegin;
+          groups->push_back(group);
+        }
+      }
       continue;
     }
-    // Unknown keywords (mtllib, s, usemtl, ...) are skipped: tolerant load.
+    // Unknown keywords (mtllib, s, ...) are skipped: tolerant load.
   }
 
   if (result.positions.empty()) {
@@ -361,7 +389,8 @@ bool loadFromOBJText(const std::string& text, MeshData& out, std::string& error,
   return true;
 }
 
-bool loadFromOBJFile(const std::string& path, MeshData& out, std::string& error, bool dedupe) {
+bool loadFromOBJFile(const std::string& path, MeshData& out, std::string& error, bool dedupe,
+                     std::vector<OBJFaceGroup>* groups) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     error = "cannot open file: " + path;
@@ -369,7 +398,7 @@ bool loadFromOBJFile(const std::string& path, MeshData& out, std::string& error,
   }
   std::ostringstream buffer;
   buffer << file.rdbuf();
-  return loadFromOBJText(buffer.str(), out, error, dedupe);
+  return loadFromOBJText(buffer.str(), out, error, dedupe, groups);
 }
 
 bool meshToText(const MeshData& mesh, std::string& out) {
