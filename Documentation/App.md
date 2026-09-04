@@ -44,6 +44,7 @@
   `--frames N`، `--capture file.png`، `--web`، `--port N`، `--window`.
 - `kimia_remote` — headless + وب: کنترل با a/d/w/s، زوم z/x، بازنشانی r
   و چرخش دوربین با درگ؛ فریم‌ها روی پورت 8080.
+- `kimia_golf` — بازی مرجع (جزئیات در [Golf.md](Golf.md)).
 
 ## تست‌ها
 

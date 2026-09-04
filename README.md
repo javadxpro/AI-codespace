@@ -12,7 +12,7 @@
 - [x] Renderer (GL 3.3 با لودر dlopen + EGL، سایهٔ PCF، رسترایزر نرم‌افزاری)
 - [x] Platform (ورودی LEVEL/EDGE + پنجرهٔ SDL2 اختیاری)
 - [x] App — WebViewer (فریم‌ها در مرورگر، localhost:8080) و بوت‌استرپ Engine
-- [ ] GolfGame
+- [x] GolfGame — بازی مرجع با نشانه‌گیری/شارژ/شوت، سازندهٔ زمین و `# demo`
 - [ ] KIMIA World، ویرایشگر گزینه‌محور و PLAY در مرورگر
 
 ## ساخت و تست
@@ -20,7 +20,7 @@
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/kimia_tests          # 85/85 tests passed
+./build/bin/kimia_tests      # 101/101 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -36,20 +36,25 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/kimia_tests    # 85/85 tests passed
+./build-nosdl/bin/kimia_tests    # 101/101 tests passed
 ```
 
-## نمایش در مرورگر (WebViewer)
+## بازی گلف در مرورگر (WebViewer)
 
 ```bash
-./build/kimia_remote --port 8080
+./build/bin/kimia_golf --web --port 8080
 # سپس در مرورگر: http://localhost:8080
 ```
 
-بدون GL هم کار می‌کند (رسترایزر نرم‌افزاری) — مناسب Termux. نمونهٔ تک‌فریم:
+a/d نشانه‌گیری، نگه‌داشتن SPACE شارژ قدرت، رها کردن شوت. سازندهٔ زمین با
+`--edit`: 1/2/3 ابزار، WASD حرکت، Enter قرار دادن، S ذخیره، L بارگذاری،
+F بازی. جزئیات در [Documentation/Golf.md](Documentation/Golf.md).
+
+نمای نمونهٔ RemoteView و First3DScene:
 
 ```bash
-./build/kimia_first3d --frames 1 --capture frame.png
+./build/bin/kimia_remote --port 8080
+./build/bin/kimia_first3d --frames 1 --capture frame.png
 ```
 
 ## خط لولهٔ دارایی
@@ -73,7 +78,8 @@ Engine/Physics   # PhysicsWorld: گام ثابت، کره/صفحه/AABB، است
 Engine/Renderer  # GL/EGL (dlopen) + سایه + رسترایزر نرم‌افزاری
 Engine/Platform  # ورودی + پنجرهٔ SDL2 اختیاری
 Engine/App       # WebViewer (HTTP) و بوت‌استرپ Engine
-Examples/        # HelloWindow، First3DScene، RemoteView
+Engine/Golf      # بازی مرجع: حالت‌ها، سازندهٔ زمین، شات نمایشی
+Examples/        # HelloWindow، First3DScene، RemoteView، GolfGame
 Tools/           # kimia_assets (CLI)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
 Documentation/   # مستندات هر زیرسیستم
