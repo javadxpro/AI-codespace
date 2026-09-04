@@ -1,8 +1,8 @@
 # نقشهٔ راه KIMIA
 
 - [x] مرحلهٔ ۱: هستهٔ مستقل (Types، Log، Profiler، FixedTimeStep) و تست‌ها
-- [ ] مرحلهٔ ۲: ریاضیات (Vec، Mat4، Quat، Camera)
-- [ ] مرحلهٔ ۳: Graphics و Primitive Meshes
+- [x] مرحلهٔ ۲: ریاضیات (Vec، Mat4، Quat، Camera)
+- [x] مرحلهٔ ۳: Graphics و خط لولهٔ دارایی (Primitive Meshes + OBJ/FBX/PNG/JPG/WAV/MP3)
 - [ ] مرحلهٔ ۴: Scene و SceneIO
 - [ ] مرحلهٔ ۵: Physics
 - [ ] مرحلهٔ ۶: Renderer و WebViewer
