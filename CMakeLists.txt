@@ -11,6 +11,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
 
 set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wdouble-promotion)
+# Binaries live in <build>/bin (the paths the engine spec's gates use).
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 find_package(Threads REQUIRED)
 
@@ -72,7 +74,7 @@ add_library(kimia_physics STATIC
     Engine/Physics/src/Physics.cpp
 )
 target_include_directories(kimia_physics PUBLIC Engine/Physics/include)
-target_link_libraries(kimia_physics PUBLIC kimia_math)
+target_link_libraries(kimia_physics PUBLIC kimia_core kimia_math)
 target_compile_options(kimia_physics PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_physics PRIVATE -Werror)
@@ -111,9 +113,10 @@ add_executable(kimia_tests
     Tests/src/PhysicsTests.cpp
     Tests/src/WebTests.cpp
     Tests/src/RendererTests.cpp
+    Tests/src/GolfTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
@@ -215,6 +218,25 @@ target_link_libraries(kimia_remote PRIVATE kimia_app)
 target_compile_options(kimia_remote PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_remote PRIVATE -Werror)
+endif()
+
+# --- Golf (reference game logic + the kimia_golf example) ---
+add_library(kimia_golf STATIC
+    Engine/Golf/src/Golf.cpp
+)
+target_include_directories(kimia_golf PUBLIC Engine/Golf/include)
+target_link_libraries(kimia_golf PUBLIC kimia_scene kimia_physics)
+target_compile_options(kimia_golf PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_golf PRIVATE -Werror)
+endif()
+
+add_executable(kimia_golf_app Examples/GolfGame.cpp)
+set_target_properties(kimia_golf_app PROPERTIES OUTPUT_NAME kimia_golf)
+target_link_libraries(kimia_golf_app PRIVATE kimia_app kimia_golf)
+target_compile_options(kimia_golf_app PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_golf_app PRIVATE -Werror)
 endif()
 
 include(CTest)
