@@ -104,8 +104,8 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
       break;
     }
     case ObjectKind::Ball:
-      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, 0.35, ghost.z}) *
-                                            Mat4::scaling(Vec3{0.24, 0.24, 0.24}),
+      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, 0.12, ghost.z}) *
+                                            Mat4::scaling(Vec3{0.12, 0.12, 0.12}),
                                kGhostColor, 0.9});
       break;
     case ObjectKind::Block:
@@ -269,10 +269,14 @@ int main(int argc, char** argv) {
         if (found != loadedMeshes.end()) mesh = &found->second;
         else return;  // mesh missing/unreadable: skip this entity
       }
-      // Crates follow the physics bodies while playing.
+      // Crates follow the physics bodies while playing. Sphere entities
+      // store their diameter as the scale but the mesh has radius 1, so
+      // they take half scale.
       const Vec3 position =
           kind == ObjectKind::Crate ? editor.cratePosition(entity.name) : entity.transform.position;
-      const Mat4 model = Mat4::translation(position) * Mat4::scaling(entity.transform.scale);
+      const Vec3 scale = entity.mesh == kimia::MeshKind::sphere ? entity.transform.scale * 0.5
+                                                                : entity.transform.scale;
+      const Mat4 model = Mat4::translation(position) * Mat4::scaling(scale);
       scene.objects.push_back({mesh, model, entity.color, entity.roughness});
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.
