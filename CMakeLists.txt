@@ -131,6 +131,17 @@ target_compile_definitions(kimia_tests PRIVATE
     KIMIA_TEST_TMP="${CMAKE_BINARY_DIR}/kimia_test_tmp"
 )
 
+# --- Raytracer (offline path tracer render preview) ---
+add_library(kimia_raytracer STATIC
+    Engine/Raytracer/src/Raytracer.cpp
+)
+target_include_directories(kimia_raytracer PUBLIC Engine/Raytracer/include)
+target_link_libraries(kimia_raytracer PUBLIC kimia_world kimia_math)
+target_compile_options(kimia_raytracer PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_raytracer PRIVATE -Werror)
+endif()
+
 # Tiny generator that writes the test assets (tone.wav, 2x3.png, 2x2.jpg,
 # cube.obj, quad.obj) into Tests/assets. Runs on every build.
 add_executable(kimia_asset_gen Tools/src/asset_gen.cpp)
