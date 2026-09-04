@@ -1,0 +1,9 @@
+# KIMIA scene v1
+e "Green" mesh plane pos 0 0 0 scale 1 1 1 color 0.22 0.45 0.24 rough 0.95
+e "Wall_1" mesh cube pos 2.4 0.5 0 scale 0.5 1 4.4 color 0.7 0.68 0.62 rough 0.5
+e "Tee" mesh cube pos 0 0.01 7 scale 0.4 0.02 0.4 color 0.9 0.85 0.3 rough 0.8
+e "Hole" mesh cube pos 0 0.01 -7 scale 0.56 0.02 0.56 color 0.05 0.05 0.05 rough 0.8
+e "FlagPole" mesh cube pos 0 0.9 -7 scale 0.03 1.8 0.03 color 0.9 0.9 0.9 rough 0.4
+e "FlagCloth" mesh cube pos 0.31 1.62 -7 scale 0.6 0.35 0.02 color 0.85 0.15 0.15 rough 0.6
+e "Ball" mesh sphere pos 0 0 0 scale 1 1 1 color 0.95 0.95 0.92 rough 0.3
+# demo 0.000000 0.610000
