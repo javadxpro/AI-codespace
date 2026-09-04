@@ -84,8 +84,8 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, onSignal);
   const i32 width = 640;
   const i32 height = 480;
-  f64 yaw = 0.6;
-  f64 pitch = 0.35;
+  f64 yaw = 0.0;
+  f64 pitch = 0.45;
   f64 distance = 4.5;
   u64 frame = 0;
   while (running.load()) {
@@ -102,8 +102,8 @@ int main(int argc, char** argv) {
     if (input.down(kimia::Key::Z)) distance *= 0.985;
     if (input.down(kimia::Key::X)) distance *= 1.015;
     if (input.pressed(kimia::Key::R)) {
-      yaw = 0.6;
-      pitch = 0.35;
+      yaw = 0.0;
+      pitch = 0.45;
       distance = 4.5;
     }
     distance = kimia::clamp(distance, 2.0, 12.0);
