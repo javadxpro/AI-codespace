@@ -119,9 +119,10 @@ add_executable(kimia_tests
     Tests/src/RendererTests.cpp
     Tests/src/GolfTests.cpp
     Tests/src/WorldTests.cpp
+    Tests/src/RaytracerTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf kimia_world)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf kimia_world kimia_raytracer)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
