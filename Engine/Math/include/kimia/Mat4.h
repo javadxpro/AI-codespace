@@ -137,6 +137,17 @@ struct Mat4 {
     return result;
   }
 
+  static constexpr Mat4 orthographic(f64 left, f64 right, f64 bottom, f64 top, f64 nearPlane, f64 farPlane) {
+    Mat4 result{};
+    result.at(0, 0) = 2.0 / (right - left);
+    result.at(1, 1) = 2.0 / (top - bottom);
+    result.at(2, 2) = -2.0 / (farPlane - nearPlane);
+    result.at(3, 0) = -(right + left) / (right - left);
+    result.at(3, 1) = -(top + bottom) / (top - bottom);
+    result.at(3, 2) = -(farPlane + nearPlane) / (farPlane - nearPlane);
+    return result;
+  }
+
   // Right-handed perspective projection (OpenGL-style, clip depth [-1, 1]).
   static Mat4 perspective(f64 fovYRadians, f64 aspect, f64 nearPlane, f64 farPlane) {
     const f64 tanHalfFovY = std::tan(fovYRadians * 0.5);

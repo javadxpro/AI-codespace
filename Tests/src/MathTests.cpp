@@ -217,6 +217,14 @@ KIMIA_TEST(camera_view_projection_chain) {
   KIMIA_REQUIRE(near4(clip, viaTwoSteps, kEps4));
 }
 
+KIMIA_TEST(mat4_orthographic_maps_corners) {
+  const kimia::Mat4 o = kimia::Mat4::orthographic(-1.0, 1.0, -1.0, 1.0, 0.1, 100.0);
+  // Far corner maps to NDC (1, 1, 1).
+  KIMIA_REQUIRE(near4(o * Vec4{1.0, 1.0, -100.0, 1.0}, Vec4{1.0, 1.0, 1.0, 1.0}, kEps4));
+  // Near corner maps to NDC (-1, -1, -1).
+  KIMIA_REQUIRE(near4(o * Vec4{-1.0, -1.0, -0.1, 1.0}, Vec4{-1.0, -1.0, -1.0, 1.0}, kEps4));
+}
+
 KIMIA_TEST(mathutils_lerp_clamp_angles) {
   KIMIA_REQUIRE(near(kimia::lerp(0.0, 10.0, 0.25), 2.5));
   KIMIA_REQUIRE(near(kimia::clamp(5.0, 0.0, 10.0), 5.0));
