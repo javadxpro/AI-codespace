@@ -31,17 +31,36 @@ inline constexpr f64 kWorldFantasyFriction = 0.05;
 inline constexpr f64 kWorldFantasyRollingFriction = 0.0;
 inline constexpr f64 kWorldFantasyRadius = 0.15;
 
-// Goal: a gate at z = kWorldGoalZ, half width kWorldGoalHalfWidth; the ball
-// scores when it crosses the line inside the posts, below the bar height.
-inline constexpr f64 kWorldGoalZ = -8.5;
-inline constexpr f64 kWorldGoalHalfWidth = 2.0;
-inline constexpr f64 kWorldGoalBarHeight = 1.2;
 inline constexpr f64 kWorldFloorHalf = 10.0;  // the floor is 20 x 20
+
+// --- Object builder constants (all chosen from menus) ---
+inline constexpr f64 kWorldBlockSmall = 0.5;
+inline constexpr f64 kWorldBlockMedium = 1.0;
+inline constexpr f64 kWorldBlockLarge = 2.0;
+inline constexpr f64 kWorldWallShort = 3.0;
+inline constexpr f64 kWorldWallMedium = 6.0;
+inline constexpr f64 kWorldWallLong = 9.0;
+inline constexpr f64 kWorldGoalSmall = 2.0;
+inline constexpr f64 kWorldGoalMedium = 3.0;
+inline constexpr f64 kWorldGoalLarge = 4.0;
+inline constexpr f64 kWorldGoalHeight = 2.0;
+inline constexpr f64 kWorldPlaceSpeed = 2.0;       // ghost/move speed
+inline constexpr f64 kWorldPlaceSpeedFine = 0.5;   // with Shift (ریز)
 
 // Ball physics presets. Accurate = the golf tuning; fantasy = bouncy/slick.
 enum class BallType { Accurate, Fantasy };
 
 enum class EnvironmentKind { Grass, Sand, Night };
+
+// Game-object kinds, inferred from entity names (fully SceneIO-v1
+// compatible — nothing extra is stored in the file):
+//   "Player" -> player, "Ball" -> ball, "Wall_*" -> wall,
+//   "Block_*" -> block, "Goal*" -> goal, anything else -> decoration.
+enum class ObjectKind { Player, Ball, Block, Wall, Goal, Decoration };
+
+ObjectKind objectKindForName(const std::string& name);
+bool isPhysicsObject(ObjectKind kind);       // block/wall/goal collide
+bool isLegacyGoalPart(const std::string& name);  // GoalPostLeft/Right/Bar
 
 struct PlayerConfig {
   f64 speed = kWorldPlayerNormal;
@@ -63,7 +82,8 @@ struct EnvironmentColors {
 };
 
 // The user-authored world: the answers to the editor's questions plus a
-// SceneIO-v1 scene (floor + goal). Worlds serialize through WorldIO.
+// SceneIO-v1 scene (ground + the objects the user built). Worlds serialize
+// through WorldIO.
 struct WorldData {
   std::string name = "MyWorld";
   PlayerConfig player;
@@ -76,18 +96,18 @@ struct WorldData {
 void applyBallType(BallConfig& ball, BallType type);
 EnvironmentColors environmentColors(EnvironmentKind kind);
 
-// Fills world.scene with the default environment: the floor plane and the
-// goal (two posts + crossbar). The floor color follows the environment.
-void buildDefaultWorldScene(WorldData& world);
+// Fills world.scene with an EMPTY ground (just the floor plane) — the user
+// builds their game on it object by object.
+void buildEmptyWorldScene(WorldData& world);
 
-// The option-driven editor. Every interaction is a menu option (Num1..Num6
-// taps) or a named action (reset/back); nothing requires a keyboard.
+// The option-driven editor / builder. Every interaction is a menu option
+// (Num1..Num6 taps) or a named action; nothing requires a keyboard.
 //
-//   Main ─ Create World ─> Menu ─ Add Player  ─> AskPlayer (fast/normal/slow)
-//                             ├─ Add Ball     ─> AskBall (accurate/fantasy)
-//                             ├─ Add Environment -> AskEnvironment (grass/sand/night)
-//                             ├─ PLAY         ─> Play <-> Goal
-//                             └─ Save / Main
+//   Main ─ Create World ─> Builder ─ Catalog ─ questions ─> Place
+//                                    ├─ Manage (list/move/delete/color)
+//                                    ├─ Environment
+//                                    ├─ PLAY ─> Play <-> Goal
+//                                    └─ Save / Main
 class WorldEditor {
 public:
   WorldEditor();
@@ -99,8 +119,8 @@ public:
   std::vector<std::pair<std::string, std::string>> tapPad() const;   // label, key
 
   void choose(i32 optionIndex);  // a menu option was tapped
-  void resetBall();              // play: put the ball back at the center
-  void backToMenu();             // play: leave the game, back to the object menu
+  void resetBall();              // play: put the ball back at its spawn
+  void backToMenu();             // play: leave the game, back to the builder
   bool quitRequested() const { return quitRequested_; }
 
   // --- World lifecycle ---
@@ -108,14 +128,36 @@ public:
   bool hasWorld() const { return hasWorld_; }
   void setWorldPath(const std::string& path) { worldPath_ = path; }
   const std::string& worldPath() const { return worldPath_; }
-  void createWorld();  // resets to a fresh default world
+  void createWorld();  // resets to a fresh EMPTY ground
   bool loadWorld(const std::string& path, std::string& error);
   bool saveWorld(const std::string& path, std::string& error);
   std::string lastError() const { return lastError_; }
 
+  // --- Builder info (for rendering) ---
+  Vec3 ghostPosition() const { return ghost_; }
+  void setGhostPosition(const Vec3& position) { ghost_ = position; }
+  ObjectKind ghostKind() const { return pendingKind_; }
+  f64 ghostSize() const { return pendingSize_; }    // block size / wall length / goal width
+  bool ghostAxisZ() const { return pendingAxisZ_; }  // wall axis
+  const EntityData* selectedEntity() const;          // in manage screens
+  bool placing() const { return screen_ == Screen::Place; }
+  bool movingObject() const { return screen_ == Screen::Move; }
+  bool selectingObject() const {
+    return screen_ == Screen::Manage || screen_ == Screen::Move || screen_ == Screen::ConfirmDelete ||
+           screen_ == Screen::AskColor;
+  }
+  usize managedCount() const { return managed_.size(); }
+  usize managedIndex() const { return managedIndex_; }
+  std::string managedName() const;
+  std::string managedKindName() const;
+  usize goalCount() const;    // goal groups (legacy trios count as one)
+  usize objectCount() const;  // all entities except the ground
+  usize physicsBoxCount() const { return physics_.boxCount(); }
+
   // --- Play simulation ---
   void update(f64 hostSeconds);
   void setMoveInput(f64 x, f64 z);  // held direction (-1..1 per axis)
+  void setFineMove(bool fine) { fine_ = fine; }
   bool playing() const { return screen_ == Screen::Play || screen_ == Screen::Goal; }
   bool celebrating() const { return screen_ == Screen::Goal; }
   Vec3 playerPosition() const { return playerPos_; }
@@ -123,21 +165,31 @@ public:
   Vec3 ballVelocity() const;
   u32 score() const { return world_.score; }
 
-  // Debug/test hooks (the app may use them for tooling).
+  // Debug/test hooks.
   void setPlayerPosition(const Vec3& position) { playerPos_ = position; }
   void setBallPosition(const Vec3& position);
 
   std::string statsLine() const;
 
 private:
-  enum class Screen { Main, Menu, AskPlayer, AskBall, AskEnvironment, Play, Goal };
+  enum class Screen {
+    Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
+    Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal,
+  };
 
-  Vec3 ballRest() const { return Vec3{0.0, 0.35, 0.0}; }
-  Vec3 playerRest() const { return Vec3{0.0, 0.5, 4.0}; }
+  Vec3 ballRest() const;
+  Vec3 playerRest() const;
   void rebuildPhysics();
   void resetBallToCenter();
   void enterPlay();
   void applyEnvironmentToScene();
+  void beginPlace();      // ghost to the origin, enter Place
+  void confirmPlace();    // create/update the pending object at the ghost
+  void refreshManaged();  // snapshot of all objects (everything but Ground)
+  void deleteManaged();
+  void applyManagedColor(const Vec3& color);
+  EntityHandle playerEntity() const { return world_.scene.find("Player"); }
+  EntityHandle ballEntity() const { return world_.scene.find("Ball"); }
 
   WorldData world_;
   bool hasWorld_ = false;
@@ -150,7 +202,18 @@ private:
   u32 ballId_ = 0U;
   Vec3 playerPos_{0.0, 0.5, 4.0};
   Vec3 moveInput_{0.0, 0.0, 0.0};
+  bool fine_ = false;
   f64 goalTimer_ = 0.0;
+
+  // Pending object (place flow).
+  ObjectKind pendingKind_ = ObjectKind::Block;
+  f64 pendingSize_ = kWorldBlockMedium;
+  bool pendingAxisZ_ = true;
+  Vec3 ghost_{0.0, 0.0, 0.0};
+
+  // Management.
+  std::vector<EntityHandle> managed_;
+  usize managedIndex_ = 0U;
 };
 
 }  // namespace kimia

@@ -224,6 +224,7 @@ endif()
 # --- World (option-driven editor + SceneIO-v1-compatible world files) ---
 add_library(kimia_world STATIC
     Engine/World/src/World.cpp
+    Engine/World/src/WorldBuilder.cpp
     Engine/World/src/WorldIO.cpp
 )
 target_include_directories(kimia_world PUBLIC Engine/World/include)
