@@ -1,0 +1,82 @@
+#pragma once
+
+#include <kimia/Time.h>
+#include <kimia/Types.h>
+#include <kimia/Vec.h>
+
+#include <map>
+
+namespace kimia {
+
+// Gravity magnitude; pulls along -Y (acceleration vector is (0, -kGravity, 0)).
+inline constexpr f64 kGravity = 9.81;
+
+// Dynamic sphere body. Semi-implicit (symplectic) Euler integration.
+struct SphereBody {
+  Vec3 position{0.0, 0.0, 0.0};
+  Vec3 velocity{0.0, 0.0, 0.0};
+  f64 radius = 0.12;
+  f64 restitution = 0.40;
+  f64 friction = 0.40;
+  f64 rollingFriction = 0.22;
+  u32 collisionCount = 0U;  // contacts resolved during the last step
+};
+
+// Static plane at y = const (normal +Y).
+struct StaticPlane {
+  f64 y = 0.0;
+};
+
+// Static axis-aligned box.
+struct StaticBox {
+  Vec3 center{0.0, 0.0, 0.0};
+  Vec3 halfExtents{0.5, 0.5, 0.5};
+};
+
+// Fixed-timestep physics world: dynamic spheres vs static planes and AABBs.
+// Fixed dt = 1/120 s; host-rate advance() uses an accumulator with a step cap
+// (default 5) so a slow frame cannot spiral. Bodies are referenced by 1-based
+// ids (0 is null); ids are never reused.
+class PhysicsWorld {
+public:
+  explicit PhysicsWorld(f64 fixedDt = 1.0 / 120.0, u32 maxStepsPerFrame = 5U);
+
+  u32 addSphere(const SphereBody& body);
+  bool removeSphere(u32 id);
+  SphereBody* sphere(u32 id);
+  const SphereBody* sphere(u32 id) const;
+
+  u32 addPlane(f64 y);
+  u32 addBox(const Vec3& center, const Vec3& halfExtents);
+
+  void clear();
+
+  // One fixed step (fixedDt() seconds).
+  void step();
+
+  // Host-rate advance: accumulator-fed, capped at maxStepsPerFrame steps.
+  // Returns how many fixed steps ran this frame.
+  u32 advance(f64 hostSeconds);
+
+  f64 fixedDt() const { return fixedDt_; }
+  f64 time() const { return time_; }
+  u64 stepCount() const { return steps_; }
+  usize sphereCount() const { return spheres_.size(); }
+  usize planeCount() const { return planes_.size(); }
+  usize boxCount() const { return boxes_.size(); }
+
+private:
+  void resolvePlane(SphereBody& body, f64 planeY);
+  void resolveBox(SphereBody& body, const StaticBox& box);
+
+  f64 fixedDt_;
+  FixedTimeStep accumulator_;
+  std::map<u32, SphereBody> spheres_;
+  std::map<u32, StaticPlane> planes_;
+  std::map<u32, StaticBox> boxes_;
+  u32 nextId_ = 1U;
+  f64 time_ = 0.0;
+  u64 steps_ = 0U;
+};
+
+}  // namespace kimia

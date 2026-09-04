@@ -36,6 +36,16 @@ if(KIMIA_WERROR)
   target_compile_options(kimia_scene PRIVATE -Werror)
 endif()
 
+add_library(kimia_physics STATIC
+    Engine/Physics/src/Physics.cpp
+)
+target_include_directories(kimia_physics PUBLIC Engine/Physics/include)
+target_link_libraries(kimia_physics PUBLIC kimia_math)
+target_compile_options(kimia_physics PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_physics PRIVATE -Werror)
+endif()
+
 # Vendored FBX loader (single-file library, upstream code).
 add_library(kimia_ufbx STATIC ThirdParty/ufbx/ufbx.c)
 target_include_directories(kimia_ufbx PUBLIC ThirdParty/ufbx)
@@ -66,9 +76,10 @@ add_executable(kimia_tests
     Tests/src/GraphicsTests.cpp
     Tests/src/AssetsTests.cpp
     Tests/src/SceneTests.cpp
+    Tests/src/PhysicsTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
