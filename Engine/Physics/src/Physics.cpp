@@ -30,34 +30,30 @@ Vec3 closestPointOnBox(const Vec3& point, const Vec3& center, const Vec3& halfEx
 }
 
 // Sphere-vs-box contact. On success `normal` points from the sphere toward
-// the box and `penetration` is the overlap depth.
+// the box and `penetration` is the overlap depth. `embedded` is true when the
+// sphere CENTER is inside the box (deep overlap): such contacts only correct
+// position (exit through the top), never apply a velocity impulse.
 bool sphereBoxContact(const Vec3& spherePos, f64 radius, const Vec3& boxPos, const Vec3& half,
-                      Vec3& normal, f64& penetration) {
+                      Vec3& normal, f64& penetration, bool& embedded) {
   const Vec3 closest = closestPointOnBox(spherePos, boxPos, half);
   const Vec3 delta = spherePos - closest;  // points from the box toward the sphere
   const f64 distanceSquared = delta.lengthSquared();
   if (distanceSquared > radius * radius) return false;  // touching (== r^2) counts as contact
+  embedded = false;
   if (distanceSquared > kEpsilon) {
     const f64 distance = std::sqrt(distanceSquared);
     normal = (delta / distance) * -1.0;  // flip: from the sphere toward the box
     penetration = radius - distance;
   } else {
-    // Sphere center inside the box: push out along the least-penetration
-    // axis. The solver moves the sphere along -normal, so normal points
-    // back into the box here.
-    const f64 dx = half.x - std::abs(spherePos.x - boxPos.x);
-    const f64 dy = half.y - std::abs(spherePos.y - boxPos.y);
-    const f64 dz = half.z - std::abs(spherePos.z - boxPos.z);
-    if (dx <= dy && dx <= dz) {
-      normal = Vec3{spherePos.x >= boxPos.x ? -1.0 : 1.0, 0.0, 0.0};
-      penetration = dx + radius;
-    } else if (dy <= dz) {
-      normal = Vec3{0.0, spherePos.y >= boxPos.y ? -1.0 : 1.0, 0.0};
-      penetration = dy + radius;
-    } else {
-      normal = Vec3{0.0, 0.0, spherePos.z >= boxPos.z ? -1.0 : 1.0};
-      penetration = dz + radius;
-    }
+    // Sphere center inside the box: exit UP through the top face. Exiting
+    // along the nearest face would push the sphere down through the floor
+    // plane when a box sits on the ground (the plane and the box then fight
+    // and the sphere sinks), so the center-inside case always pops the
+    // sphere out on top of the box. The solver moves the sphere along
+    // -normal, so normal points back down into the box here.
+    normal = Vec3{0.0, -1.0, 0.0};
+    penetration = (boxPos.y + half.y - spherePos.y) + radius;
+    embedded = true;
   }
   return true;
 }
@@ -170,8 +166,8 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
       const f64 distance = sphere.position.y - sphere.radius - planePair.second.y;
       if (distance <= 0.0) {  // touching counts: resting bodies stay damped
         contacts.push_back(
-            Contact{true, false, true, spherePair.first, planePair.first, Vec3{0.0, -1.0, 0.0}, -distance,
-                    sphere.restitution});
+            Contact{true, false, true, false, spherePair.first, planePair.first, Vec3{0.0, -1.0, 0.0},
+                    -distance, sphere.restitution});
       }
     }
   }
@@ -182,10 +178,11 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
     for (const auto& boxPair : boxes_) {
       Vec3 normal;
       f64 penetration = 0.0;
+      bool embedded = false;
       if (sphereBoxContact(sphere.position, sphere.radius, boxPair.second.center, boxPair.second.halfExtents,
-                           normal, penetration)) {
-        contacts.push_back(
-            Contact{true, false, true, spherePair.first, boxPair.first, normal, penetration, sphere.restitution});
+                           normal, penetration, embedded)) {
+        contacts.push_back(Contact{true, false, true, embedded, spherePair.first, boxPair.first, normal,
+                                   penetration, sphere.restitution});
       }
     }
   }
@@ -205,7 +202,8 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
         penetration = radii - distance;
       }
       const f64 restitution = std::max(a->second.restitution, b->second.restitution);
-      contacts.push_back(Contact{true, true, false, a->first, b->first, normal, penetration, restitution});
+      contacts.push_back(
+          Contact{true, true, false, false, a->first, b->first, normal, penetration, restitution});
     }
   }
 
@@ -216,8 +214,8 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
       const f64 distance = box.position.y - box.halfExtents.y - planePair.second.y;
       if (distance <= 0.0) {  // touching counts: resting bodies stay damped
         contacts.push_back(
-            Contact{false, false, true, boxPair.first, planePair.first, Vec3{0.0, -1.0, 0.0}, -distance,
-                    box.restitution});
+            Contact{false, false, true, false, boxPair.first, planePair.first, Vec3{0.0, -1.0, 0.0},
+                    -distance, box.restitution});
       }
     }
   }
@@ -231,7 +229,8 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
       if (boxBoxContact(box.position, box.halfExtents, staticPair.second.center, staticPair.second.halfExtents,
                         normal, penetration)) {
         contacts.push_back(
-            Contact{false, false, true, boxPair.first, staticPair.first, normal, penetration, box.restitution});
+            Contact{false, false, true, false, boxPair.first, staticPair.first, normal, penetration,
+                    box.restitution});
       }
     }
   }
@@ -244,7 +243,8 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
       if (boxBoxContact(a->second.position, a->second.halfExtents, b->second.position, b->second.halfExtents,
                         normal, penetration)) {
         const f64 restitution = std::max(a->second.restitution, b->second.restitution);
-        contacts.push_back(Contact{false, false, false, a->first, b->first, normal, penetration, restitution});
+        contacts.push_back(
+            Contact{false, false, false, false, a->first, b->first, normal, penetration, restitution});
       }
     }
   }
@@ -255,11 +255,12 @@ void PhysicsWorld::collectContacts(std::vector<Contact>& contacts) const {
     for (const auto& boxPair : dynamicBoxes_) {
       Vec3 normal;
       f64 penetration = 0.0;
+      bool embedded = false;
       if (sphereBoxContact(sphere.position, sphere.radius, boxPair.second.position, boxPair.second.halfExtents,
-                           normal, penetration)) {
+                           normal, penetration, embedded)) {
         const f64 restitution = std::max(sphere.restitution, boxPair.second.restitution);
-        contacts.push_back(
-            Contact{true, false, false, spherePair.first, boxPair.first, normal, penetration, restitution});
+        contacts.push_back(Contact{true, false, false, embedded, spherePair.first, boxPair.first, normal,
+                                   penetration, restitution});
       }
     }
   }
@@ -322,7 +323,7 @@ void PhysicsWorld::resolvePair(const Contact& contact, bool countContacts) {
   const Vec3 velocityA = velA != nullptr ? *velA : Vec3{0.0, 0.0, 0.0};
   const Vec3 velocityB = velB != nullptr ? *velB : Vec3{0.0, 0.0, 0.0};
   const f64 approach = kimia::dot(velocityB - velocityA, contact.normal);
-  if (approach < 0.0) {
+  if (approach < 0.0 && !contact.embedded) {
     const f64 impulse =
         (-approach >= kContactRestitutionThreshold ? -(1.0 + contact.restitution) * approach : -approach) / total;
     if (velA != nullptr) *velA -= contact.normal * (impulse * invA);
@@ -360,6 +361,37 @@ void PhysicsWorld::applyPairFriction(const Contact& contact) {
       }
     }
   }
+}
+
+f64 PhysicsWorld::resolveSpawnHeight(const Vec3& center, f64 radius, f64 maxHeight) const {
+  f64 y = center.y;
+  for (int iteration = 0; iteration < 8; ++iteration) {
+    f64 raiseTo = y;
+    for (const auto& boxPair : boxes_) {
+      const StaticBox& box = boxPair.second;
+      if (std::abs(center.x - box.center.x) >= box.halfExtents.x + radius) continue;
+      if (std::abs(center.z - box.center.z) >= box.halfExtents.z + radius) continue;
+      const f64 top = box.center.y + box.halfExtents.y;
+      const f64 bottom = box.center.y - box.halfExtents.y;
+      if (y + radius > bottom + 1e-9 && y - radius < top - 1e-9) {
+        raiseTo = std::max(raiseTo, top + radius + 1e-4);
+      }
+    }
+    for (const auto& boxPair : dynamicBoxes_) {
+      const DynamicBox& box = boxPair.second;
+      if (std::abs(center.x - box.position.x) >= box.halfExtents.x + radius) continue;
+      if (std::abs(center.z - box.position.z) >= box.halfExtents.z + radius) continue;
+      const f64 top = box.position.y + box.halfExtents.y;
+      const f64 bottom = box.position.y - box.halfExtents.y;
+      if (y + radius > bottom + 1e-9 && y - radius < top - 1e-9) {
+        raiseTo = std::max(raiseTo, top + radius + 1e-4);
+      }
+    }
+    if (raiseTo <= y) return y;
+    if (raiseTo > maxHeight) return maxHeight;
+    y = raiseTo;
+  }
+  return y;
 }
 
 void PhysicsWorld::step() {

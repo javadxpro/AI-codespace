@@ -76,6 +76,12 @@ public:
   u32 addPlane(f64 y);
   u32 addBox(const Vec3& center, const Vec3& halfExtents);
 
+  // Highest Y (starting from center.y, capped at maxHeight) at which a sphere
+  // of this radius at (center.x, ?, center.z) does NOT strictly overlap any
+  // static or dynamic box. Used to spawn a ball safely above objects that
+  // were placed on its spawn point. Returns the input y when nothing overlaps.
+  f64 resolveSpawnHeight(const Vec3& center, f64 radius, f64 maxHeight) const;
+
   void clear();
 
   // One fixed step (fixedDt() seconds).
@@ -98,6 +104,7 @@ private:
     bool sphereA = false;  // A is a dynamic sphere (else a dynamic box)
     bool sphereB = false;  // B is a dynamic sphere; false = dynamic box
     bool staticB = false;  // B is a static plane or box (A is never static)
+    bool embedded = false; // sphere center inside a box: position-only fix
     u32 idA = 0U;
     u32 idB = 0U;
     Vec3 normal{0.0, 0.0, 0.0};  // points from A toward B
