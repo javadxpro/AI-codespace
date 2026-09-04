@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -498,4 +499,32 @@ KIMIA_TEST(pipeline_loads_each_format) {
   KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "440hz.mp3", error).has_value());
   KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "sfx.ogg", error).has_value());
   KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "tone.flac", error).has_value());
+}
+
+KIMIA_TEST(obj_with_missing_mtl_still_loads_the_mesh) {
+  // A model dropped without its .mtl must load: the mesh survives with
+  // default-white placeholder materials (Unity-style tolerance).
+  const std::string path = tmpPath("no_mtl.obj");
+  {
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    KIMIA_REQUIRE(file != nullptr);
+    const char* text =
+        "mtllib gone.mtl\n"
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+        "usemtl Red\n"
+        "f 1 2 3\nf 1 3 4\n";
+    std::fwrite(text, 1U, std::strlen(text), file);
+    std::fclose(file);
+  }
+  std::string error;
+  auto loaded = kimia::assets::loadMesh(path, error);
+  KIMIA_REQUIRE(loaded.has_value());
+  // dedupe=false: one vertex per face corner -> 6 positions for 2 triangles.
+  KIMIA_REQUIRE(loaded->mesh.positions.size() == 6U);
+  KIMIA_REQUIRE(loaded->mesh.indices.size() == 6U);
+  auto asset = kimia::assets::loadOBJAsset(path, error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 1U);
+  KIMIA_REQUIRE(asset->materials[0].name == "Red");
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{1.0, 1.0, 1.0}));  // placeholder
 }

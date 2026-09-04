@@ -400,6 +400,53 @@ KIMIA_TEST(physics_ball_rests_on_dynamic_box) {
   KIMIA_REQUIRE(near(world.dynamicBox(crateId)->position.y, 0.5, 1e-4));
 }
 
+KIMIA_TEST(physics_sphere_embedded_in_box_pops_out_on_top) {
+  // A sphere spawned INSIDE a grounded box must be ejected through the top,
+  // never down through the floor (the old nearest-face heuristic sank it to
+  // y = 0 fighting the plane).
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.addBox(Vec3{0.0, 0.5, 0.0}, Vec3{0.5, 0.5, 0.5});  // block on the floor
+  SphereBody ball;
+  ball.position = Vec3{0.0, 0.12, 0.0};  // inside the block (spawn overlap)
+  ball.radius = 0.12;
+  ball.restitution = 0.0;
+  ball.friction = 0.0;
+  ball.rollingFriction = 0.0;
+  const u32 id = world.addSphere(ball);
+  f64 minY = 0.12;
+  for (int i = 0; i < 240; ++i) {
+    world.advance(kDt);
+    minY = std::min(minY, world.sphere(id)->position.y);
+  }
+  // Never sank into the floor; rests exactly on the block top (y = 1.12).
+  KIMIA_REQUIRE(minY >= 0.11);
+  KIMIA_REQUIRE(near(world.sphere(id)->position.y, 1.12, 1e-6));
+  KIMIA_REQUIRE(near(world.sphere(id)->position.x, 0.0, 1e-6));
+  KIMIA_REQUIRE(near(world.sphere(id)->velocity.length(), 0.0, 1e-6));
+}
+
+KIMIA_TEST(physics_resolve_spawn_height_raises_above_boxes) {
+  PhysicsWorld world;
+  world.addBox(Vec3{0.0, 0.5, 0.0}, Vec3{0.5, 0.5, 0.5});  // top at y = 1.0
+  // Clear space: unchanged.
+  KIMIA_REQUIRE(near(world.resolveSpawnHeight(Vec3{5.0, 0.12, 0.0}, 0.12, 10.0), 0.12, 1e-9));
+  // Overlapping the block: raised to top + radius (+ margin).
+  const f64 raised = world.resolveSpawnHeight(Vec3{0.0, 0.12, 0.0}, 0.12, 10.0);
+  KIMIA_REQUIRE(raised > 1.1 && raised < 1.13);
+  // A stack of dynamic crates: raised above the top crate (top at y = 2.0).
+  DynamicBox bottom;
+  bottom.position = Vec3{2.0, 0.5, 0.0};
+  world.addDynamicBox(bottom);
+  DynamicBox top;
+  top.position = Vec3{2.0, 1.5, 0.0};
+  world.addDynamicBox(top);
+  const f64 stackRaised = world.resolveSpawnHeight(Vec3{2.0, 0.12, 0.0}, 0.12, 10.0);
+  KIMIA_REQUIRE(stackRaised > 2.1 && stackRaised < 2.13);
+  // The cap applies.
+  KIMIA_REQUIRE(near(world.resolveSpawnHeight(Vec3{0.0, 0.12, 0.0}, 0.12, 1.05), 1.05, 1e-9));
+}
+
 KIMIA_TEST(physics_ids_and_removal) {
   PhysicsWorld world;
   const u32 first = world.addSphere(SphereBody{});

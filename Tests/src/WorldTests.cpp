@@ -1,4 +1,5 @@
 #include <kimia_test.h>
+#include <kimia/AssetPipeline.h>
 #include <kimia/Golf.h>
 #include <kimia/Physics.h>
 #include <kimia/World.h>
@@ -10,6 +11,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace {
@@ -625,7 +627,7 @@ KIMIA_TEST(world_ball_cannot_leave_floor) {
 KIMIA_TEST(world_catalog_places_crate) {
   WorldEditor editor = editorWithWorld();
   editor.choose(0);  // catalog
-  KIMIA_REQUIRE(editor.optionLabels().size() == 7U);  // ...جعبه joined the list
+  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);  // ...جعبه و «مدل از فایل» joined the list
   editor.choose(5);  // جعبه
   KIMIA_REQUIRE(editor.placing());
   KIMIA_REQUIRE(editor.ghostKind() == kimia::ObjectKind::Crate);
@@ -695,4 +697,164 @@ KIMIA_TEST(world_crate_and_ball_collide_in_play) {
   // motion and stops at the crate face.
   KIMIA_REQUIRE(editor.ballVelocity().x < 0.05);
   KIMIA_REQUIRE(editor.ballPosition().x < 2.4);
+}
+
+KIMIA_TEST(world_catalog_places_model_from_file) {
+  // The user drops an OBJ into the import directory; the catalog lists it
+  // and placing it creates a Model_* entity that survives save/load.
+  const std::string importsDir = std::string(KIMIA_TEST_TMP) + "/imports";
+  static_cast<void>(::mkdir(importsDir.c_str(), 0755));
+  const std::string objPath = importsDir + "/mini.obj";
+  {
+    std::FILE* file = std::fopen(objPath.c_str(), "wb");
+    KIMIA_REQUIRE(file != nullptr);
+    const char* obj = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 3 4\n";
+    std::fwrite(obj, 1U, std::strlen(obj), file);
+    std::fclose(file);
+  }
+  WorldEditor editor = editorWithWorld();
+  editor.setImportDirectory(importsDir);
+  editor.choose(0);  // catalog
+  editor.choose(6);  // مدل از فایل
+  KIMIA_REQUIRE(editor.importFileCount() == 1U);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "mini.obj");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازگشت");
+  editor.choose(0);  // mini.obj
+  KIMIA_REQUIRE(editor.optionLabels().size() == 4U);  // size question
+  editor.choose(1);  // متوسط (1.0)
+  KIMIA_REQUIRE(editor.placing());
+  KIMIA_REQUIRE(editor.ghostKind() == kimia::ObjectKind::Model);
+  editor.setGhostPosition(Vec3{2.0, 0.0, 1.0});
+  editor.choose(0);  // place
+  exitPlace(editor);
+  KIMIA_REQUIRE(editor.objectCount() == 1U);
+  const EntityData* model = editor.world().scene.get(editor.world().scene.find("Model_1"));
+  KIMIA_REQUIRE(model != nullptr);
+  KIMIA_REQUIRE(model->meshFile == importsDir + "/mini.obj");
+  KIMIA_REQUIRE(near3(model->transform.position, Vec3{2.0, 0.0, 1.0}));
+  KIMIA_REQUIRE(near3(model->transform.scale, Vec3{1.0, 1.0, 1.0}));
+  KIMIA_REQUIRE(editor.dynamicBoxCount() == 0U);  // no collider bodies
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 0U);
+  enterManage(editor);
+  KIMIA_REQUIRE(editor.managedKindName() == "model");
+  // Save/load round-trip keeps the mesh file reference.
+  const std::string path = tmpPath("model_world.kimia");
+  std::string error;
+  KIMIA_REQUIRE(editor.saveWorld(path, error));
+  WorldEditor reloaded;
+  KIMIA_REQUIRE(reloaded.loadWorld(path, error));
+  const EntityData* again = reloaded.world().scene.get(reloaded.world().scene.find("Model_1"));
+  KIMIA_REQUIRE(again != nullptr);
+  KIMIA_REQUIRE(again->meshFile == importsDir + "/mini.obj");
+}
+
+KIMIA_TEST(world_import_file_list_pages_and_empty_dir) {
+  // 7 files -> one page of 5 + «بیشتر…», then 2 + «بازگشت»; empty -> just
+  // «بازگشت» which returns to the catalog.
+  const std::string importsDir = std::string(KIMIA_TEST_TMP) + "/imports_many";
+  static_cast<void>(::mkdir(importsDir.c_str(), 0755));
+  for (int i = 1; i <= 7; ++i) {
+    const std::string path = importsDir + "/model" + std::to_string(i) + ".obj";
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    KIMIA_REQUIRE(file != nullptr);
+    std::fwrite("v 0 0 0\n", 1U, 8U, file);
+    std::fclose(file);
+  }
+  WorldEditor editor = editorWithWorld();
+  editor.setImportDirectory(importsDir);
+  editor.choose(0);  // catalog
+  editor.choose(6);  // مدل از فایل
+  KIMIA_REQUIRE(editor.importFileCount() == 7U);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // 5 files + بیشتر
+  KIMIA_REQUIRE(editor.optionLabels()[5] == "بیشتر…");
+  editor.choose(5);  // next page
+  KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // 2 files + بازگشت
+  KIMIA_REQUIRE(editor.optionLabels()[2] == "بازگشت");
+  editor.choose(2);  // back to the catalog
+  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);
+
+  // Empty directory: the list screen shows only «بازگشت».
+  const std::string emptyDir = std::string(KIMIA_TEST_TMP) + "/imports_empty";
+  static_cast<void>(::mkdir(emptyDir.c_str(), 0755));
+  editor.setImportDirectory(emptyDir);
+  editor.choose(6);  // مدل از فایل (we are already in the catalog)
+  KIMIA_REQUIRE(editor.importFileCount() == 0U);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 1U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازگشت");
+  editor.choose(0);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);  // catalog again
+}
+
+KIMIA_TEST(world_ball_spawns_above_overlapping_objects) {
+  // A crate placed right on the ball spawn used to make the crate float on
+  // the ball (or the ball sink when a block covered the spawn). The ball now
+  // spawns on top of the overlapping collider and settles there.
+  WorldEditor editor = editorWithWorld();
+  addCrate(editor, Vec3{0.0, 0.0, 0.0});  // exactly on the ball spawn
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(editor.ballPosition().y > 1.0);  // raised above the crate
+  for (int i = 0; i < 120; ++i) editor.update(1.0 / 60.0);  // 2 s
+  // Rests on the crate top (y = 1.0) + radius, dead center — no drift.
+  KIMIA_REQUIRE(near(editor.ballPosition().y, 1.12, 1e-3));
+  KIMIA_REQUIRE(near(editor.ballPosition().x, 0.0, 1e-6));
+  KIMIA_REQUIRE(near(editor.ballPosition().z, 0.0, 1e-6));
+  KIMIA_REQUIRE(editor.ballVelocity().length() < 1e-3);
+  editor.backToMenu();
+  // A block on the spawn: the ball pops out on top of the block instead of
+  // sinking to the floor inside it.
+  addBlock(editor, 1, Vec3{0.0, 0.0, 0.0});  // medium block at the spawn
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.ballPosition().y > 1.0);
+  for (int i = 0; i < 120; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(near(editor.ballPosition().y, 1.12, 1e-3));  // on the block top
+}
+
+KIMIA_TEST(world_model_placement_fits_mesh_to_chosen_size) {
+  // The spider model is ~193 units in its file; placing it at «متوسط»
+  // must fit it into a 1-unit cube (Unity-style import normalization).
+  WorldEditor editor = editorWithWorld();
+  editor.setImportDirectory(std::string(KIMIA_ASSET_DIR));
+  editor.choose(0);  // catalog
+  editor.choose(6);  // مدل از فایل
+  // Page 1 shows the first 5 OBJ/FBX files; spider.obj is on page 2.
+  editor.choose(5);  // بیشتر…
+  kimia::usize spiderIndex = editor.importFileCount();  // sentinel, replaced below
+  for (kimia::usize i = 0; i < editor.importFileCount(); ++i) {
+    if (editor.importFileAt(i) == "spider.obj") spiderIndex = i;
+  }
+  // spider.obj is listed on page 2: index within the page.
+  const kimia::usize pageBegin = 5U;
+  KIMIA_REQUIRE(spiderIndex >= pageBegin);
+  editor.choose(static_cast<i32>(spiderIndex - pageBegin));
+  editor.choose(1);  // متوسط (1.0)
+  editor.setGhostPosition(Vec3{3.0, 0.0, 0.0});
+  editor.choose(0);  // place
+  exitPlace(editor);
+  const EntityData* model = editor.world().scene.get(editor.world().scene.find("Model_1"));
+  KIMIA_REQUIRE(model != nullptr);
+  // The stored scale must be the fit factor = 1 / largest bbox dimension.
+  std::string error;
+  auto loaded = kimia::assets::loadMesh(model->meshFile, error);
+  KIMIA_REQUIRE(loaded.has_value());
+  Vec3 lo = loaded->mesh.positions[0];
+  Vec3 hi = loaded->mesh.positions[0];
+  for (const Vec3& p : loaded->mesh.positions) {
+    lo.x = std::min(lo.x, p.x);
+    lo.y = std::min(lo.y, p.y);
+    lo.z = std::min(lo.z, p.z);
+    hi.x = std::max(hi.x, p.x);
+    hi.y = std::max(hi.y, p.y);
+    hi.z = std::max(hi.z, p.z);
+  }
+  const f64 size = std::max(hi.x - lo.x, std::max(hi.y - lo.y, hi.z - lo.z));
+  KIMIA_REQUIRE(size > 100.0);  // the spider really is huge
+  const f64 fit = 1.0 / size;
+  KIMIA_REQUIRE(near(model->transform.scale.x, fit, 1e-12));
+  KIMIA_REQUIRE(near(model->transform.scale.y, fit, 1e-12));
+  KIMIA_REQUIRE(near(model->transform.scale.z, fit, 1e-12));
+  KIMIA_REQUIRE(model->transform.scale.x < 0.01);
 }
