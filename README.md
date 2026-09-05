@@ -19,13 +19,15 @@
 - [x] فایل در صحنه — «مدل از فایل» در کاتالوگ: فایل‌های OBJ/FBX پوشهٔ assets را در صحنه می‌گذاری (اندازهٔ دلخواه، نرمال‌سازی خودکار ابعاد، ذخیره/بارگذاری) + فیکس اسپاون توپ داخل جسم‌ها
 - [x] ردیاب پرتو آفلاین — رندر هر دنیای `.kimia` به PNG با path tracing: PBR Cook-Torrance، روشنایی سراسری تا N جهش، آسمان + خورشید با سایهٔ نرم، BVH، خروجی دترمینیستیک (بایت-به-بایت یکسان)
 - [x] رابط کاربری سنگین — دوربین مداری (چرخش با جهت‌ها، زوم، بازنشانی)، فهرست سلسله‌مراتبی اجسام و بازرس زنده (جابه‌جایی/ارتفاع/اندازه با گام دقیق ۰٫۱، رنگ، حذف) — همه در خود ویرایشگر گوشی
+- [x] کنترل‌گر کاراکتر — بازیکن PLAY یک کپسول kinematic است: گرانش، پرش، فرود روی بلوک/جعبه، برخورد-و-لغزش با دیوارها
+- [x] **پروفایل بازی** — یک موتور، سه بازی: «دنیای جدید → کدام بازی؟» → فوتبال خیابونی ایران (۵×۱۶ آسفالت، توپ فانتزی، پرش بلند) / زمین چمن (۲۵×۴۰، توپ دقیق) / بتل گراند (۴۰×۴۰) / زمین آزاد؛ هر بازی یک فایل متنی `Profiles/*.kimiaprofile` است که بدون کد قابل ویرایش/افزودن است
 
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 166/166 tests passed
+./build/bin/kimia_tests      # 189/189 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -41,19 +43,35 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 166/166 tests passed
+./build-nosdl/bin/kimia_tests    # 189/189 tests passed
 ```
+
+## هدف: سه بازی روی یک موتور
+
+همهٔ قابلیت‌ها (فیزیک، رندر، محیط، آب‌وهوا، ورودی، منو…) در خود موتورند؛ هر
+بازی فقط یک **پروفایل** است که آن‌ها را انتخاب و تنظیم می‌کند:
+
+| بازی | پروفایل | زمین | توپ |
+| --- | --- | --- | --- |
+| فوتبال خیابونی ایران (فانتزی + حرکات نمایشی) | `Profiles/street.kimiaprofile` | ۵ × ۱۶ آسفالت | فانتزی |
+| زمین چمن (فوتبال دقیق و حرفه‌ای) | `Profiles/grass.kimiaprofile` | ۲۵ × ۴۰ چمن | دقیق |
+| بتل گراند (گیم‌پلی دقیق + گرافیک بالا) | `Profiles/battleground.kimiaprofile` | ۴۰ × ۴۰ | دقیق |
+
+پروفایل یک فایل متنی است: عددها را عوض کنید یا فایل پنجمی کنارشان بگذارید —
+بازی جدید بدون یک خط کد در منو ظاهر می‌شود. جزئیات در
+[Documentation/Profile.md](Documentation/Profile.md).
 
 ## KIMIA World — ویرایشگر گزینه‌محور
 
 ```bash
-./build/bin/kimia_world --port 8080
+./build/bin/kimia_world --port 8080          # پروفایل‌ها از ./profiles (کنار باینری)
+./build/bin/kimia_world --profiles Profiles  # یا از هر پوشهٔ دیگری
 # سپس در مرورگر: http://localhost:8080
 ```
 
-همه‌چیز با دکمه‌ها: Create World (زمین خالی) → افزودن جسم (بازیکن، توپ،
+همه‌چیز با دکمه‌ها: دنیای جدید → **کدام بازی؟** → افزودن جسم (بازیکن، توپ،
 بلوک، دیوار، دروازه — هر کدام با سؤال فارسی مثل «توپ: دقیق باشه یا
-فانتزی؟») → مدیریت اجسام → محیط → PLAY.
+فانتزی؟»؛ بازی‌هایی که یک توپ دارند سؤال نمی‌پرسند) → مدیریت اجسام → محیط → PLAY.
 
 **دوربین مداری**: در سازنده و فهرست/بازرس، جهت‌ها دوربین را دور صحنه
 (یا دور جسم انتخاب‌شده) می‌چرخانند؛ دکمه‌های «نزدیک‌تر / دورتر /
@@ -136,7 +154,9 @@ Engine/Platform  # ورودی + پنجرهٔ SDL2 اختیاری
 Engine/App       # WebViewer (HTTP) و بوت‌استرپ Engine
 Engine/Golf      # بازی مرجع: حالت‌ها، سازندهٔ زمین، شات نمایشی
 Engine/World     # ویرایشگر گزینه‌محور: WorldData، WorldIO، شبیه‌سازی بازی
+Engine/Profile   # پروفایل بازی: GameProfile + فرمت *.kimiaprofile (یک موتور، چند بازی)
 Engine/Raytracer # ردیاب پرتو آفلاین: PBR + GI + BVH + خروجی PNG دترمینیستیک
+Profiles/        # street / grass / battleground — فایل‌های قابل‌ویرایش بازی‌ها
 Examples/        # HelloWindow، First3DScene، RemoteView، GolfGame، WorldEditorApp
 Tools/           # kimia_assets (CLI)، kimia_raytrace (رندر آفلاین)، kimia_asset_gen (دادهٔ تست)
 Tests/           # سوئیت تست + دادهٔ تست
