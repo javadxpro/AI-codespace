@@ -21,6 +21,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
 
+# No build type given (the usual `cmake -B build` on a phone) -> Release: the
+# software rasterizer draws every frame on the CPU, and an unoptimized build
+# is several times slower there. Pass -DCMAKE_BUILD_TYPE=Debug to override.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (Release by default)" FORCE)
+endif()
+message(STATUS "KIMIA build type: ${CMAKE_BUILD_TYPE}, compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+
 set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wdouble-promotion)
 # Binaries live in <build>/bin (the paths the engine spec's gates use).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -109,6 +117,10 @@ target_include_directories(kimia_ufbx PUBLIC ThirdParty/ufbx)
 # Vendored OGG/Vorbis decoder (upstream C code; strict C++ warnings don't apply).
 add_library(kimia_stb_vorbis STATIC ThirdParty/stb/stb_vorbis_impl.c)
 target_include_directories(kimia_stb_vorbis PUBLIC ThirdParty/stb)
+# Clang (Termux) flags an upstream pointer-overflow guard in stb_vorbis.c as
+# tautological; that is vendored code, so keep our zero-warning gate honest
+# without patching the library.
+target_compile_options(kimia_stb_vorbis PRIVATE $<$<C_COMPILER_ID:Clang>:-Wno-tautological-compare>)
 
 add_library(kimia_assets STATIC
     Engine/Graphics/src/Image.cpp
@@ -214,7 +226,8 @@ add_library(kimia_renderer STATIC
     Engine/Renderer/src/SoftwareRenderer.cpp
 )
 target_include_directories(kimia_renderer PUBLIC Engine/Renderer/include)
-target_link_libraries(kimia_renderer PUBLIC kimia_assets kimia_math)
+# dlopen/dlsym for the runtime GL loader (libdl on Android/bionic and old glibc).
+target_link_libraries(kimia_renderer PUBLIC kimia_assets kimia_math ${CMAKE_DL_LIBS})
 target_compile_options(kimia_renderer PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_renderer PRIVATE -Werror)
