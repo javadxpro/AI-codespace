@@ -371,6 +371,7 @@ void WorldEditor::enterPlay() {
   shootHeld_ = false;
   strokes_ = 0U;
   startRound();
+  events_.clear();
   // Rebuild the physics world: the ball and every crate reset to their
   // placed spots and velocities.
   rebuildPhysics();
@@ -457,6 +458,7 @@ void WorldEditor::update(f64 hostSeconds) {
         ++world_.score;
         screen_ = Screen::Goal;
         goalTimer_ = kGoalCelebration;
+        events_.push_back(GameEvent::Holed);
       }
     } else {
       std::map<std::string, GoalGroup> goals;
@@ -469,6 +471,7 @@ void WorldEditor::update(f64 hostSeconds) {
           ++world_.score;
           screen_ = Screen::Goal;
           goalTimer_ = kGoalCelebration;
+          events_.push_back(GameEvent::Goal);
           if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
           break;
         }
@@ -549,6 +552,7 @@ void WorldEditor::update(f64 hostSeconds) {
       const f64 kickDistance = world_.ball.radius + kWorldKickReach;
       if (moving && distance < kickDistance && ball->velocity.length() < kKickMaxSpeed) {
         ball->velocity = direction * kickSpeed() + Vec3{0.0, world_.profile.kickUp, 0.0};
+        events_.push_back(GameEvent::Kick);
       }
     }
 
@@ -608,6 +612,7 @@ void WorldEditor::update(f64 hostSeconds) {
         ++world_.score;
         screen_ = Screen::Goal;
         goalTimer_ = kGoalCelebration;
+        events_.push_back(GameEvent::Holed);
       }
       return;
     }
@@ -623,6 +628,7 @@ void WorldEditor::update(f64 hostSeconds) {
         ++world_.score;
         screen_ = Screen::Goal;
         goalTimer_ = kGoalCelebration;
+        events_.push_back(GameEvent::Goal);
         if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
         break;
       }
@@ -649,6 +655,7 @@ void WorldEditor::update(f64 hostSeconds) {
         ++currentHole_;
         if (currentHole_ >= holeCount()) {
           screen_ = Screen::RoundEnd;
+          events_.push_back(GameEvent::RoundOver);
           return;
         }
         SphereBody* ball = physics_.sphere(ballId_);
@@ -707,6 +714,7 @@ void WorldEditor::shoot(f64 power) {
   ball->velocity = aimDirection() * shotSpeed(power) + Vec3{0.0, world_.profile.kickUp, 0.0};
   ++strokes_;
   power_ = 0.0;
+  events_.push_back(GameEvent::Shot);
 }
 
 // Hole capture: within kWorldHoleCapture of a cup centre (horizontally) and
@@ -810,6 +818,46 @@ usize WorldEditor::objectCount() const {
 
 f64 WorldEditor::kickSpeed() const {
   return world_.profile.kickBase + world_.player.speed * world_.profile.kickSpeedScale;
+}
+
+// --- HUD / events / camera ---
+
+std::vector<std::string> WorldEditor::hudLines() const {
+  std::vector<std::string> lines;
+  if (!playing()) return lines;
+  if (holeScoring()) {
+    const usize cups = holeCount();
+    if (screen_ == Screen::RoundEnd) {
+      const u32 coursePar = par() * static_cast<u32>(scorecard_.size());
+      const i32 diff = scoreToPar();
+      std::string verdict = "EVEN";
+      if (diff < 0) verdict = std::to_string(-diff) + " UNDER";
+      if (diff > 0) verdict = std::to_string(diff) + " OVER";
+      lines.push_back("ROUND OVER  " + std::to_string(totalStrokes()) + " (PAR " + std::to_string(coursePar) + ")  " +
+                      verdict);
+      std::string card = "CARD";
+      for (const u32 strokes : scorecard_) card += " " + std::to_string(strokes);
+      lines.push_back(card);
+      return lines;
+    }
+    lines.push_back("HOLE " + std::to_string(std::min(currentHole_ + 1U, cups)) + "/" + std::to_string(cups) +
+                    "  PAR " + std::to_string(par()));
+    if (screen_ == Screen::Goal) {
+      lines.push_back("IN! " + std::to_string(strokes_) + (strokes_ == 1U ? " STROKE" : " STROKES"));
+    } else {
+      lines.push_back("STROKE " + std::to_string(strokes_) + "  TOTAL " + std::to_string(totalStrokes() + strokes_));
+    }
+    return lines;
+  }
+  lines.push_back("SCORE " + std::to_string(world_.score));
+  if (screen_ == Screen::Goal) lines.push_back("GOAL!");
+  return lines;
+}
+
+std::vector<WorldEditor::GameEvent> WorldEditor::drainEvents() {
+  std::vector<GameEvent> drained;
+  drained.swap(events_);
+  return drained;
 }
 
 std::string WorldEditor::statsLine() const {

@@ -269,6 +269,28 @@ public:
 
   std::string statsLine() const;
 
+  // --- On-frame HUD (drawn by the app with the bitmap font) ---
+  // Short ASCII lines for the top-left of the frame while playing: what the
+  // player needs at a glance without reading the stats line. Empty outside
+  // PLAY. Hole scoring: "HOLE 2/3  PAR 3", "STROKE 1  TOTAL 4", "IN! 2 STROKES"
+  // or "ROUND OVER  9 (PAR 9)  EVEN"; gate scoring: "SCORE 3", "GOAL!".
+  std::vector<std::string> hudLines() const;
+  // The charge meter (0..1) while charging in shot mode, else < 0 (hidden).
+  f64 hudPower() const { return charging_ ? power_ : -1.0; }
+
+  // --- Game events (the sound hooks) ---
+  // Every update() that shoots / kicks / scores / ends the round pushes one
+  // event; the app drains them once per frame and plays the sounds it has.
+  // Events survive until drained so a slow frame never loses one.
+  enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver };
+  std::vector<GameEvent> drainEvents();
+
+  // --- Camera hint (shot mode) ---
+  // Where a chase camera should stand: behind the ball, opposite the aim,
+  // `distance` back and `height` up, looking at the ball. Only meaningful in
+  // shot mode while playing; the app blends the orbit camera toward it.
+  bool chaseCameraActive() const { return shotMode() && playing() && !roundOver(); }
+
 private:
   enum class Screen {
     Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
@@ -320,6 +342,7 @@ private:
   u32 strokes_ = 0U;
   usize currentHole_ = 0U;
   std::vector<u32> scorecard_;
+  std::vector<GameEvent> events_;
 
   // Pending object (place flow).
   ObjectKind pendingKind_ = ObjectKind::Block;

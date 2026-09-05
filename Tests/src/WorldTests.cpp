@@ -1826,3 +1826,173 @@ KIMIA_TEST(world_football_profile_can_also_use_a_cup) {
   KIMIA_REQUIRE(editor.holdPad().size() == 4U);
   KIMIA_REQUIRE(editor.tapPad()[0].second == "j");
 }
+
+// --- HUD lines, game events, chase camera (stage 20.5b) ---
+
+KIMIA_TEST(world_hud_lines_follow_the_golf_round_and_events_drain_once) {
+  using Event = WorldEditor::GameEvent;
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -7.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 7.0});
+  exitPlace(editor);
+  // Not playing: no HUD, no power, no chase camera, nothing queued.
+  KIMIA_REQUIRE(editor.hudLines().empty());
+  KIMIA_REQUIRE(editor.hudPower() < 0.0);
+  KIMIA_REQUIRE(!editor.chaseCameraActive());
+  KIMIA_REQUIRE(editor.drainEvents().empty());
+
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.chaseCameraActive());
+  KIMIA_REQUIRE(editor.drainEvents().empty());  // entering play queues nothing
+  std::vector<std::string> hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 2U);
+  KIMIA_REQUIRE(hud[0] == "HOLE 1/1  PAR 3");
+  KIMIA_REQUIRE(hud[1] == "STROKE 0  TOTAL 0");
+  // The power meter shows only while charging, as the 0..1 charge.
+  editor.setShootHeld(true);
+  editor.update(0.5);
+  KIMIA_REQUIRE(near(editor.hudPower(), 0.5 * kimia::kWorldChargeRate, 1e-9));
+  editor.update(0.5);
+  editor.setShootHeld(false);
+  editor.update(1.0 / 120.0);  // the release fires the shot: one Shot event
+  KIMIA_REQUIRE(editor.hudPower() < 0.0);
+  KIMIA_REQUIRE(editor.strokes() == 1U);
+  std::vector<Event> events = editor.drainEvents();
+  KIMIA_REQUIRE(events.size() == 1U);
+  KIMIA_REQUIRE(events[0] == Event::Shot);
+  KIMIA_REQUIRE(editor.drainEvents().empty());  // drained once
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud[1] == "STROKE 1  TOTAL 1");
+  // Run until the ball rests or drops; a 0.9 power shot (14.65 m/s) from
+  // 14 m flies over the cup and stops (no capture) — so hole it explicitly.
+  for (i32 i = 0; i < 120 * 30 && !editor.ballAtRest() && !editor.celebrating(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!editor.celebrating());
+  editor.setBallPosition(Vec3{0.0, kGolfBallRadius, -6.0});
+  editor.setBallVelocity(Vec3{0.0, 0.0, -std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * 1.0)});
+  bool holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  events = editor.drainEvents();
+  KIMIA_REQUIRE(events.size() == 1U);
+  KIMIA_REQUIRE(events[0] == Event::Holed);
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 2U);
+  KIMIA_REQUIRE(hud[0] == "HOLE 1/1  PAR 3");
+  KIMIA_REQUIRE(hud[1] == "IN! 1 STROKE");
+  KIMIA_REQUIRE(editor.chaseCameraActive());  // still behind the ball while celebrating
+  // The celebration ends on the last cup -> RoundOver event + scorecard HUD.
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.roundOver());
+  events = editor.drainEvents();
+  KIMIA_REQUIRE(events.size() == 1U);
+  KIMIA_REQUIRE(events[0] == Event::RoundOver);
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 2U);
+  KIMIA_REQUIRE(hud[0] == "ROUND OVER  1 (PAR 3)  2 UNDER");
+  KIMIA_REQUIRE(hud[1] == "CARD 1");
+  KIMIA_REQUIRE(!editor.chaseCameraActive());  // the scorecard is a still screen
+  // «دور جدید» resets the HUD and leaves nothing queued.
+  editor.choose(0);
+  KIMIA_REQUIRE(editor.drainEvents().empty());
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud[1] == "STROKE 0  TOTAL 0");
+  KIMIA_REQUIRE(editor.chaseCameraActive());
+}
+
+KIMIA_TEST(world_hud_words_for_over_par_even_par_and_plural_strokes) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -1.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.5});
+  exitPlace(editor);
+  editor.choose(3);
+  // Four taps away from the cup, then a computed drop: 5 strokes on par 3.
+  editor.setAimYaw(kimia::kPi);
+  for (i32 stroke = 0; stroke < 4; ++stroke) {
+    chargeAndShoot(editor, 1.0 / 120.0);
+    for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  }
+  std::vector<WorldEditor::GameEvent> events = editor.drainEvents();
+  KIMIA_REQUIRE(events.size() == 4U);
+  for (const WorldEditor::GameEvent event : events) KIMIA_REQUIRE(event == WorldEditor::GameEvent::Shot);
+  KIMIA_REQUIRE(editor.hudLines()[1] == "STROKE 4  TOTAL 4");
+  editor.setAimYaw(0.0);
+  const f64 d = editor.ballPosition().z - (-1.0);
+  const f64 wanted = std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * d);
+  const i32 frames = static_cast<i32>(std::ceil((wanted - 2.5) / 13.5 * 120.0 / 0.9));
+  chargeAndShoot(editor, static_cast<f64>(frames) / 120.0);
+  bool holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  KIMIA_REQUIRE(editor.hudLines()[1] == "IN! 5 STROKES");
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.hudLines()[0] == "ROUND OVER  5 (PAR 3)  2 OVER");
+  KIMIA_REQUIRE(editor.hudLines()[1] == "CARD 5");
+  // Even par on a fresh round: two taps away, one drop.
+  editor.choose(0);
+  editor.setAimYaw(kimia::kPi);
+  for (i32 stroke = 0; stroke < 2; ++stroke) {
+    chargeAndShoot(editor, 1.0 / 120.0);
+    for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  }
+  const f64 d2 = editor.ballPosition().z - (-1.0);
+  const i32 frames2 = static_cast<i32>(std::ceil((std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * d2) - 2.5) / 13.5 * 120.0 / 0.9));
+  editor.setAimYaw(0.0);
+  chargeAndShoot(editor, static_cast<f64>(frames2) / 120.0);
+  holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.hudLines()[0] == "ROUND OVER  3 (PAR 3)  EVEN");
+  KIMIA_REQUIRE(editor.hudLines()[1] == "CARD 3");
+}
+
+KIMIA_TEST(world_hud_and_events_in_kick_mode_score_and_goal) {
+  using Event = WorldEditor::GameEvent;
+  WorldEditor editor = editorWithWorld();
+  addGoal(editor, 1, Vec3{0.0, 0.0, -2.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(!editor.chaseCameraActive());  // the runner keeps the free orbit camera
+  std::vector<std::string> hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 1U);
+  KIMIA_REQUIRE(hud[0] == "SCORE 0");
+  KIMIA_REQUIRE(editor.hudPower() < 0.0);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.6});
+  editor.setMoveInput(0.0, -1.0);
+  editor.update(0.0);  // the kick
+  std::vector<Event> events = editor.drainEvents();
+  KIMIA_REQUIRE(events.size() == 1U);
+  KIMIA_REQUIRE(events[0] == Event::Kick);
+  editor.setMoveInput(0.0, 0.0);
+  bool scored = false;
+  for (i32 i = 0; i < 600 && !scored; ++i) {
+    editor.update(1.0 / 60.0);
+    scored = editor.celebrating();
+  }
+  KIMIA_REQUIRE(scored);
+  events = editor.drainEvents();
+  KIMIA_REQUIRE(!events.empty());
+  KIMIA_REQUIRE(events.back() == Event::Goal);
+  for (const Event event : events) KIMIA_REQUIRE(event == Event::Goal || event == Event::Kick);
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 2U);
+  KIMIA_REQUIRE(hud[0] == "SCORE 1");
+  KIMIA_REQUIRE(hud[1] == "GOAL!");
+  editor.update(2.5);
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(editor.hudLines().size() == 1U);
+  KIMIA_REQUIRE(editor.drainEvents().empty());
+}
