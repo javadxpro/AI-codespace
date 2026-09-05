@@ -166,6 +166,22 @@ void addAimIndicator(RenderScene& scene, const WorldEditor& editor, const MeshDa
   }
 }
 
+// Course: a small flag pole on the cup being played, so the player can see
+// which cup is next (the others are plain discs). Nothing on a finished round.
+void addCurrentCupFlag(RenderScene& scene, const WorldEditor& editor, const MeshData& cube) {
+  if (!editor.holeScoring() || !editor.playing() || editor.roundOver()) return;
+  const kimia::EntityData* cup = editor.world().scene.get(editor.world().scene.find(editor.currentHoleName()));
+  if (cup == nullptr) return;
+  const Vec3 base = cup->transform.position;
+  const f64 poleHeight = 1.2;
+  scene.objects.push_back({&cube, Mat4::translation(Vec3{base.x, poleHeight * 0.5, base.z}) *
+                                      Mat4::scaling(Vec3{0.04, poleHeight, 0.04}),
+                           Vec3{0.92, 0.92, 0.92}, 0.6});
+  scene.objects.push_back({&cube, Mat4::translation(Vec3{base.x + 0.16, poleHeight - 0.12, base.z}) *
+                                      Mat4::scaling(Vec3{0.3, 0.2, 0.02}),
+                           Vec3{0.9, 0.15, 0.1}, 0.8});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -355,6 +371,7 @@ int main(int argc, char** argv) {
     // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
     addAimIndicator(scene, editor, cubeMesh);
+    addCurrentCupFlag(scene, editor, cubeMesh);
     if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
       addSelectionMarkers(scene, *editor.selectedEntity(), cubeMesh);
     }

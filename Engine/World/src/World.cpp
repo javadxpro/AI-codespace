@@ -45,7 +45,8 @@ const char* screenName(int screen) {
     case 17: return "MODELFILE";
     case 18: return "MODELSIZE";
     case 19: return "INSPECTOR";
-    default: return "PROFILE";
+    case 20: return "PROFILE";
+    default: return "ROUNDEND";
   }
 }
 
@@ -369,6 +370,7 @@ void WorldEditor::enterPlay() {
   charging_ = false;
   shootHeld_ = false;
   strokes_ = 0U;
+  startRound();
   // Rebuild the physics world: the ball and every crate reset to their
   // placed spots and velocities.
   rebuildPhysics();
@@ -637,12 +639,31 @@ void WorldEditor::update(f64 hostSeconds) {
     }
     goalTimer_ -= hostSeconds;
     if (goalTimer_ <= 0.0) {
-      resetBallToCenter();
-      strokes_ = 0U;  // a new hole starts at zero strokes
       charging_ = false;
       power_ = 0.0;
+      if (holeScoring()) {
+        // The course goes on: the next cup is played from the cup just holed
+        // (mini-golf style); after the last cup the round is over.
+        scorecard_.push_back(strokes_);
+        strokes_ = 0U;
+        ++currentHole_;
+        if (currentHole_ >= holeCount()) {
+          screen_ = Screen::RoundEnd;
+          return;
+        }
+        SphereBody* ball = physics_.sphere(ballId_);
+        if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
+        screen_ = Screen::Play;
+        return;
+      }
+      resetBallToCenter();
       screen_ = Screen::Play;
     }
+    return;
+  }
+  if (screen == 21) {  // Round over: the scorecard waits for «دور جدید» / «منو»
+    SphereBody* ball = physics_.sphere(ballId_);
+    if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
     return;
   }
   // All menu screens: the ball waits at its spawn.
@@ -654,7 +675,13 @@ void WorldEditor::resetBall() {
   goalTimer_ = 0.0;
   charging_ = false;
   power_ = 0.0;
-  if (screen_ == Screen::Goal) screen_ = Screen::Play;
+  if (holeScoring()) {
+    // «توپ از نو» on a course restarts the round: back to the tee, cup 1,
+    // a clean scorecard (a penalty-free mulligan of the whole round).
+    strokes_ = 0U;
+    startRound();
+  }
+  if (screen_ == Screen::Goal || screen_ == Screen::RoundEnd) screen_ = Screen::Play;
 }
 
 // --- Shot mode ---
@@ -687,25 +714,64 @@ void WorldEditor::shoot(f64 power) {
 // ball is parked in the cup so the render shows it there.
 bool WorldEditor::captureHole(const Vec3& position, f64 speed) {
   if (speed >= kWorldHoleCaptureSpeed) return false;
-  bool captured = false;
-  Vec3 cup{0.0, 0.0, 0.0};
-  world_.scene.forEach([&](EntityHandle, const EntityData& entity) {
-    if (captured || objectKindForName(entity.name) != ObjectKind::Hole) return;
-    const f64 dx = position.x - entity.transform.position.x;
-    const f64 dz = position.z - entity.transform.position.z;
-    if (std::sqrt(dx * dx + dz * dz) < kWorldHoleCapture) {
-      captured = true;
-      cup = entity.transform.position;
-    }
-  });
-  if (captured) {
-    SphereBody* ball = physics_.sphere(ballId_);
-    if (ball != nullptr) {
-      ball->position = Vec3{cup.x, world_.ball.radius, cup.z};
-      ball->velocity = Vec3{0.0, 0.0, 0.0};
-    }
+  // Only the cup being played captures: the others are just marks on the
+  // course until their turn comes (a ball rolling over Hole_2 while playing
+  // Hole_1 keeps rolling).
+  const EntityData* hole = world_.scene.get(world_.scene.find(currentHoleName()));
+  if (hole == nullptr) return false;
+  const f64 dx = position.x - hole->transform.position.x;
+  const f64 dz = position.z - hole->transform.position.z;
+  if (std::sqrt(dx * dx + dz * dz) >= kWorldHoleCapture) return false;
+  SphereBody* ball = physics_.sphere(ballId_);
+  if (ball != nullptr) {
+    ball->position = Vec3{hole->transform.position.x, world_.ball.radius, hole->transform.position.z};
+    ball->velocity = Vec3{0.0, 0.0, 0.0};
   }
-  return captured;
+  return true;
+}
+
+// --- The course: cups in name order ---
+
+std::vector<std::string> WorldEditor::sortedHoleNames() const {
+  std::vector<std::pair<u32, std::string>> cups;
+  world_.scene.forEach([&cups](EntityHandle, const EntityData& entity) {
+    if (objectKindForName(entity.name) != ObjectKind::Hole) return;
+    u32 number = 0U;
+    for (usize i = 5U; i < entity.name.size(); ++i) {  // after "Hole_"
+      const char c = entity.name[i];
+      if (c < '0' || c > '9') {
+        number = 0U;
+        break;
+      }
+      number = number * 10U + static_cast<u32>(c - '0');
+    }
+    cups.emplace_back(number, entity.name);
+  });
+  std::sort(cups.begin(), cups.end());
+  std::vector<std::string> names;
+  names.reserve(cups.size());
+  for (const auto& cup : cups) names.push_back(cup.second);
+  return names;
+}
+
+std::string WorldEditor::currentHoleName() const {
+  const std::vector<std::string> cups = sortedHoleNames();
+  return currentHole_ < cups.size() ? cups[currentHole_] : std::string{};
+}
+
+void WorldEditor::startRound() {
+  currentHole_ = 0U;
+  scorecard_.clear();
+}
+
+u32 WorldEditor::totalStrokes() const {
+  u32 total = 0U;
+  for (const u32 strokes : scorecard_) total += strokes;
+  return total;
+}
+
+i32 WorldEditor::scoreToPar() const {
+  return static_cast<i32>(totalStrokes()) - static_cast<i32>(par() * static_cast<u32>(scorecard_.size()));
 }
 
 usize WorldEditor::holeCount() const {
@@ -754,6 +820,11 @@ std::string WorldEditor::statsLine() const {
        << " | score " << world_.score << " | objects " << objectCount();
   if (shotMode()) {
     line << " | stroke " << strokes_ << " | power " << static_cast<i32>(power_ * 100.0) << "%";
+  }
+  if (holeScoring()) {
+    const usize cups = holeCount();
+    line << " | hole " << std::min(currentHole_ + 1U, cups) << "/" << cups << " | total " << totalStrokes()
+         << " | par " << par();
   }
   if (!lastError_.empty()) line << " | note " << lastError_;
   return line.str();

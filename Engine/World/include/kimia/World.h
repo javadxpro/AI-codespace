@@ -217,7 +217,7 @@ public:
   void update(f64 hostSeconds);
   void setMoveInput(f64 x, f64 z);  // held direction (-1..1 per axis)
   void setFineMove(bool fine) { fine_ = fine; }
-  bool playing() const { return screen_ == Screen::Play || screen_ == Screen::Goal; }
+  bool playing() const { return screen_ == Screen::Play || screen_ == Screen::Goal || screen_ == Screen::RoundEnd; }
   bool celebrating() const { return screen_ == Screen::Goal; }
   Vec3 playerPosition() const { return playerPos_; }
   bool physicsCharacterOnGround() const { return physics_.character()->onGround; }
@@ -240,6 +240,21 @@ public:
   f64 shotSpeed(f64 power) const;         // kickBase + power * kickSpeedScale
   usize holeCount() const;
 
+  // A course («scoring hole»): the cups are played in name order, Hole_1
+  // first. Only the current cup captures the ball; holing it moves the game
+  // to the next cup (same ball position: the next tee is where you are, like
+  // mini-golf) and records the strokes on the scorecard. After the last cup
+  // the round ends with the scorecard screen («پایان دور»). The rating of a
+  // cup is the profile's `par`; the total is compared with par * cups.
+  usize currentHole() const { return currentHole_; }  // 0-based index into the sorted cups
+  std::string currentHoleName() const;                // "Hole_3" ("" if the course has no cup)
+  const std::vector<u32>& scorecard() const { return scorecard_; }  // strokes per holed cup
+  u32 totalStrokes() const;
+  u32 par() const { return world_.profile.par; }
+  i32 scoreToPar() const;  // totalStrokes - par * holed cups (negative = under par)
+  bool roundOver() const { return screen_ == Screen::RoundEnd; }
+  std::string scorecardText() const;  // «۳ ۲ ۴ | جمع ۹ | پار ۹ | برابر پار»
+
   // Debug/test hooks.
   void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
   void setPlayerPosition(const Vec3& position) {
@@ -258,14 +273,16 @@ private:
   enum class Screen {
     Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
     Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal, AskModelFile, AskModelSize,
-    Inspector, AskProfile,
+    Inspector, AskProfile, RoundEnd,
   };
 
   Vec3 ballRest() const;
   Vec3 playerRest() const;
   f64 kickSpeed() const;  // profile.kickBase + playerSpeed * profile.kickSpeedScale
   void shoot(f64 power);  // shot mode: launch the resting ball along the aim
-  bool captureHole(const Vec3& position, f64 speed);  // hole scoring: ball in a cup?
+  bool captureHole(const Vec3& position, f64 speed);  // hole scoring: ball in the current cup?
+  std::vector<std::string> sortedHoleNames() const;   // Hole_1, Hole_2, ... (by number)
+  void startRound();                                  // cup 0, empty scorecard
   void rebuildPhysics();
   void resetBallToCenter();
   void enterPlay();
@@ -301,6 +318,8 @@ private:
   bool charging_ = false;
   bool shootHeld_ = false;
   u32 strokes_ = 0U;
+  usize currentHole_ = 0U;
+  std::vector<u32> scorecard_;
 
   // Pending object (place flow).
   ObjectKind pendingKind_ = ObjectKind::Block;

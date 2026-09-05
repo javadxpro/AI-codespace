@@ -2,6 +2,7 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/GameProfile.h>
 #include <kimia/Golf.h>
+#include <kimia/MathUtils.h>
 #include <kimia/Physics.h>
 #include <kimia/World.h>
 #include <kimia/WorldIO.h>
@@ -1449,13 +1450,40 @@ KIMIA_TEST(world_golf_reference_shot_holes_out_and_resets_strokes) {
   KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -7.0}, 1e-9));
   editor.update(0.5);
   KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -7.0}, 1e-9));
-  // After the celebration: back to the tee with a fresh stroke count.
+  // After the celebration on a one-cup course the round is over: the
+  // scorecard screen (1 stroke on a par-3 cup = 2 under par), no pads.
   editor.update(2.0);
   KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(editor.roundOver());
   KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(editor.strokes() == 0U);
+  KIMIA_REQUIRE(editor.scorecard().size() == 1U);
+  KIMIA_REQUIRE(editor.scorecard()[0] == 1U);
+  KIMIA_REQUIRE(editor.totalStrokes() == 1U);
+  KIMIA_REQUIRE(editor.par() == 3U);
+  KIMIA_REQUIRE(editor.scoreToPar() == -2);
+  KIMIA_REQUIRE(editor.menuTitle() == "پایان دور! 1 | جمع 1 | پار 3 | 2 زیر پار");
+  const std::vector<std::string> endOptions = editor.optionLabels();
+  KIMIA_REQUIRE(endOptions.size() == 2U);
+  KIMIA_REQUIRE(endOptions[0] == "دور جدید");
+  KIMIA_REQUIRE(endOptions[1] == "منو");
+  KIMIA_REQUIRE(editor.holdPad().empty());
+  KIMIA_REQUIRE(editor.tapPad().empty());
+  KIMIA_REQUIRE(editor.statsLine().find("| ROUNDEND |") != std::string::npos);
+  KIMIA_REQUIRE(editor.statsLine().find("| hole 1/1 | total 1 | par 3") != std::string::npos);
+  // The ball stays in the cup while the scorecard is shown.
+  editor.update(1.0);
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -7.0}, 1e-9));
+  // «دور جدید»: back to the tee, cup 1, a clean scorecard, zero strokes.
+  editor.choose(0);
+  KIMIA_REQUIRE(!editor.roundOver());
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(editor.currentHole() == 0U);
+  KIMIA_REQUIRE(editor.scorecard().empty());
   KIMIA_REQUIRE(editor.strokes() == 0U);
   KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 7.0}, 1e-9));
   KIMIA_REQUIRE(editor.ballAtRest());
+  KIMIA_REQUIRE(editor.statsLine().find("| hole 1/1 | total 0 | par 3") != std::string::npos);
 }
 
 KIMIA_TEST(world_golf_cup_needs_a_slow_ball) {
@@ -1539,6 +1567,7 @@ KIMIA_TEST(world_golf_world_file_keeps_mode_scoring_and_holes) {
   }
   KIMIA_REQUIRE(text.find("# profile mode shot\n") != std::string::npos);
   KIMIA_REQUIRE(text.find("# profile scoring hole\n") != std::string::npos);
+  KIMIA_REQUIRE(text.find("# profile par 3\n") != std::string::npos);
   KIMIA_REQUIRE(text.find("e \"Hole_1\" mesh sphere pos 1.5 0.01 -5") != std::string::npos);
   // Reload (no profile directory needed): still golf, still shot mode, cup intact.
   WorldEditor reloaded;
@@ -1564,6 +1593,211 @@ KIMIA_TEST(world_golf_world_file_keeps_mode_scoring_and_holes) {
   KIMIA_REQUIRE(old.loadWorld(oldPath, error));
   KIMIA_REQUIRE(!old.shotMode());
   KIMIA_REQUIRE(!old.holeScoring());
+  KIMIA_REQUIRE(old.par() == 3U);  // default rating when the file predates `par`
+}
+
+KIMIA_TEST(world_golf_course_plays_the_cups_in_order_and_ends_with_a_scorecard) {
+  // Three cups placed out of order (Hole_2's spot first) — the course order
+  // is by NAME NUMBER, not by placement order or position.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -4.0});  // Hole_1
+  exitPlace(editor);
+  addHole(editor, Vec3{2.0, 0.0, -4.0});  // Hole_2
+  exitPlace(editor);
+  addHole(editor, Vec3{2.0, 0.0, 4.0});   // Hole_3
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  KIMIA_REQUIRE(editor.holeCount() == 3U);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.currentHole() == 0U);
+  KIMIA_REQUIRE(editor.currentHoleName() == "Hole_1");
+  KIMIA_REQUIRE(editor.menuTitle() == "سوراخ 1 از 3 — نشانه بگیر (← →) و «شوت» را نگه دار");
+  KIMIA_REQUIRE(editor.statsLine().find("| hole 1/3 | total 0 | par 3") != std::string::npos);
+
+  // Cup 1: a gentle roll straight down -Z from 6 -> -4 (10 m). Hole_2 is
+  // never on this line, so nothing else can capture. Two strokes: the first
+  // stops short, the second drops.
+  editor.setBallVelocity(Vec3{0.0, 0.0, -6.0});  // stops after 36 / (2 * 3.924) = 4.59 m
+  for (i32 i = 0; i < 120 * 10 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.ballAtRest());
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(near(editor.ballPosition().z, 6.0 - 36.0 / (2.0 * 0.40 * 9.81), 0.05));
+  // (setBallVelocity is a test hook, not a stroke; count real strokes via shots)
+  editor.setAimYaw(0.0);
+  chargeAndShoot(editor, 0.2);  // stroke 1: power 0.18 -> 4.93 m/s -> ~3.1 m, short of the cup
+  KIMIA_REQUIRE(editor.strokes() == 1U);
+  for (i32 i = 0; i < 120 * 10 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!editor.celebrating());
+  const f64 remaining = editor.ballPosition().z - (-4.0);
+  KIMIA_REQUIRE(remaining > 0.5);
+  // Stroke 2: exactly the speed that arrives at 2 m/s: v = sqrt(2^2 + 2 a d).
+  const f64 arrive = std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * remaining);
+  editor.setBallVelocity(Vec3{0.0, 0.0, -arrive});
+  bool holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  KIMIA_REQUIRE(editor.score() == 1U);
+  KIMIA_REQUIRE(editor.menuTitle() == "رفت تو سوراخ! ضربه‌ها: 1 — بعدی: سوراخ 2");
+  editor.update(2.5);  // celebration over -> cup 2, played from cup 1's spot
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(!editor.roundOver());
+  KIMIA_REQUIRE(editor.currentHole() == 1U);
+  KIMIA_REQUIRE(editor.currentHoleName() == "Hole_2");
+  KIMIA_REQUIRE(editor.scorecard().size() == 1U);
+  KIMIA_REQUIRE(editor.scorecard()[0] == 1U);
+  KIMIA_REQUIRE(editor.strokes() == 0U);
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -4.0}, 1e-9));
+  KIMIA_REQUIRE(editor.ballAtRest());
+  KIMIA_REQUIRE(editor.menuTitle() == "سوراخ 2 از 3 — نشانه بگیر (← →) و «شوت» را نگه دار");
+
+  // Cup 2 is 2 m along +X. Rolling THROUGH Hole_1's spot first (we start on
+  // it) proves a non-current cup does not capture: roll away and back.
+  editor.setBallVelocity(Vec3{0.0, 0.0, 2.0});  // away, +Z; stops after 0.51 m
+  for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!editor.celebrating());
+  const Vec3 offCup = editor.ballPosition();
+  KIMIA_REQUIRE(offCup.z > -3.6);
+  // Back over Hole_1 (current is Hole_2): must roll through, not drop.
+  editor.setBallVelocity(Vec3{0.0, 0.0, -3.0});  // arrives at Hole_1 at ~2.2 m/s, slow enough to be captured IF it counted
+  for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(editor.ballPosition().z < -4.3);  // went past Hole_1
+  KIMIA_REQUIRE(editor.currentHole() == 1U);
+  // Now hole cup 2 from wherever we are: aim straight at it with a slow arrival.
+  const Vec3 from = editor.ballPosition();
+  const f64 dx = 2.0 - from.x;
+  const f64 dz = -4.0 - from.z;
+  const f64 dist = std::sqrt(dx * dx + dz * dz);
+  const f64 v2 = std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * dist);
+  editor.setBallVelocity(Vec3{dx / dist * v2, 0.0, dz / dist * v2});
+  holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.currentHole() == 2U);
+  KIMIA_REQUIRE(editor.currentHoleName() == "Hole_3");
+  KIMIA_REQUIRE(editor.scorecard().size() == 2U);
+  KIMIA_REQUIRE(editor.scorecard()[1] == 0U);  // (hook-driven: no real stroke on cup 2)
+
+  // Cup 3: 8 m up +Z from cup 2. Two real strokes then a computed drop.
+  editor.setAimYaw(kimia::kPi);  // aim toward +Z
+  KIMIA_REQUIRE(near3(editor.aimDirection(), Vec3{0.0, 0.0, 1.0}, 1e-9));
+  chargeAndShoot(editor, 0.2);
+  for (i32 i = 0; i < 120 * 10 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  chargeAndShoot(editor, 0.2);
+  for (i32 i = 0; i < 120 * 10 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.strokes() == 2U);
+  KIMIA_REQUIRE(!editor.celebrating());
+  const Vec3 at = editor.ballPosition();
+  const f64 left = 4.0 - at.z;
+  KIMIA_REQUIRE(left > 0.3);
+  KIMIA_REQUIRE(near(at.x, 2.0, 1e-6));
+  editor.setBallVelocity(Vec3{0.0, 0.0, std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * left)});
+  holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  KIMIA_REQUIRE(editor.menuTitle() == "رفت تو سوراخ! ضربه‌ها: 2");  // last cup: no «بعدی»
+  editor.update(2.5);
+  // Round over: 1 + 0 + 2 = 3 strokes on a par 9 course = 6 under.
+  KIMIA_REQUIRE(editor.roundOver());
+  KIMIA_REQUIRE(editor.scorecard().size() == 3U);
+  KIMIA_REQUIRE(editor.totalStrokes() == 3U);
+  KIMIA_REQUIRE(editor.scoreToPar() == -6);
+  KIMIA_REQUIRE(editor.scorecardText() == "1 0 2 | جمع 3 | پار 9 | 6 زیر پار");
+  KIMIA_REQUIRE(editor.menuTitle() == "پایان دور! 1 0 2 | جمع 3 | پار 9 | 6 زیر پار");
+  KIMIA_REQUIRE(editor.statsLine().find("| hole 3/3 | total 3 | par 3") != std::string::npos);
+  KIMIA_REQUIRE(editor.score() == 3U);
+  // «منو» leaves to the builder; PLAY again starts a fresh round at cup 1.
+  editor.choose(1);
+  KIMIA_REQUIRE(!editor.playing());
+  editor.choose(3);
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(editor.currentHole() == 0U);
+  KIMIA_REQUIRE(editor.scorecard().empty());
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 6.0}, 1e-9));
+}
+
+KIMIA_TEST(world_golf_scorecard_words_over_and_even_par) {
+  // The scorecard wording for over par and even par (under par is covered
+  // by the course test), and the course-less edge: no cup = no capture.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -1.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.5});
+  exitPlace(editor);
+  editor.choose(3);
+  // Four taps that never reach (aim away from the cup), then drop it: 5 strokes on par 3.
+  editor.setAimYaw(kimia::kPi);  // +Z, away from the cup; the field edge clamps the ball
+  for (i32 stroke = 0; stroke < 4; ++stroke) {
+    chargeAndShoot(editor, 1.0 / 120.0);  // the weakest tap: 2.5 m/s
+    for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  }
+  KIMIA_REQUIRE(editor.strokes() == 4U);
+  KIMIA_REQUIRE(!editor.celebrating());
+  editor.setAimYaw(0.0);
+  const f64 d = editor.ballPosition().z - (-1.0);
+  KIMIA_REQUIRE(near(editor.ballPosition().x, 0.0, 1e-6));
+  // The 5th stroke is real: pick the charge time whose speed arrives slowly.
+  // speed = 2.5 + power * 13.5, power = frames / 120 * 0.9.
+  const f64 wanted = std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * d);
+  const f64 power = (wanted - 2.5) / 13.5;
+  KIMIA_REQUIRE(power > 0.0);
+  const i32 frames = static_cast<i32>(std::ceil(power * 120.0 / 0.9));
+  chargeAndShoot(editor, static_cast<f64>(frames) / 120.0);
+  KIMIA_REQUIRE(editor.strokes() == 5U);
+  bool holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.roundOver());
+  KIMIA_REQUIRE(editor.scorecardText() == "5 | جمع 5 | پار 3 | 2 بالای پار");
+  // Even par: a fresh round holed in exactly 3 (two taps away, one computed drop).
+  editor.choose(0);  // دور جدید
+  KIMIA_REQUIRE(editor.scorecard().empty());
+  editor.setAimYaw(kimia::kPi);
+  for (i32 stroke = 0; stroke < 2; ++stroke) {
+    chargeAndShoot(editor, 1.0 / 120.0);
+    for (i32 i = 0; i < 120 * 5 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  }
+  const f64 d2 = editor.ballPosition().z - (-1.0);
+  const f64 wanted2 = std::sqrt(4.0 + 2.0 * 0.40 * 9.81 * d2);
+  const i32 frames2 = static_cast<i32>(std::ceil((wanted2 - 2.5) / 13.5 * 120.0 / 0.9));
+  editor.setAimYaw(0.0);
+  chargeAndShoot(editor, static_cast<f64>(frames2) / 120.0);
+  holed = false;
+  for (i32 i = 0; i < 120 * 10 && !holed; ++i) {
+    editor.update(1.0 / 120.0);
+    holed = editor.celebrating();
+  }
+  KIMIA_REQUIRE(holed);
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.scorecardText() == "3 | جمع 3 | پار 3 | برابر پار");
+  // No cup at all: the ball can never be captured; hole 0/0 in the stats.
+  WorldEditor empty;
+  createWorldFor(empty, "golf");
+  addGolfBall(empty, Vec3{0.0, 0.0, 0.0});
+  exitPlace(empty);
+  empty.choose(3);
+  KIMIA_REQUIRE(empty.currentHoleName().empty());
+  empty.setBallVelocity(Vec3{0.0, 0.0, -1.0});
+  for (i32 i = 0; i < 240; ++i) empty.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!empty.celebrating());
+  KIMIA_REQUIRE(empty.statsLine().find("| hole 0/0 | total 0 | par 3") != std::string::npos);
 }
 
 KIMIA_TEST(world_football_profile_can_also_use_a_cup) {

@@ -330,6 +330,28 @@ void WorldEditor::applyManagedColor(const Vec3& color) {
 
 // --- Menu model ---
 
+// The scorecard as one line: strokes per cup, the total, the course par and
+// the difference (under/over/even), e.g. «۳ ۲ ۴ | جمع ۹ | پار ۹ | برابر پار».
+std::string WorldEditor::scorecardText() const {
+  std::string text;
+  for (usize i = 0; i < scorecard_.size(); ++i) {
+    if (i > 0U) text += ' ';
+    text += std::to_string(scorecard_[i]);
+  }
+  if (text.empty()) text = "—";
+  text += " | جمع " + std::to_string(totalStrokes()) + " | پار " +
+          std::to_string(par() * static_cast<u32>(scorecard_.size()));
+  const i32 diff = scoreToPar();
+  if (diff == 0) {
+    text += " | برابر پار";
+  } else if (diff < 0) {
+    text += " | " + std::to_string(-diff) + " زیر پار";
+  } else {
+    text += " | " + std::to_string(diff) + " بالای پار";
+  }
+  return text;
+}
+
 std::string WorldEditor::menuTitle() const {
   switch (screen_) {
     case Screen::Main:
@@ -375,6 +397,10 @@ std::string WorldEditor::menuTitle() const {
       if (shotMode()) {
         if (charging_) return "شوت: رها کن تا بزنی — قدرت " + std::to_string(static_cast<i32>(power_ * 100.0)) + "٪";
         if (!ballAtRest()) return "توپ می‌رود…";
+        if (holeScoring() && holeCount() > 1U) {
+          return "سوراخ " + std::to_string(currentHole_ + 1U) + " از " + std::to_string(holeCount()) +
+                 " — نشانه بگیر (← →) و «شوت» را نگه دار";
+        }
         return "نشانه بگیر (← →) و «شوت» را نگه دار";
       }
       return "در حال بازی — با جهت‌ها حرکت کن";
@@ -382,8 +408,14 @@ std::string WorldEditor::menuTitle() const {
       return "مدل از فایل: کدام فایل؟";
     case Screen::AskModelSize:
       return "مدل: چه اندازه‌ای؟";
+    case Screen::RoundEnd:
+      return "پایان دور! " + scorecardText();
     default:
-      if (holeScoring()) return "رفت تو سوراخ! ضربه‌ها: " + std::to_string(strokes_);
+      if (holeScoring()) {
+        if (currentHole_ + 1U >= holeCount()) return "رفت تو سوراخ! ضربه‌ها: " + std::to_string(strokes_);
+        return "رفت تو سوراخ! ضربه‌ها: " + std::to_string(strokes_) + " — بعدی: سوراخ " +
+               std::to_string(currentHole_ + 2U);
+      }
       return "گل شد!";
   }
 }
@@ -466,6 +498,8 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     }
     case Screen::Move:
       return {"پایان"};
+    case Screen::RoundEnd:
+      return {"دور جدید", "منو"};
     case Screen::ConfirmDelete:
       return {"بله", "نه"};
     case Screen::AskColor:
@@ -484,6 +518,7 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
     return {{"بالا", "up"}, {"چرخش ←", "left"}, {"پایین", "down"}, {"چرخش →", "right"}};
   }
   if (!playing() && screen_ != Screen::Place && screen_ != Screen::Move) return {};
+  if (screen_ == Screen::RoundEnd) return {};
   if (playing()) {
     if (shotMode()) return {{"← نشانه", "left"}, {"نشانه →", "right"}, {"شوت (نگه دار)", "space"}};
     return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}};
@@ -495,7 +530,7 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
   if (cameraControlled()) {
     return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
   }
-  if (!playing()) return {};
+  if (!playing() || screen_ == Screen::RoundEnd) return {};
   if (shotMode()) return {{"توپ از نو", "r"}, {"منو", "b"}};
   return {{"پرش", "j"}, {"توپ از نو", "r"}, {"منو", "b"}};
 }
@@ -798,6 +833,14 @@ void WorldEditor::choose(i32 optionIndex) {
       if (optionIndex == 0) {
         rebuildPhysics();
         screen_ = Screen::Inspector;
+      }
+      break;
+    }
+    case Screen::RoundEnd: {
+      if (optionIndex == 0) {
+        resetBall();  // a new round: tee, cup 1, clean scorecard
+      } else if (optionIndex == 1) {
+        backToMenu();
       }
       break;
     }
