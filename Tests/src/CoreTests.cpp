@@ -48,20 +48,17 @@ KIMIA_TEST(profiler_records_scope) {
   KIMIA_REQUIRE(samples.front().milliseconds >= 0.0);
 }
 
-KIMIA_TEST(engine_version_is_one_jalali_date_everywhere) {
+KIMIA_TEST(engine_version_is_semantic_and_written_down) {
   // Version.h and CMakeLists.txt carry the same literal.
   KIMIA_REQUIRE(std::string(kimia::kEngineVersion) == KIMIA_CMAKE_VERSION);
-  // YEAR.MONTH.DAY of the Jalali calendar, and the numeric fields agree.
+  // MAJOR.MINOR.PATCH, and the numeric fields spell exactly the same string.
   char rebuilt[32];
-  std::snprintf(rebuilt, sizeof(rebuilt), "%u.%02u.%02u", kimia::kEngineVersionYear, kimia::kEngineVersionMonth,
-                kimia::kEngineVersionDay);
-  KIMIA_REQUIRE(std::string(kimia::kEngineVersion).rfind(rebuilt, 0) == 0);  // optional ".2" suffix allowed
-  KIMIA_REQUIRE(kimia::kEngineVersionYear >= 1405U);
-  KIMIA_REQUIRE(kimia::kEngineVersionMonth >= 1U && kimia::kEngineVersionMonth <= 12U);
-  KIMIA_REQUIRE(kimia::kEngineVersionDay >= 1U && kimia::kEngineVersionDay <= 31U);
-  KIMIA_REQUIRE(std::string(kimia::kEngineVersionString) ==
-                std::string("KIMIA ") + kimia::kEngineVersion + " (" + kimia::kEngineVersionGregorian + ")");
-  // Every release is written down: CHANGELOG.md has a heading for this version.
+  std::snprintf(rebuilt, sizeof(rebuilt), "%u.%u.%u", kimia::kEngineVersionMajor, kimia::kEngineVersionMinor,
+                kimia::kEngineVersionPatch);
+  KIMIA_REQUIRE(std::string(kimia::kEngineVersion) == rebuilt);
+  KIMIA_REQUIRE(std::string(kimia::kEngineVersionString) == std::string("KIMIA ") + kimia::kEngineVersion);
+  // Every release is written down: the NEWEST entry of CHANGELOG.md (the first
+  // «## نسخهٔ» heading) is this version — a bump without its notebook entry fails.
   std::FILE* file = std::fopen(KIMIA_SOURCE_DIR "/CHANGELOG.md", "rb");
   KIMIA_REQUIRE(file != nullptr);
   std::string text;
@@ -72,5 +69,11 @@ KIMIA_TEST(engine_version_is_one_jalali_date_everywhere) {
     if (got < sizeof(chunk)) break;
   }
   std::fclose(file);
-  KIMIA_REQUIRE(text.find(std::string("## نسخهٔ ") + kimia::kEngineVersion) != std::string::npos);
+  const std::string heading = "## نسخهٔ ";
+  const std::size_t first = text.find(heading);
+  KIMIA_REQUIRE(first != std::string::npos);
+  const std::string version = kimia::kEngineVersion;
+  KIMIA_REQUIRE(text.compare(first + heading.size(), version.size(), version) == 0);
+  const char after = text[first + heading.size() + version.size()];
+  KIMIA_REQUIRE(after == ' ' || after == '\n');  // "0.1.0 —", not "0.1.01"
 }
