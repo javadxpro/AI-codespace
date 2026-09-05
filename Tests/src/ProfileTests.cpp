@@ -165,7 +165,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "ball fantasy choice off\n"
                 "kick 3.000000 0.600000 2.000000\n"
                 "mode kick\n"
-                "scoring gate\n");
+                "scoring gate\n"
+                "par 3\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -178,7 +179,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "ball accurate choice off\n"
                 "kick 2.500000 13.500000 0.000000\n"
                 "mode shot\n"
-                "scoring hole\n");
+                "scoring hole\n"
+                "par 3\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {
@@ -212,6 +214,8 @@ KIMIA_TEST(profile_load_is_tolerant_and_clamps) {
       "gravity 3.7\n"                      // unknown key
       "mode flying\n"                      // unknown mode: ignored, stays kick
       "scoring hole\n"
+      "par 99.7\n"                         // clamped to 20 (whole strokes)
+      "par x\n"                            // not a number: ignored
       "\n"
       "kick 5 0.25 1.5\n";
   GameProfile loaded;
@@ -231,6 +235,13 @@ KIMIA_TEST(profile_load_is_tolerant_and_clamps) {
   KIMIA_REQUIRE(near(loaded.kickUp, 1.5));
   KIMIA_REQUIRE(loaded.mode == kimia::PlayMode::Kick);
   KIMIA_REQUIRE(loaded.scoring == kimia::Scoring::Hole);
+  KIMIA_REQUIRE(loaded.par == 20U);
+  GameProfile lowPar;
+  KIMIA_REQUIRE(ProfileIO::load("name p\npar 0\n", lowPar, error));
+  KIMIA_REQUIRE(lowPar.par == 1U);  // at least one stroke
+  GameProfile noPar;
+  KIMIA_REQUIRE(ProfileIO::load("name q\n", noPar, error));
+  KIMIA_REQUIRE(noPar.par == 3U);   // default
   // The title round-trips through the escape.
   GameProfile again;
   KIMIA_REQUIRE(ProfileIO::load(ProfileIO::save(loaded), again, error));

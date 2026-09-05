@@ -80,6 +80,7 @@ struct GameProfile {
   f64 kickUp = kWorldKickUp;
   PlayMode mode = PlayMode::Kick;    // kick = football runner, shot = golf aim/charge
   Scoring scoring = Scoring::Gate;   // gate = goal line, hole = cup
+  u32 par = 3U;                      // hole scoring: strokes each cup is rated at (scorecard)
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -116,6 +117,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   kick 3.000000 0.600000 2.000000
 //   mode kick
 //   scoring gate
+//   par 3                        (hole scoring: rated strokes per cup, 1..20)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

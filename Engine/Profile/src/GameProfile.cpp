@@ -5,6 +5,7 @@
 #include <dirent.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 
@@ -21,6 +22,8 @@ constexpr f64 kSpeedMin = 0.5;
 constexpr f64 kSpeedMax = 20.0;
 constexpr f64 kKickMin = 0.0;
 constexpr f64 kKickMax = 40.0;
+constexpr f64 kParMin = 1.0;
+constexpr f64 kParMax = 20.0;
 
 f64 clampF64(f64 value, f64 low, f64 high) { return std::min(high, std::max(low, value)); }
 
@@ -145,6 +148,7 @@ std::vector<GameProfile> builtinProfiles() {
   golf.kickUp = 0.0;
   golf.mode = PlayMode::Shot;
   golf.scoring = Scoring::Hole;
+  golf.par = 3U;
   profiles.push_back(golf);
 
   // فوتبال خیابونی ایران: کوی ابوذر — a tight 5v5 court between walls, a
@@ -244,6 +248,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
                 formatFixed6(profile.kickUp));
   out.push_back(std::string("mode ") + playModeName(profile.mode));
   out.push_back(std::string("scoring ") + scoringName(profile.scoring));
+  out.push_back("par " + std::to_string(profile.par));
   return out;
 }
 
@@ -338,6 +343,13 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     Scoring scoring = Scoring::Gate;
     if (!(tokens >> value) || !scoringFromName(value, scoring)) return false;
     out.scoring = scoring;
+    return true;
+  }
+  if (key == "par") {
+    std::string value;
+    f64 par = 0.0;
+    if (!(tokens >> value) || !parseF64Token(value, par)) return false;
+    out.par = static_cast<u32>(clampF64(std::floor(par), kParMin, kParMax));
     return true;
   }
   return false;
