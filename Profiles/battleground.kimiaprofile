@@ -1,0 +1,9 @@
+# KIMIA profile v1
+# بتل گراند — میدان ۴۰×۴۰؛ گیم‌پلی دقیق روی نقشهٔ بزرگ.
+name battleground
+title بتل گراند
+field 40.000000 40.000000
+environment sand
+player speed 4.500000 jump 1.000000
+ball accurate choice off
+kick 2.000000 0.500000 1.200000
