@@ -142,7 +142,8 @@ std::string statusLine(int code) {
 std::string jsonEscape(const std::string& text) {
   std::string out;
   out.reserve(text.size() + 8U);
-  for (const unsigned char c : text) {
+  for (const char ch : text) {
+    const unsigned char c = static_cast<unsigned char>(ch);
     switch (c) {
       case '"':
         out += "\\\"";
