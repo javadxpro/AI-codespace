@@ -21,9 +21,15 @@ an option-driven Unity-like editor (section 8).
 ## 2. Who I am (the user) — non-negotiable rules
 
 - I speak **Persian** — reply to me in Persian, always.
-- I run on an **Android phone in Termux** (weak GPU → software rendering) and
-  sometimes Ubuntu. I paste terminal output back to you. Always give exact,
-  copy-pasteable commands.
+- I run on an **Android phone in Termux** (weak GPU → software rendering,
+  **Clang 21** — stricter than GCC: `-Wsign-conversion` is on under
+  `-Wconversion`) and sometimes Ubuntu. I paste terminal output back to you.
+  Always give exact, copy-pasteable commands.
+- **The engine is NOT on GitHub `main`** (main = the Core skeleton only). It
+  lives on the `arena/01a07125-ai-codespace` branch. Clone/update commands
+  must say `--branch arena/01a07125-ai-codespace`, or use
+  `bash Tools/termux_build.sh` which switches branches by itself. A plain
+  clone of main builds only a 2-test `kimia_tests` and no `kimia_world`.
 - **I author game content, never you.** No hardcoded courses/levels/demos
   written by the AI — build tools that let *me* make content.
 - No explain-only answers, no pseudocode, no fake/placeholder files, no "TODO

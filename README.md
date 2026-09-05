@@ -2,7 +2,7 @@
 
 موتور بازی C++17 و ویرایشگر گزینه‌محور KIMIA World — ساخته‌شده از صفر، بدون وابستگی غیرآزاد.
 
-**نسخهٔ موتور: `0.2.0`** (`kimia_world --version`؛ شماره با اندازهٔ تغییر جلو می‌رود: باگ/کوچک `+0.0.1`، مرحله/بزرگ `+0.1.0`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
+**نسخهٔ موتور: `0.2.1`** (`kimia_world --version`؛ شماره با اندازهٔ تغییر جلو می‌رود: باگ/کوچک `+0.0.1`، مرحله/بزرگ `+0.1.0`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
 
 ## وضعیت
 
@@ -27,14 +27,39 @@
 - [x] **گلف روی KIMIA World** — حالت شوت (نشانه ← →، «شوت» را نگه دار، رها کن؛ شوت بعدی از جای توقف؛ ضربه‌شمار) + جسم «سوراخ» با قانون کاپ گلف مرجع؛ همه از پروفایل (`mode shot`، `scoring hole`) — فوتبال‌ها همان موتور را با `mode kick` می‌رانند
 - [x] **پروفایل بازی** — یک موتور، چند بازی: «دنیای جدید → کدام بازی؟» → فوتبال خیابونی ایران: کوی ابوذر (۵×۱۶ آسفالت، توپ فانتزی، پرش بلند) / زمین چمن: کوی ابوذر (۲۵×۴۰، توپ دقیق) / مسابقه واقعی: بتل گراند (۴۰×۴۰) / زمین آزاد؛ هر بازی یک فایل متنی `Profiles/*.kimiaprofile` است که بدون کد قابل ویرایش/افزودن است
 
+## نصب روی گوشی (Termux) — یک دستور
+
+> **مهم: موتور روی شاخهٔ `main` گیت‌هاب نیست.** `main` فقط اسکلت اولیه
+> (`Engine/Core` + دو تست) را دارد؛ موتور کامل روی شاخهٔ کاری
+> `arena/01a07125-ai-codespace` است. اگر با `git clone` معمولی بگیری، بیلد
+> فقط `kimia_tests` کوچک را می‌سازد و `build/bin/kimia_world` وجود نخواهد
+> داشت. همیشه با `--branch` کلون کن:
+
+```bash
+pkg install -y git clang cmake ninja
+git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
+cd AI-codespace
+bash Tools/termux_build.sh          # ابزار → cmake → build → 208/208 → دستور بعدی
+./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
+```
+
+`Tools/termux_build.sh` خودش شاخهٔ درست را تشخیص می‌دهد (اگر روی `main`
+باشی، به شاخهٔ موتور می‌رود)، ابزار گم‌شده را با `pkg` نصب می‌کند، `cmake`
+خراب را تعمیر می‌کند، با `-DKIMIA_WERROR=ON` و Release می‌سازد و تست‌ها را
+اجرا می‌کند. گزینه‌ها: `--run` (بعد از بیلد اجرا کن)، `--clean`، `--port=N`.
+به‌روزرسانی بعدی: `git pull && bash Tools/termux_build.sh`.
+
 ## ساخت و تست
 
 ```bash
-cmake -B build -DKIMIA_WERROR=ON
+cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
 ./build/bin/kimia_tests      # 208/208 tests passed
 ctest --test-dir build --output-on-failure
 ```
+
+با Clang (Termux) و GCC هر دو **صفر اخطار** است؛ کامپایلر و build type در
+خط `KIMIA build type: …` هنگام configure چاپ می‌شوند.
 
 بیلد دوم بدون `-Werror` (شمارش اخطار باید ۰ باشد):
 
