@@ -6,6 +6,8 @@
 // player, a ball, blocks, walls, goals — each object asks a few plain
 // questions («دقیق باشه یا فانتزی؟») — then manage them (move/delete/color)
 // and press PLAY. Worlds save as SceneIO-v1-compatible text.
+#include <kimia/Audio.h>
+#include <kimia/BitmapFont.h>
 #include <kimia/Engine.h>
 #include <kimia/Image.h>
 #include <kimia/MathUtils.h>
@@ -17,8 +19,10 @@
 #include <kimia/Version.h>
 #include <kimia/World.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +57,76 @@ void onSignal(int) { running.store(false); }
 
 const Vec3 kGhostColor{1.0, 0.85, 0.2};
 const Vec3 kSelectionColor{1.0, 0.9, 0.25};
+const Vec3 kHudText{1.0, 1.0, 1.0};
+const Vec3 kHudBackdrop{0.0, 0.0, 0.0};
+const Vec3 kPowerFill{1.0, 0.55, 0.1};
+const Vec3 kPowerBack{0.15, 0.15, 0.15};
+constexpr i32 kHudScale = 2;   // 10x14 pixel glyphs
+constexpr i32 kHudMargin = 8;
+constexpr f64 kChaseFollowRate = 6.0;  // 1/s: how fast the camera swings behind the aim
+
+// The on-frame HUD: game lines top-left, the power meter bottom-centre.
+// Drawn into the captured frame, so it looks the same on GL and software.
+void drawHud(Image& image, const WorldEditor& editor) {
+  const std::vector<std::string> lines = editor.hudLines();
+  if (!lines.empty()) {
+    i32 widest = 0;
+    for (const std::string& line : lines) widest = std::max(widest, kimia::font::textWidth(line, kHudScale));
+    const i32 lineStep = kimia::font::textHeight(kHudScale) + kHudScale * 2;
+    const i32 boxWidth = widest + kHudMargin * 2;
+    const i32 boxHeight = static_cast<i32>(lines.size()) * lineStep + kHudMargin * 2 - kHudScale * 2;
+    kimia::font::fillRect(image, kHudMargin, kHudMargin, boxWidth, boxHeight, kHudBackdrop, 0.55);
+    for (usize i = 0; i < lines.size(); ++i) {
+      kimia::font::drawText(image, kHudMargin * 2, kHudMargin * 2 + static_cast<i32>(i) * lineStep, lines[i],
+                            kHudText, kHudScale);
+    }
+  }
+  const f64 power = editor.hudPower();
+  if (power >= 0.0) {
+    const i32 barWidth = std::min(240, image.width - kHudMargin * 2);
+    const i32 barHeight = 14;
+    const i32 labelHeight = kimia::font::textHeight(kHudScale);
+    const i32 x = (image.width - barWidth) / 2;
+    const i32 y = image.height - kHudMargin - barHeight;
+    kimia::font::fillRect(image, x - 4, y - 8 - labelHeight, barWidth + 8, barHeight + labelHeight + 12, kHudBackdrop,
+                          0.55);
+    kimia::font::drawText(image, x, y - 4 - labelHeight, "POWER", kHudText, kHudScale);
+    kimia::font::drawBar(image, x, y, barWidth, barHeight, power, kPowerFill, kPowerBack);
+  }
+}
+
+// Sound cues are procedural (no asset files): registered once with the web
+// server, cued by name when the world reports an event.
+void registerSounds(kimia::web::Server& server) {
+  using kimia::AudioBuffer;
+  server.registerSound("shot", AudioBuffer::thock(0.12, 1400.0).encodeWAV());
+  server.registerSound("kick", AudioBuffer::thock(0.16, 700.0).encodeWAV());
+  server.registerSound("holed",
+                       AudioBuffer::concat(AudioBuffer::tone(660.0, 0.12), AudioBuffer::tone(990.0, 0.25)).encodeWAV());
+  server.registerSound("goal", AudioBuffer::tone(440.0, 0.5, 0.6, 880.0).encodeWAV());
+  server.registerSound(
+      "round", AudioBuffer::concat(AudioBuffer::concat(AudioBuffer::tone(523.25, 0.15), AudioBuffer::tone(659.25, 0.15)),
+                                   AudioBuffer::tone(783.99, 0.35))
+                   .encodeWAV());
+}
+
+const char* soundFor(WorldEditor::GameEvent event) {
+  switch (event) {
+    case WorldEditor::GameEvent::Shot: return "shot";
+    case WorldEditor::GameEvent::Kick: return "kick";
+    case WorldEditor::GameEvent::Holed: return "holed";
+    case WorldEditor::GameEvent::Goal: return "goal";
+    case WorldEditor::GameEvent::RoundOver: return "round";
+  }
+  return "shot";
+}
+
+// Shortest signed angle from `from` to `to` (radians).
+f64 angleDelta(f64 from, f64 to) {
+  f64 delta = std::fmod(to - from + kimia::kPi, 2.0 * kimia::kPi);
+  if (delta < 0.0) delta += 2.0 * kimia::kPi;
+  return delta - kimia::kPi;
+}
 
 // A single-entity goal (scale.x = width, scale.y = height) drawn as two
 // posts and a crossbar.
@@ -251,6 +325,7 @@ int main(int argc, char** argv) {
   if (engine.glAvailable() && !renderer.initialize(rendererError)) {
     std::printf("renderer init failed: %s\n", rendererError.c_str());
   }
+  registerSounds(*engine.server());
 
   const MeshData cubeMesh = kimia::makeCube(1.0);
   const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
@@ -316,6 +391,7 @@ int main(int argc, char** argv) {
     }
 
     editor.update(dt);
+    for (const WorldEditor::GameEvent event : editor.drainEvents()) engine.server()->playSound(soundFor(event));
 
     // --- Build the frame ---
     const kimia::EnvironmentColors colors = kimia::environmentColors(editor.world().environment);
@@ -383,6 +459,11 @@ int main(int argc, char** argv) {
       target = Vec3{editor.ghostPosition().x, 0.2, editor.ghostPosition().z};
     } else if (editor.playing()) {
       target = editor.ballPosition();
+      if (editor.chaseCameraActive()) {
+        // Chase camera: swing behind the ball, looking along the aim. A look
+        // drag still peeks around; the camera eases back behind the aim.
+        orbitCamera.yaw += angleDelta(orbitCamera.yaw, editor.aimYaw()) * std::min(1.0, kChaseFollowRate * dt);
+      }
     } else if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
       target = editor.selectedEntity()->transform.position;
     }
@@ -395,15 +476,13 @@ int main(int argc, char** argv) {
     scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
 
     Image image;
-    std::vector<u8> png;
     if (renderer.ready()) {
       renderer.render(scene, width, height);
-      if (!renderer.capturePNG(width, height, png)) png.clear();
+      if (!renderer.captureImage(width, height, image)) image = Image{};
     }
-    if (png.empty()) {
-      kimia::renderSoftware(scene, width, height, colors.clear, image);
-      png = image.encodePNG();
-    }
+    if (image.isEmpty()) kimia::renderSoftware(scene, width, height, colors.clear, image);
+    drawHud(image, editor);
+    std::vector<u8> png = image.encodePNG();
 
     // --- Menu (buttons the user sees) ---
     kimia::web::Menu menu;
