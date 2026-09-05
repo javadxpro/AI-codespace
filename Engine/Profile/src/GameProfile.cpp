@@ -99,11 +99,11 @@ bool environmentFromName(const std::string& name, EnvironmentKind& out) {
 std::vector<GameProfile> builtinProfiles() {
   std::vector<GameProfile> profiles;
 
-  // فوتبال خیابونی ایران — a tight 3v3 court between walls, a bouncy ball
-  // that begs for tricks, a fast player with a high jump.
+  // فوتبال خیابونی ایران: کوی ابوذر — a tight 5v5 court between walls, a
+  // bouncy ball that begs for tricks, a fast player with a high jump.
   GameProfile street;
   street.name = "street";
-  street.title = "فوتبال خیابونی ایران";
+  street.title = "فوتبال خیابونی ایران: کوی ابوذر";
   street.fieldLength = 16.0;
   street.fieldWidth = 5.0;
   street.environment = EnvironmentKind::Asphalt;
@@ -116,10 +116,11 @@ std::vector<GameProfile> builtinProfiles() {
   street.kickUp = 2.0;
   profiles.push_back(street);
 
-  // زمین چمن — the professional game: a real ball, a real pitch, no fantasy.
+  // زمین چمن: کوی ابوذر — the professional 11v11 game: a real ball, a real
+  // pitch, no fantasy.
   GameProfile grass;
   grass.name = "grass";
-  grass.title = "زمین چمن";
+  grass.title = "زمین چمن: کوی ابوذر";
   grass.fieldLength = 40.0;
   grass.fieldWidth = 25.0;
   grass.environment = EnvironmentKind::Grass;
@@ -132,10 +133,11 @@ std::vector<GameProfile> builtinProfiles() {
   grass.kickUp = 0.8;
   profiles.push_back(grass);
 
-  // بتل گراند — a 40 x 40 arena; the precise game with the big map.
+  // مسابقه واقعی: بتل گراند — PUBG-like, 4-player squads; this 40 x 40 field
+  // is the Arena mode. Not pay-to-win.
   GameProfile battleground;
   battleground.name = "battleground";
-  battleground.title = "بتل گراند";
+  battleground.title = "مسابقه واقعی: بتل گراند";
   battleground.fieldLength = 40.0;
   battleground.fieldWidth = 40.0;
   battleground.environment = EnvironmentKind::Sand;

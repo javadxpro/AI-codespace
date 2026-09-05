@@ -12,7 +12,7 @@
 
 // The literal is spelled once; the human-readable string is built from it by
 // literal concatenation so the two can never drift apart.
-#define KIMIA_ENGINE_VERSION "1405.06.14"
+#define KIMIA_ENGINE_VERSION "1405.06.14.2"
 #define KIMIA_ENGINE_VERSION_GREGORIAN "2026-09-05"
 
 namespace kimia {

@@ -159,7 +159,7 @@ KIMIA_TEST(world_create_project_gives_empty_ground) {
   KIMIA_REQUIRE(editor.choosingProfile());
   KIMIA_REQUIRE(editor.menuTitle() == "دنیای جدید: کدام بازی؟");
   KIMIA_REQUIRE(editor.optionLabels().size() == 5U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "فوتبال خیابونی ایران");
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "فوتبال خیابونی ایران: کوی ابوذر");
   KIMIA_REQUIRE(editor.optionLabels()[3] == "زمین آزاد");
   editor.choose(3);  // زمین آزاد
   KIMIA_REQUIRE(editor.hasWorld());
@@ -1040,7 +1040,7 @@ KIMIA_TEST(world_street_profile_builds_its_court) {
   createWorldFor(editor, "street");
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.profile().name == "street");
-  KIMIA_REQUIRE(editor.menuTitle() == "MyWorld (فوتبال خیابونی ایران) — سازنده");
+  KIMIA_REQUIRE(editor.menuTitle() == "MyWorld (فوتبال خیابونی ایران: کوی ابوذر) — سازنده");
   // The ground IS the field: 5 wide (X), 16 long (Z), asphalt.
   const EntityData* ground = editor.world().scene.get(editor.world().scene.find("Ground"));
   KIMIA_REQUIRE(ground != nullptr);
@@ -1166,7 +1166,7 @@ KIMIA_TEST(world_file_carries_its_profile_and_field) {
   reloaded.setProfileDirectory(tmpPath("no_profiles_here"));
   KIMIA_REQUIRE(reloaded.loadWorld(path, error));
   KIMIA_REQUIRE(reloaded.profile().name == "grass");
-  KIMIA_REQUIRE(reloaded.profile().title == "زمین چمن");
+  KIMIA_REQUIRE(reloaded.profile().title == "زمین چمن: کوی ابوذر");
   KIMIA_REQUIRE(near(reloaded.world().halfLength(), 20.0));
   KIMIA_REQUIRE(near(reloaded.world().halfWidth(), 12.5));
   KIMIA_REQUIRE(!reloaded.profile().ballChoice);

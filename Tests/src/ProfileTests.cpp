@@ -65,7 +65,7 @@ KIMIA_TEST(profile_builtins_are_the_three_games_plus_sandbox) {
   KIMIA_REQUIRE(profiles[3].name == "sandbox");
 
   const GameProfile& street = profiles[0];
-  KIMIA_REQUIRE(street.title == "فوتبال خیابونی ایران");
+  KIMIA_REQUIRE(street.title == "فوتبال خیابونی ایران: کوی ابوذر");
   KIMIA_REQUIRE(near(street.fieldLength, 16.0));
   KIMIA_REQUIRE(near(street.fieldWidth, 5.0));
   KIMIA_REQUIRE(street.environment == EnvironmentKind::Asphalt);
@@ -74,14 +74,14 @@ KIMIA_TEST(profile_builtins_are_the_three_games_plus_sandbox) {
   KIMIA_REQUIRE(near(street.jumpHeight, 1.8));
 
   const GameProfile& grass = profiles[1];
-  KIMIA_REQUIRE(grass.title == "زمین چمن");
+  KIMIA_REQUIRE(grass.title == "زمین چمن: کوی ابوذر");
   KIMIA_REQUIRE(near(grass.fieldLength, 40.0));
   KIMIA_REQUIRE(near(grass.fieldWidth, 25.0));
   KIMIA_REQUIRE(grass.ballDefault == BallType::Accurate);
   KIMIA_REQUIRE(!grass.ballChoice);
 
   const GameProfile& battleground = profiles[2];
-  KIMIA_REQUIRE(battleground.title == "بتل گراند");
+  KIMIA_REQUIRE(battleground.title == "مسابقه واقعی: بتل گراند");
   KIMIA_REQUIRE(near(battleground.fieldLength, 40.0));
   KIMIA_REQUIRE(near(battleground.fieldWidth, 40.0));
 
@@ -135,7 +135,7 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
   KIMIA_REQUIRE(street ==
                 "# KIMIA profile v1\n"
                 "name street\n"
-                "title فوتبال خیابونی ایران\n"
+                "title فوتبال خیابونی ایران: کوی ابوذر\n"
                 "field 16.000000 5.000000\n"
                 "environment asphalt\n"
                 "player speed 5.000000 jump 1.800000\n"
