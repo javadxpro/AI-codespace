@@ -113,6 +113,7 @@ target_include_directories(kimia_stb_vorbis PUBLIC ThirdParty/stb)
 add_library(kimia_assets STATIC
     Engine/Graphics/src/Image.cpp
     Engine/Graphics/src/Mesh.cpp
+    Engine/Graphics/src/BitmapFont.cpp
     Engine/Assets/src/AssetPipeline.cpp
     Engine/Assets/src/Audio.cpp
 )

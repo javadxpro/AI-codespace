@@ -50,6 +50,9 @@ public:
   bool shadowEnabled() const { return shadowEnabled_; }
 
   void render(const RenderScene& scene, i32 width, i32 height);
+  // Reads the framebuffer back as a top-down RGBA image (so a HUD can be
+  // drawn on it before encoding); false when the renderer is not ready.
+  bool captureImage(i32 width, i32 height, Image& outImage) const;
   bool capturePNG(i32 width, i32 height, std::vector<u8>& outPng) const;
 
   static Mat4 shadowViewProjection(const RenderScene& scene);

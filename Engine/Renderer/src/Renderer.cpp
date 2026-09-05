@@ -179,23 +179,28 @@ const GpuMesh& Renderer::meshFor(const MeshData* mesh) {
   return inserted.first->second;
 }
 
-bool Renderer::capturePNG(i32 width, i32 height, std::vector<u8>& outPng) const {
+bool Renderer::captureImage(i32 width, i32 height, Image& outImage) const {
   if (!ready_ || width <= 0 || height <= 0) return false;
   GLFunctions& gl = GLFunctions::instance();
   std::vector<u8> rgba(static_cast<usize>(width) * static_cast<usize>(height) * 4U);
   gl.pixelStorei(GL_PACK_ALIGNMENT, 1);
   gl.readPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-  Image image;
-  image.width = width;
-  image.height = height;
-  image.channels = 4;
-  image.pixels.resize(rgba.size());
+  outImage.width = width;
+  outImage.height = height;
+  outImage.channels = 4;
+  outImage.pixels.resize(rgba.size());
   const usize rowBytes = static_cast<usize>(width) * 4U;
   for (i32 y = 0; y < height; ++y) {
     const usize src = static_cast<usize>(height - 1 - y) * rowBytes;
     const usize dst = static_cast<usize>(y) * rowBytes;
-    for (usize i = 0; i < rowBytes; ++i) image.pixels[dst + i] = rgba[src + i];
+    for (usize i = 0; i < rowBytes; ++i) outImage.pixels[dst + i] = rgba[src + i];
   }
+  return true;
+}
+
+bool Renderer::capturePNG(i32 width, i32 height, std::vector<u8>& outPng) const {
+  Image image;
+  if (!captureImage(width, height, image)) return false;
   outPng = image.encodePNG();
   return !outPng.empty();
 }
