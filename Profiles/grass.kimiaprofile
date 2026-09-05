@@ -8,3 +8,5 @@ environment grass
 player speed 4.000000 jump 0.600000
 ball accurate choice off
 kick 4.000000 0.800000 0.800000
+mode kick
+scoring gate

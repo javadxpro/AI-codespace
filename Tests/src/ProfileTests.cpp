@@ -56,15 +56,32 @@ const GameProfile* findProfile(const std::vector<GameProfile>& profiles, const c
 
 }  // namespace
 
-KIMIA_TEST(profile_builtins_are_the_three_games_plus_sandbox) {
+KIMIA_TEST(profile_builtins_are_the_four_games_plus_sandbox) {
+  // Menu order = build order: golf (learn the engine), street, grass,
+  // battleground, then the free sandbox.
   const std::vector<GameProfile> profiles = kimia::builtinProfiles();
-  KIMIA_REQUIRE(profiles.size() == 4U);
-  KIMIA_REQUIRE(profiles[0].name == "street");
-  KIMIA_REQUIRE(profiles[1].name == "grass");
-  KIMIA_REQUIRE(profiles[2].name == "battleground");
-  KIMIA_REQUIRE(profiles[3].name == "sandbox");
+  KIMIA_REQUIRE(profiles.size() == 5U);
+  KIMIA_REQUIRE(profiles[0].name == "golf");
+  KIMIA_REQUIRE(profiles[1].name == "street");
+  KIMIA_REQUIRE(profiles[2].name == "grass");
+  KIMIA_REQUIRE(profiles[3].name == "battleground");
+  KIMIA_REQUIRE(profiles[4].name == "sandbox");
 
-  const GameProfile& street = profiles[0];
+  // Golf: no runner (shot mode), cup scoring, the reference launch numbers.
+  const GameProfile& golf = profiles[0];
+  KIMIA_REQUIRE(golf.title == "گلف کیمیا");
+  KIMIA_REQUIRE(near(golf.fieldLength, 24.0));
+  KIMIA_REQUIRE(near(golf.fieldWidth, 10.0));
+  KIMIA_REQUIRE(golf.mode == kimia::PlayMode::Shot);
+  KIMIA_REQUIRE(golf.scoring == kimia::Scoring::Hole);
+  KIMIA_REQUIRE(golf.ballDefault == BallType::Accurate);
+  KIMIA_REQUIRE(!golf.ballChoice);
+  KIMIA_REQUIRE(near(golf.jumpHeight, 0.0));
+  KIMIA_REQUIRE(near(golf.kickBase, kimia::kGolfLaunchBaseSpeed));
+  KIMIA_REQUIRE(near(golf.kickSpeedScale, kimia::kGolfLaunchPowerScale));
+  KIMIA_REQUIRE(near(golf.kickUp, 0.0));
+
+  const GameProfile& street = profiles[1];
   KIMIA_REQUIRE(street.title == "فوتبال خیابونی ایران: کوی ابوذر");
   KIMIA_REQUIRE(near(street.fieldLength, 16.0));
   KIMIA_REQUIRE(near(street.fieldWidth, 5.0));
@@ -72,21 +89,23 @@ KIMIA_TEST(profile_builtins_are_the_three_games_plus_sandbox) {
   KIMIA_REQUIRE(street.ballDefault == BallType::Fantasy);
   KIMIA_REQUIRE(!street.ballChoice);
   KIMIA_REQUIRE(near(street.jumpHeight, 1.8));
+  KIMIA_REQUIRE(street.mode == kimia::PlayMode::Kick);
+  KIMIA_REQUIRE(street.scoring == kimia::Scoring::Gate);
 
-  const GameProfile& grass = profiles[1];
+  const GameProfile& grass = profiles[2];
   KIMIA_REQUIRE(grass.title == "زمین چمن: کوی ابوذر");
   KIMIA_REQUIRE(near(grass.fieldLength, 40.0));
   KIMIA_REQUIRE(near(grass.fieldWidth, 25.0));
   KIMIA_REQUIRE(grass.ballDefault == BallType::Accurate);
   KIMIA_REQUIRE(!grass.ballChoice);
 
-  const GameProfile& battleground = profiles[2];
+  const GameProfile& battleground = profiles[3];
   KIMIA_REQUIRE(battleground.title == "مسابقه واقعی: بتل گراند");
   KIMIA_REQUIRE(near(battleground.fieldLength, 40.0));
   KIMIA_REQUIRE(near(battleground.fieldWidth, 40.0));
 
   // The sandbox IS the pre-profile editor: 20 x 20, golf ball, asks the question.
-  const GameProfile& sandbox = profiles[3];
+  const GameProfile& sandbox = profiles[4];
   KIMIA_REQUIRE(sandbox.title == "زمین آزاد");
   KIMIA_REQUIRE(near(sandbox.fieldLength, 20.0));
   KIMIA_REQUIRE(near(sandbox.fieldWidth, 20.0));
@@ -99,6 +118,8 @@ KIMIA_TEST(profile_builtins_are_the_three_games_plus_sandbox) {
   KIMIA_REQUIRE(near(sandbox.kickBase, kimia::kWorldKickBase));
   KIMIA_REQUIRE(near(sandbox.kickSpeedScale, kimia::kWorldKickSpeedScale));
   KIMIA_REQUIRE(near(sandbox.kickUp, kimia::kWorldKickUp));
+  KIMIA_REQUIRE(sandbox.mode == kimia::PlayMode::Kick);
+  KIMIA_REQUIRE(sandbox.scoring == kimia::Scoring::Gate);
 }
 
 KIMIA_TEST(profile_accurate_ball_is_the_golf_tuning) {
@@ -128,10 +149,12 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
     KIMIA_REQUIRE(near(loaded.kickBase, profile.kickBase));
     KIMIA_REQUIRE(near(loaded.kickSpeedScale, profile.kickSpeedScale));
     KIMIA_REQUIRE(near(loaded.kickUp, profile.kickUp));
+    KIMIA_REQUIRE(loaded.mode == profile.mode);
+    KIMIA_REQUIRE(loaded.scoring == profile.scoring);
     KIMIA_REQUIRE(ProfileIO::save(loaded) == first);
   }
   // The exact street text (this is also what Profiles/street.kimiaprofile says).
-  const std::string street = ProfileIO::save(kimia::builtinProfiles()[0]);
+  const std::string street = ProfileIO::save(kimia::builtinProfiles()[1]);
   KIMIA_REQUIRE(street ==
                 "# KIMIA profile v1\n"
                 "name street\n"
@@ -140,14 +163,29 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "environment asphalt\n"
                 "player speed 5.000000 jump 1.800000\n"
                 "ball fantasy choice off\n"
-                "kick 3.000000 0.600000 2.000000\n");
+                "kick 3.000000 0.600000 2.000000\n"
+                "mode kick\n"
+                "scoring gate\n");
+  // And the golf text.
+  const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
+  KIMIA_REQUIRE(golf ==
+                "# KIMIA profile v1\n"
+                "name golf\n"
+                "title گلف کیمیا\n"
+                "field 24.000000 10.000000\n"
+                "environment grass\n"
+                "player speed 4.000000 jump 0.000000\n"
+                "ball accurate choice off\n"
+                "kick 2.500000 13.500000 0.000000\n"
+                "mode shot\n"
+                "scoring hole\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {
   // Profiles/*.kimiaprofile are the user-editable copies of the built-ins:
   // they must load to exactly the same values (so editing one really is a
   // retune, not a divergence).
-  const char* names[] = {"street", "grass", "battleground"};
+  const char* names[] = {"golf", "street", "grass", "battleground"};
   const std::vector<GameProfile> builtins = kimia::builtinProfiles();
   for (const char* name : names) {
     GameProfile fromFile;
@@ -172,6 +210,8 @@ KIMIA_TEST(profile_load_is_tolerant_and_clamps) {
       "ball accurate\n"                    // incomplete: ignored as a whole
       "kick 1 2\n"                         // incomplete: ignored as a whole
       "gravity 3.7\n"                      // unknown key
+      "mode flying\n"                      // unknown mode: ignored, stays kick
+      "scoring hole\n"
       "\n"
       "kick 5 0.25 1.5\n";
   GameProfile loaded;
@@ -189,6 +229,8 @@ KIMIA_TEST(profile_load_is_tolerant_and_clamps) {
   KIMIA_REQUIRE(near(loaded.kickBase, 5.0));
   KIMIA_REQUIRE(near(loaded.kickSpeedScale, 0.25));
   KIMIA_REQUIRE(near(loaded.kickUp, 1.5));
+  KIMIA_REQUIRE(loaded.mode == kimia::PlayMode::Kick);
+  KIMIA_REQUIRE(loaded.scoring == kimia::Scoring::Hole);
   // The title round-trips through the escape.
   GameProfile again;
   KIMIA_REQUIRE(ProfileIO::load(ProfileIO::save(loaded), again, error));
@@ -207,9 +249,9 @@ KIMIA_TEST(profile_load_is_tolerant_and_clamps) {
 KIMIA_TEST(profile_directory_overrides_and_extends_builtins) {
   const std::string dir = tmpDir("profile_dir");
   // Missing directory -> exactly the built-ins.
-  KIMIA_REQUIRE(kimia::loadProfiles(dir + "/does_not_exist").size() == 4U);
+  KIMIA_REQUIRE(kimia::loadProfiles(dir + "/does_not_exist").size() == 5U);
   // Empty directory -> exactly the built-ins.
-  KIMIA_REQUIRE(kimia::loadProfiles(dir).size() == 4U);
+  KIMIA_REQUIRE(kimia::loadProfiles(dir).size() == 5U);
 
   // z_ sorts last, a_ sorts first: order is by filename, built-ins stay in front.
   writeText(dir + "/z_extra.kimiaprofile", "name zeta\ntitle زتا\nfield 8 8\n");
@@ -218,18 +260,19 @@ KIMIA_TEST(profile_directory_overrides_and_extends_builtins) {
   writeText(dir + "/broken.kimiaprofile", "title no name here\n");  // skipped
   writeText(dir + "/notes.txt", "name ignored\n");                  // wrong extension
   const std::vector<GameProfile> profiles = kimia::loadProfiles(dir);
-  KIMIA_REQUIRE(profiles.size() == 6U);
-  KIMIA_REQUIRE(profiles[0].name == "street");
-  KIMIA_REQUIRE(profiles[1].name == "grass");
-  KIMIA_REQUIRE(profiles[1].title == "چمن من");  // replaced in place
-  KIMIA_REQUIRE(near(profiles[1].fieldLength, 30.0));
-  KIMIA_REQUIRE(near(profiles[1].kickBase, 9.0));
-  KIMIA_REQUIRE(profiles[1].environment == EnvironmentKind::Grass);  // unspecified keys: struct defaults
-  KIMIA_REQUIRE(profiles[2].name == "battleground");
-  KIMIA_REQUIRE(profiles[3].name == "sandbox");
-  KIMIA_REQUIRE(profiles[4].name == "alpha");
-  KIMIA_REQUIRE(profiles[5].name == "zeta");
-  KIMIA_REQUIRE(near(profiles[5].fieldWidth, 8.0));
+  KIMIA_REQUIRE(profiles.size() == 7U);
+  KIMIA_REQUIRE(profiles[0].name == "golf");
+  KIMIA_REQUIRE(profiles[1].name == "street");
+  KIMIA_REQUIRE(profiles[2].name == "grass");
+  KIMIA_REQUIRE(profiles[2].title == "چمن من");  // replaced in place
+  KIMIA_REQUIRE(near(profiles[2].fieldLength, 30.0));
+  KIMIA_REQUIRE(near(profiles[2].kickBase, 9.0));
+  KIMIA_REQUIRE(profiles[2].environment == EnvironmentKind::Grass);  // unspecified keys: struct defaults
+  KIMIA_REQUIRE(profiles[3].name == "battleground");
+  KIMIA_REQUIRE(profiles[4].name == "sandbox");
+  KIMIA_REQUIRE(profiles[5].name == "alpha");
+  KIMIA_REQUIRE(profiles[6].name == "zeta");
+  KIMIA_REQUIRE(near(profiles[6].fieldWidth, 8.0));
 }
 
 KIMIA_TEST(profile_enum_names_round_trip) {
@@ -248,4 +291,14 @@ KIMIA_TEST(profile_enum_names_round_trip) {
   EnvironmentKind unknown = EnvironmentKind::Night;
   KIMIA_REQUIRE(!kimia::environmentFromName("lava", unknown));
   KIMIA_REQUIRE(unknown == EnvironmentKind::Night);  // untouched on failure
+  kimia::PlayMode mode = kimia::PlayMode::Kick;
+  KIMIA_REQUIRE(kimia::playModeFromName("shot", mode) && mode == kimia::PlayMode::Shot);
+  KIMIA_REQUIRE(kimia::playModeFromName("kick", mode) && mode == kimia::PlayMode::Kick);
+  KIMIA_REQUIRE(!kimia::playModeFromName("fly", mode));
+  KIMIA_REQUIRE(std::string(kimia::playModeName(kimia::PlayMode::Shot)) == "shot");
+  kimia::Scoring scoring = kimia::Scoring::Gate;
+  KIMIA_REQUIRE(kimia::scoringFromName("hole", scoring) && scoring == kimia::Scoring::Hole);
+  KIMIA_REQUIRE(kimia::scoringFromName("gate", scoring) && scoring == kimia::Scoring::Gate);
+  KIMIA_REQUIRE(!kimia::scoringFromName("points", scoring));
+  KIMIA_REQUIRE(std::string(kimia::scoringName(kimia::Scoring::Hole)) == "hole");
 }

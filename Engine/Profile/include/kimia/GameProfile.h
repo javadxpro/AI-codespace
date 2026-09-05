@@ -13,6 +13,17 @@ enum class BallType { Accurate, Fantasy };
 // Ground/sky presets. Asphalt is the street-football surface.
 enum class EnvironmentKind { Grass, Sand, Night, Asphalt };
 
+// How the player plays the ball.
+//   Kick: a running character; walking into the ball kicks it (football).
+//   Shot: no runner — aim with the arrows, hold «شوت» to charge, release to
+//         shoot from where the ball rests (golf, and later aimed passes).
+enum class PlayMode { Kick, Shot };
+
+// What scores.
+//   Gate: the ball crosses a goal line between the posts («دروازه»).
+//   Hole: the ball rolls slowly into a cup («سوراخ»).
+enum class Scoring { Gate, Hole };
+
 // --- Sandbox tuning (the numbers the editor shipped with before profiles) ---
 
 // Player speed presets (units/second).
@@ -22,6 +33,8 @@ inline constexpr f64 kWorldPlayerSlow = 2.5;
 
 // A kick launches the ball along the movement direction with
 // speed = kickBase + playerSpeed * kickSpeedScale plus a small pop (kickUp).
+// In shot mode the same line reads speed = kickBase + power * kickSpeedScale
+// where power is the charge (0..1) — one line, one meaning: how the ball leaves.
 inline constexpr f64 kWorldKickBase = 2.0;
 inline constexpr f64 kWorldKickSpeedScale = 0.5;
 inline constexpr f64 kWorldKickUp = 1.2;
@@ -65,6 +78,8 @@ struct GameProfile {
   f64 kickBase = kWorldKickBase;
   f64 kickSpeedScale = kWorldKickSpeedScale;
   f64 kickUp = kWorldKickUp;
+  PlayMode mode = PlayMode::Kick;    // kick = football runner, shot = golf aim/charge
+  Scoring scoring = Scoring::Gate;   // gate = goal line, hole = cup
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -74,8 +89,13 @@ const char* ballTypeName(BallType type);  // "accurate" / "fantasy"
 bool ballTypeFromName(const std::string& name, BallType& out);
 const char* environmentName(EnvironmentKind kind);  // "grass" / "sand" / "night" / "asphalt"
 bool environmentFromName(const std::string& name, EnvironmentKind& out);
+const char* playModeName(PlayMode mode);  // "kick" / "shot"
+bool playModeFromName(const std::string& name, PlayMode& out);
+const char* scoringName(Scoring scoring);  // "gate" / "hole"
+bool scoringFromName(const std::string& name, Scoring& out);
 
-// The built-in profiles in menu order: street, grass, battleground, sandbox.
+// The built-in profiles in menu order (= the build order of the games):
+// golf, street, grass, battleground, sandbox.
 std::vector<GameProfile> builtinProfiles();
 
 // The built-ins overridden/extended by every `*.kimiaprofile` file in `dir`:
@@ -94,6 +114,8 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   player speed 5.000000 jump 1.800000
 //   ball fantasy choice off
 //   kick 3.000000 0.600000 2.000000
+//   mode kick
+//   scoring gate
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

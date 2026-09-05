@@ -96,8 +96,56 @@ bool environmentFromName(const std::string& name, EnvironmentKind& out) {
   return true;
 }
 
+const char* playModeName(PlayMode mode) { return mode == PlayMode::Shot ? "shot" : "kick"; }
+
+bool playModeFromName(const std::string& name, PlayMode& out) {
+  if (name == "kick") {
+    out = PlayMode::Kick;
+    return true;
+  }
+  if (name == "shot") {
+    out = PlayMode::Shot;
+    return true;
+  }
+  return false;
+}
+
+const char* scoringName(Scoring scoring) { return scoring == Scoring::Hole ? "hole" : "gate"; }
+
+bool scoringFromName(const std::string& name, Scoring& out) {
+  if (name == "gate") {
+    out = Scoring::Gate;
+    return true;
+  }
+  if (name == "hole") {
+    out = Scoring::Hole;
+    return true;
+  }
+  return false;
+}
+
 std::vector<GameProfile> builtinProfiles() {
   std::vector<GameProfile> profiles;
+
+  // گلف — game #1: learn and stress the engine. No runner: aim, charge,
+  // shoot the accurate ball from where it rests into a cup. The launch
+  // numbers are the reference golf's (2.5 + power * 13.5, no pop).
+  GameProfile golf;
+  golf.name = "golf";
+  golf.title = "گلف کیمیا";
+  golf.fieldLength = 24.0;
+  golf.fieldWidth = 10.0;
+  golf.environment = EnvironmentKind::Grass;
+  golf.playerSpeed = kWorldPlayerNormal;
+  golf.jumpHeight = 0.0;
+  golf.ballDefault = BallType::Accurate;
+  golf.ballChoice = false;
+  golf.kickBase = 2.5;
+  golf.kickSpeedScale = 13.5;
+  golf.kickUp = 0.0;
+  golf.mode = PlayMode::Shot;
+  golf.scoring = Scoring::Hole;
+  profiles.push_back(golf);
 
   // فوتبال خیابونی ایران: کوی ابوذر — a tight 5v5 court between walls, a
   // bouncy ball that begs for tricks, a fast player with a high jump.
@@ -194,6 +242,8 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
                 (profile.ballChoice ? "on" : "off"));
   out.push_back("kick " + formatFixed6(profile.kickBase) + ' ' + formatFixed6(profile.kickSpeedScale) + ' ' +
                 formatFixed6(profile.kickUp));
+  out.push_back(std::string("mode ") + playModeName(profile.mode));
+  out.push_back(std::string("scoring ") + scoringName(profile.scoring));
   return out;
 }
 
@@ -274,6 +324,20 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     out.kickBase = clampF64(base, kKickMin, kKickMax);
     out.kickSpeedScale = clampF64(scale, kKickMin, kKickMax);
     out.kickUp = clampF64(up, kKickMin, kKickMax);
+    return true;
+  }
+  if (key == "mode") {
+    std::string value;
+    PlayMode mode = PlayMode::Kick;
+    if (!(tokens >> value) || !playModeFromName(value, mode)) return false;
+    out.mode = mode;
+    return true;
+  }
+  if (key == "scoring") {
+    std::string value;
+    Scoring scoring = Scoring::Gate;
+    if (!(tokens >> value) || !scoringFromName(value, scoring)) return false;
+    out.scoring = scoring;
     return true;
   }
   return false;
