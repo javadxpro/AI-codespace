@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
-project(KIMIA VERSION 0.1.0 LANGUAGES C CXX)
+# Engine version = Jalali release date (YEAR.MONTH.DAY). The same literal lives
+# in Engine/Core/include/kimia/Version.h; the configure step below and a unit
+# test keep the two identical. Bump both + add a CHANGELOG.md entry per release.
+project(KIMIA VERSION 1405.06.14 LANGUAGES C CXX)
+file(STRINGS Engine/Core/include/kimia/Version.h KIMIA_VERSION_LINE REGEX "#define KIMIA_ENGINE_VERSION \"")
+string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" KIMIA_HEADER_VERSION "${KIMIA_VERSION_LINE}")
+if(NOT KIMIA_HEADER_VERSION STREQUAL PROJECT_VERSION)
+  message(FATAL_ERROR "Version.h says ${KIMIA_HEADER_VERSION} but CMakeLists.txt says ${PROJECT_VERSION}")
+endif()
+message(STATUS "KIMIA engine version ${PROJECT_VERSION}")
 
 option(KIMIA_WERROR "Treat warnings as errors" ON)
 option(KIMIA_BUILD_TOOLS "Build the kimia_assets CLI tool" ON)
@@ -140,6 +149,8 @@ if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
 endif()
 target_compile_definitions(kimia_tests PRIVATE
+    KIMIA_CMAKE_VERSION="${PROJECT_VERSION}"
+    KIMIA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     KIMIA_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/assets"
     KIMIA_PROFILE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Profiles"
     KIMIA_TEST_TMP="${CMAKE_BINARY_DIR}/kimia_test_tmp"

@@ -14,6 +14,7 @@
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
+#include <kimia/Version.h>
 #include <kimia/World.h>
 
 #include <atomic>
@@ -155,6 +156,9 @@ int main(int argc, char** argv) {
       assetsDir = argv[++i];
     } else if (arg == "--profiles" && i + 1 < argc) {
       profilesDir = argv[++i];
+    } else if (arg == "--version") {
+      std::printf("%s\n", kimia::kEngineVersionString);
+      return 0;
     }
   }
 
@@ -194,8 +198,9 @@ int main(int argc, char** argv) {
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
       "everything is menus: tap 1-8 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
-  std::printf("KIMIA World serving on port %d | GL: %s | games: %d\n", static_cast<i32>(engine.server()->port()),
-              engine.glAvailable() ? "yes" : "no (software)", static_cast<i32>(editor.profileCount()));
+  std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
+              static_cast<i32>(engine.server()->port()), engine.glAvailable() ? "yes" : "no (software)",
+              static_cast<i32>(editor.profileCount()));
 
   Renderer renderer;
   std::string rendererError;
