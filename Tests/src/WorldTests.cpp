@@ -1,10 +1,12 @@
 #include <kimia_test.h>
 #include <kimia/AssetPipeline.h>
+#include <kimia/GameProfile.h>
 #include <kimia/Golf.h>
 #include <kimia/Physics.h>
 #include <kimia/World.h>
 #include <kimia/WorldIO.h>
 
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -71,11 +73,32 @@ bool fileExists(const std::string& path) {
   return true;
 }
 
-// Walks the editor into the builder with a fresh empty world.
+// Index of the sandbox game («زمین آزاد») in the profile menu.
+kimia::usize sandboxIndex(const WorldEditor& editor) {
+  for (kimia::usize i = 0; i < editor.profileCount(); ++i) {
+    if (editor.profileAt(i).name == "sandbox") return i;
+  }
+  return 0U;
+}
+
+// Walks the editor into the builder with a fresh empty SANDBOX world (the
+// 20 x 20 floor and the golf-tuned ball every test below was written for).
 WorldEditor editorWithWorld() {
   WorldEditor editor;
-  editor.choose(0);  // Main -> create world -> Builder
+  editor.choose(0);  // Main -> «کدام بازی؟»
+  editor.choose(static_cast<i32>(sandboxIndex(editor)));  // زمین آزاد -> Builder
   return editor;
+}
+
+// Picks the game with this profile name from the «کدام بازی؟» screen.
+void createWorldFor(WorldEditor& editor, const char* profileName) {
+  editor.choose(0);  // Main -> «کدام بازی؟»
+  for (kimia::usize i = 0; i < editor.profileCount(); ++i) {
+    if (editor.profileAt(i).name == profileName) {
+      editor.choose(static_cast<i32>(i));
+      return;
+    }
+  }
 }
 
 void exitPlace(WorldEditor& editor) { editor.choose(1); }  // «بازگشت» from Place
@@ -131,8 +154,17 @@ KIMIA_TEST(world_create_project_gives_empty_ground) {
   KIMIA_REQUIRE(!editor.hasWorld());
   KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // main menu
   editor.choose(0);
+  // «دنیای جدید» asks which game first: the 4 built-ins + «بازگشت».
+  KIMIA_REQUIRE(!editor.hasWorld());
+  KIMIA_REQUIRE(editor.choosingProfile());
+  KIMIA_REQUIRE(editor.menuTitle() == "دنیای جدید: کدام بازی؟");
+  KIMIA_REQUIRE(editor.optionLabels().size() == 5U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "فوتبال خیابونی ایران");
+  KIMIA_REQUIRE(editor.optionLabels()[3] == "زمین آزاد");
+  editor.choose(3);  // زمین آزاد
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.world().name == "MyWorld");
+  KIMIA_REQUIRE(editor.profile().name == "sandbox");
   KIMIA_REQUIRE(editor.world().score == 0U);
   KIMIA_REQUIRE(editor.world().scene.find("Ground") != kimia::kNullEntity);
   KIMIA_REQUIRE(editor.objectCount() == 0U);  // nothing but the ground
@@ -415,6 +447,7 @@ KIMIA_TEST(world_save_load_roundtrip_keeps_objects) {
   KIMIA_REQUIRE(near(reloaded.world().player.speed, kWorldPlayerFast));
   KIMIA_REQUIRE(reloaded.world().ball.type == BallType::Fantasy);
   KIMIA_REQUIRE(reloaded.world().environment == EnvironmentKind::Sand);
+  KIMIA_REQUIRE(reloaded.profile().name == "sandbox");
   // Physics rebuilt from the file: block + wall + 3 goal boxes.
   KIMIA_REQUIRE(reloaded.physicsBoxCount() == 5U);
   KIMIA_REQUIRE(reloaded.optionLabels().size() == 6U);  // lands on the builder
@@ -432,6 +465,10 @@ KIMIA_TEST(world_old_v1_file_loads_with_defaults) {
   KIMIA_REQUIRE(near(loaded.ball.restitution, kGolfBallRestitution));
   KIMIA_REQUIRE(loaded.environment == EnvironmentKind::Grass);
   KIMIA_REQUIRE(loaded.scene.find("OldGround") != kimia::kNullEntity);
+  // No profile lines and no "Ground" plane: the sandbox game, 20 x 20.
+  KIMIA_REQUIRE(loaded.profile.name == "sandbox");
+  KIMIA_REQUIRE(near(loaded.halfLength(), 10.0));
+  KIMIA_REQUIRE(near(loaded.halfWidth(), 10.0));
 
   const std::string path = tmpPath("old_v1.kimia");
   {
@@ -661,7 +698,8 @@ KIMIA_TEST(world_play_player_jumps_onto_a_block) {
 KIMIA_TEST(world_stats_line_reports_config) {
   WorldEditor editor = editorWithWorld();
   KIMIA_REQUIRE(editor.statsLine() ==
-                "KIMIA WORLD | BUILDER | world MyWorld | player normal | ball accurate | env grass | score 0 | objects 0");
+                "KIMIA WORLD | BUILDER | world MyWorld | game sandbox | player normal | ball accurate | env grass | "
+                "score 0 | objects 0");
   addBall(editor, 1, Vec3{0.0, 0.0, 0.0});
   exitPlace(editor);
   KIMIA_REQUIRE(editor.statsLine().find("ball fantasy") != std::string::npos);
@@ -993,4 +1031,238 @@ KIMIA_TEST(world_model_placement_fits_mesh_to_chosen_size) {
   KIMIA_REQUIRE(near(model->transform.scale.y, fit, 1e-12));
   KIMIA_REQUIRE(near(model->transform.scale.z, fit, 1e-12));
   KIMIA_REQUIRE(model->transform.scale.x < 0.01);
+}
+
+// --- Game profiles: the same engine, a different game per profile ---
+
+KIMIA_TEST(world_street_profile_builds_its_court) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  KIMIA_REQUIRE(editor.hasWorld());
+  KIMIA_REQUIRE(editor.profile().name == "street");
+  KIMIA_REQUIRE(editor.menuTitle() == "MyWorld (فوتبال خیابونی ایران) — سازنده");
+  // The ground IS the field: 5 wide (X), 16 long (Z), asphalt.
+  const EntityData* ground = editor.world().scene.get(editor.world().scene.find("Ground"));
+  KIMIA_REQUIRE(ground != nullptr);
+  KIMIA_REQUIRE(near3(ground->transform.scale, Vec3{5.0, 1.0, 16.0}));
+  KIMIA_REQUIRE(near3(ground->color, kimia::environmentColors(EnvironmentKind::Asphalt).floor));
+  KIMIA_REQUIRE(editor.world().environment == EnvironmentKind::Asphalt);
+  // Profile defaults are the world's answers until the user changes them.
+  KIMIA_REQUIRE(near(editor.world().player.speed, 5.0));
+  KIMIA_REQUIRE(editor.world().ball.type == BallType::Fantasy);
+  KIMIA_REQUIRE(near(editor.world().ball.radius, kWorldFantasyRadius));
+  KIMIA_REQUIRE(editor.statsLine().find("game street") != std::string::npos);
+  KIMIA_REQUIRE(editor.statsLine().find("ball fantasy") != std::string::npos);
+}
+
+KIMIA_TEST(world_street_profile_skips_the_ball_question) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  editor.choose(0);  // catalog
+  editor.choose(1);  // توپ — street has one ball: straight to placement
+  KIMIA_REQUIRE(editor.placing());
+  KIMIA_REQUIRE(editor.ghostKind() == kimia::ObjectKind::Ball);
+  editor.setGhostPosition(Vec3{0.0, 0.0, 2.0});
+  editor.choose(0);  // place
+  exitPlace(editor);
+  const EntityData* ball = editor.world().scene.get(editor.world().scene.find("Ball"));
+  KIMIA_REQUIRE(ball != nullptr);
+  KIMIA_REQUIRE(editor.world().ball.type == BallType::Fantasy);
+  KIMIA_REQUIRE(near3(ball->transform.position, Vec3{0.0, kWorldFantasyRadius, 2.0}));
+  KIMIA_REQUIRE(editor.objectCount() == 1U);
+
+  // The sandbox still asks «دقیق باشه یا فانتزی؟».
+  WorldEditor sandbox = editorWithWorld();
+  sandbox.choose(0);
+  sandbox.choose(1);
+  KIMIA_REQUIRE(!sandbox.placing());
+  KIMIA_REQUIRE(sandbox.menuTitle() == "توپ: دقیق باشه یا فانتزی؟");
+}
+
+KIMIA_TEST(world_profile_field_bounds_player_ball_and_ghost) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");  // 5 wide: half width 2.5
+  // Ghost: clamped 0.5 inside the edge on X, free along the 16 m length.
+  editor.choose(0);
+  editor.choose(2);  // block
+  editor.choose(1);  // medium
+  editor.setMoveInput(1.0, 0.0);
+  editor.update(5.0);  // would travel 10 units
+  KIMIA_REQUIRE(near(editor.ghostPosition().x, 2.0, 1e-9));
+  editor.setMoveInput(0.0, 1.0);
+  editor.update(2.0);  // +4 along Z is still inside (half length 8)
+  KIMIA_REQUIRE(near(editor.ghostPosition().z, 4.0, 1e-9));
+  editor.setMoveInput(0.0, 0.0);
+  editor.choose(1);  // back
+  editor.choose(0);
+  editor.choose(1);  // ball (no question)
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  editor.setPlayerPosition(Vec3{0.0, 0.5, -6.0});  // far from the ball
+  editor.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 300; ++i) editor.update(1.0 / 60.0);  // 5 s toward +X
+  editor.setMoveInput(0.0, 0.0);
+  KIMIA_REQUIRE(near(editor.playerPosition().x, 2.5 - 0.6, 1e-9));  // half width - player margin
+
+  editor.setBallPosition(Vec3{0.0, kWorldFantasyRadius, 0.0});
+  editor.setBallVelocity(Vec3{10.0, 0.0, 0.0});
+  for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(near(editor.ballPosition().x, 2.5 - kWorldFantasyRadius, 1e-9));
+  KIMIA_REQUIRE(editor.ballVelocity().x == 0.0);
+}
+
+KIMIA_TEST(world_profile_kick_and_jump_tuning_apply_in_play) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  editor.choose(0);
+  editor.choose(1);  // ball
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.6, kWorldFantasyRadius, 0.0});
+  editor.setMoveInput(1.0, 0.0);
+  editor.update(0.0);
+  const Vec3 velocity = editor.ballVelocity();
+  // street: kick 3.0 + 5.0 * 0.6 = 6.0, pop 2.0 (sandbox: 2 + 4*0.5 = 4, pop 1.2)
+  KIMIA_REQUIRE(near(velocity.x, 3.0 + 5.0 * 0.6));
+  KIMIA_REQUIRE(near(velocity.y, 2.0));
+  editor.setMoveInput(0.0, 0.0);
+
+  // Jump apex from the profile: feet 1.8 -> center ~2.3 (discrete ~2.27).
+  editor.setPlayerPosition(Vec3{0.0, 0.5, -5.0});
+  editor.jumpPressed();
+  f64 maxY = 0.0;
+  for (i32 i = 0; i < 180; ++i) {
+    editor.update(1.0 / 60.0);
+    maxY = std::max(maxY, editor.playerPosition().y);
+  }
+  KIMIA_REQUIRE(maxY > 2.1);
+  KIMIA_REQUIRE(maxY < 2.4);
+  KIMIA_REQUIRE(near(editor.playerPosition().y, 0.5, 1e-9));
+}
+
+KIMIA_TEST(world_file_carries_its_profile_and_field) {
+  WorldEditor editor;
+  createWorldFor(editor, "grass");  // 40 x 25
+  editor.choose(0);
+  editor.choose(2);  // block
+  editor.choose(2);  // large
+  editor.setGhostPosition(Vec3{10.0, 0.0, -15.0});  // outside a 20 x 20 sandbox, inside the pitch
+  editor.choose(0);
+  exitPlace(editor);
+  const std::string path = tmpPath("grass_world.kimia");
+  std::string error;
+  KIMIA_REQUIRE(editor.saveWorld(path, error));
+
+  // A fresh editor with NO grass profile available still plays this world
+  // as grass football: the file is self-contained.
+  WorldEditor reloaded;
+  reloaded.setProfileDirectory(tmpPath("no_profiles_here"));
+  KIMIA_REQUIRE(reloaded.loadWorld(path, error));
+  KIMIA_REQUIRE(reloaded.profile().name == "grass");
+  KIMIA_REQUIRE(reloaded.profile().title == "زمین چمن");
+  KIMIA_REQUIRE(near(reloaded.world().halfLength(), 20.0));
+  KIMIA_REQUIRE(near(reloaded.world().halfWidth(), 12.5));
+  KIMIA_REQUIRE(!reloaded.profile().ballChoice);
+  KIMIA_REQUIRE(near(reloaded.profile().kickBase, 4.0));
+  const EntityData* block = reloaded.world().scene.get(reloaded.world().scene.find("Block_1"));
+  KIMIA_REQUIRE(block != nullptr);
+  KIMIA_REQUIRE(near3(block->transform.position, Vec3{10.0, 1.0, -15.0}));
+
+  // Byte-stable: save -> load -> save is identical.
+  std::string first;
+  std::string second;
+  KIMIA_REQUIRE(WorldIO::save(editor.world(), first));
+  KIMIA_REQUIRE(WorldIO::save(reloaded.world(), second));
+  KIMIA_REQUIRE(first == second);
+  KIMIA_REQUIRE(first.find("# profile name grass\n") != std::string::npos);
+  KIMIA_REQUIRE(first.find("# profile field 40.000000 25.000000\n") != std::string::npos);
+}
+
+KIMIA_TEST(world_old_file_takes_field_from_its_ground) {
+  // A stage-17 file: no profile lines, a 20 x 20 ground -> sandbox 20 x 20.
+  const std::string text =
+      "# KIMIA scene v1\n"
+      "# world name Old\n"
+      "e \"Ground\" mesh plane pos 0 0 0 scale 12 1 30 color 0.22 0.45 0.24 rough 0.95\n";
+  WorldData loaded;
+  std::string error;
+  KIMIA_REQUIRE(WorldIO::load(text, loaded, error));
+  KIMIA_REQUIRE(loaded.profile.name == "sandbox");
+  KIMIA_REQUIRE(near(loaded.profile.fieldWidth, 12.0));
+  KIMIA_REQUIRE(near(loaded.profile.fieldLength, 30.0));
+  // The ball type / env lines of old files still win over the profile defaults.
+  const std::string fantasy = text + "# ball type fantasy\n# env night\n";
+  KIMIA_REQUIRE(WorldIO::load(fantasy, loaded, error));
+  KIMIA_REQUIRE(loaded.ball.type == BallType::Fantasy);
+  KIMIA_REQUIRE(loaded.environment == EnvironmentKind::Night);
+}
+
+KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
+  // Seven user profiles + 4 built-ins = 11 games -> 3 pages of 5.
+  const std::string dir = tmpPath("many_profiles");
+  const int created = ::mkdir(dir.c_str(), 0755);
+  static_cast<void>(created == 0 || errno == EEXIST);
+  if (DIR* handle = ::opendir(dir.c_str())) {  // start empty even after a previous run
+    while (dirent* entry = ::readdir(handle)) {
+      const std::string file = entry->d_name;
+      if (file != "." && file != "..") std::remove((dir + "/" + file).c_str());
+    }
+    ::closedir(handle);
+  }
+  for (int i = 0; i < 7; ++i) {
+    kimia::GameProfile custom;
+    custom.name = "custom" + std::to_string(i);
+    custom.title = "بازی سفارشی " + std::to_string(i);
+    custom.fieldLength = 10.0 + static_cast<f64>(i);
+    std::string error;
+    KIMIA_REQUIRE(kimia::ProfileIO::saveToFile(custom, dir + "/custom" + std::to_string(i) + ".kimiaprofile", error));
+  }
+  // A user file that RETUNES a built-in (same name) replaces it in place.
+  {
+    kimia::GameProfile street;
+    street.name = "street";
+    street.title = "خیابونی من";
+    street.fieldLength = 12.0;
+    street.fieldWidth = 6.0;
+    std::string error;
+    KIMIA_REQUIRE(kimia::ProfileIO::saveToFile(street, dir + "/my_street.kimiaprofile", error));
+  }
+  WorldEditor editor;
+  editor.setProfileDirectory(dir);
+  KIMIA_REQUIRE(editor.profileCount() == 11U);
+  KIMIA_REQUIRE(editor.profileAt(0).name == "street");  // still first
+  KIMIA_REQUIRE(editor.profileAt(0).title == "خیابونی من");
+  KIMIA_REQUIRE(near(editor.profileAt(0).fieldWidth, 6.0));
+  editor.choose(0);  // دنیای جدید
+  KIMIA_REQUIRE(editor.choosingProfile());
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // 5 + بیشتر…
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "خیابونی من");
+  KIMIA_REQUIRE(editor.optionLabels()[5] == "بیشتر…");
+  editor.choose(5);  // page 2
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 1");
+  editor.choose(5);  // page 3: one game + بازگشت
+  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 6");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازگشت");
+  editor.choose(0);
+  KIMIA_REQUIRE(editor.hasWorld());
+  KIMIA_REQUIRE(editor.profile().name == "custom6");
+  KIMIA_REQUIRE(near(editor.world().halfLength(), 8.0));  // (10 + 6) / 2
+  // «بازگشت» from the game list returns to the main menu without a world.
+  WorldEditor again;
+  again.setProfileDirectory(dir);
+  again.choose(0);
+  again.choose(5);
+  again.choose(5);
+  again.choose(1);  // بازگشت
+  KIMIA_REQUIRE(!again.hasWorld());
+  KIMIA_REQUIRE(again.optionLabels().size() == 3U);  // main menu
 }
