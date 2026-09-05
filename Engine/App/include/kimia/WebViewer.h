@@ -46,6 +46,9 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
 //   GET  /stats     -> 200 text/plain (last stats line)
 //   GET  /menu      -> 200 application/json (the dynamic menu; empty by default)
 //   POST /input?key=<k>&down=0|1&tap=<k>&lookX=<dx>&lookY=<dy>&zoom=<dz> -> 200
+//   GET  /sound     -> 200 text/plain "<seq> <name>" (the latest sound cue; seq
+//                      grows by one per playSound, so the page plays each cue once)
+//   GET  /sfx/<n>   -> 200 audio/wav (a registered sound) or 404
 //   anything else   -> 404
 class Server {
 public:
@@ -65,6 +68,12 @@ public:
   void publishFrame(std::vector<u8> pngBytes, const std::string& statsLine);
   void setMenu(const Menu& menu);
   DrainedInput drain();
+
+  // Sound: register WAV bytes under a name once, then cue it by name. The
+  // page polls /sound and plays /sfx/<name> when the sequence number moves.
+  void registerSound(const std::string& name, std::vector<u8> wavBytes);
+  void playSound(const std::string& name);
+  u64 soundSequence() const;
 
 private:
   std::unique_ptr<Impl> impl_;

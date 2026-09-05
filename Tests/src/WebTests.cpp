@@ -170,6 +170,42 @@ KIMIA_TEST(web_look_and_zoom_accumulate_as_edges) {
   server.stop();
 }
 
+KIMIA_TEST(web_sound_cues_are_sequenced_and_served_as_wav) {
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  // Nothing registered: sequence 0, no name, unknown sfx is 404.
+  KIMIA_REQUIRE(server.soundSequence() == 0U);
+  HttpResponse sound = request(server.port(), "GET", "/sound");
+  KIMIA_REQUIRE(sound.status == 200);
+  KIMIA_REQUIRE(sound.body == "0 ");
+  KIMIA_REQUIRE(request(server.port(), "GET", "/sfx/holed").status == 404);
+  // Cueing an unregistered name is ignored (no sequence bump).
+  server.playSound("holed");
+  KIMIA_REQUIRE(server.soundSequence() == 0U);
+  // Register two cues; the bytes come back exactly with audio/wav.
+  const std::vector<u8> holed = {'R', 'I', 'F', 'F', 1, 2, 3, 4};
+  const std::vector<u8> shot = {'R', 'I', 'F', 'F', 9, 9};
+  server.registerSound("holed", holed);
+  server.registerSound("shot", shot);
+  const HttpResponse wav = request(server.port(), "GET", "/sfx/holed");
+  KIMIA_REQUIRE(wav.status == 200);
+  KIMIA_REQUIRE(wav.headers.at("content-type").find("audio/wav") != std::string::npos);
+  KIMIA_REQUIRE(wav.body.size() == holed.size());
+  KIMIA_REQUIRE(std::memcmp(wav.body.data(), holed.data(), holed.size()) == 0);
+  // Each cue bumps the sequence and names the latest sound.
+  server.playSound("shot");
+  KIMIA_REQUIRE(server.soundSequence() == 1U);
+  KIMIA_REQUIRE(request(server.port(), "GET", "/sound").body == "1 shot");
+  server.playSound("shot");
+  server.playSound("holed");
+  KIMIA_REQUIRE(server.soundSequence() == 3U);
+  KIMIA_REQUIRE(request(server.port(), "GET", "/sound").body == "3 holed");
+  // Re-registering replaces the bytes.
+  server.registerSound("shot", {7});
+  KIMIA_REQUIRE(request(server.port(), "GET", "/sfx/shot").body == std::string(1, '\x07'));
+  server.stop();
+}
+
 KIMIA_TEST(web_unknown_route_is_404) {
   kimia::web::Server server;
   KIMIA_REQUIRE(server.start(0, makeTestPage()));
@@ -187,6 +223,10 @@ KIMIA_TEST(web_make_page_contains_title_buttons_and_keymap) {
   KIMIA_REQUIRE(page.find("hint text") != std::string::npos);
   KIMIA_REQUIRE(page.find("/frame.png") != std::string::npos);
   KIMIA_REQUIRE(page.find("/stats") != std::string::npos);
+  // The sound poller and the gesture unlock are part of every page.
+  KIMIA_REQUIRE(page.find("/sound") != std::string::npos);
+  KIMIA_REQUIRE(page.find("'/sfx/'") != std::string::npos);
+  KIMIA_REQUIRE(page.find("pointerdown") != std::string::npos);
 }
 
 KIMIA_TEST(web_menu_default_empty) {

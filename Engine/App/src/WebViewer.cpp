@@ -192,7 +192,7 @@ std::string menuJson(const Menu& menu) {
 }  // namespace
 
 struct Server::Impl {
-  std::mutex mutex;
+  mutable std::mutex mutex;
   std::vector<u8> frame;
   bool hasFrame = false;
   std::string stats;
@@ -203,6 +203,9 @@ struct Server::Impl {
   f64 zoom = 0.0;
   std::string page;
   Menu menu;
+  std::map<std::string, std::vector<u8>> sounds;
+  std::string lastSound;
+  u64 soundSequence = 0U;
   int listenFd = -1;
   u16 boundPort = 0;
   std::thread acceptThread;
@@ -294,6 +297,19 @@ void handleConnection(int fd, Server::Impl* impl) {
   } else if (path == "/input" && method == "POST") {
     applyInputParams(impl, parseQuery(query));
     response = httpResponse(statusLine(200), "text/plain; charset=utf-8", "ok");
+  } else if (path == "/sound") {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    response = httpResponse(statusLine(200), "text/plain; charset=utf-8",
+                            std::to_string(impl->soundSequence) + " " + impl->lastSound);
+  } else if (path.rfind("/sfx/", 0) == 0) {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    const auto found = impl->sounds.find(path.substr(5U));
+    if (found != impl->sounds.end()) {
+      const std::string body(reinterpret_cast<const char*>(found->second.data()), found->second.size());
+      response = httpResponse(statusLine(200), "audio/wav", body);
+    } else {
+      response = httpResponse(statusLine(404), "text/plain; charset=utf-8", "no such sound");
+    }
   } else {
     response = httpResponse(statusLine(404), "text/plain; charset=utf-8", "not found");
   }
@@ -378,6 +394,23 @@ void Server::publishFrame(std::vector<u8> pngBytes, const std::string& statsLine
 void Server::setMenu(const Menu& menu) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->menu = menu;
+}
+
+void Server::registerSound(const std::string& name, std::vector<u8> wavBytes) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->sounds[name] = std::move(wavBytes);
+}
+
+void Server::playSound(const std::string& name) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (impl_->sounds.find(name) == impl_->sounds.end()) return;  // unknown cue: silently ignored
+  impl_->lastSound = name;
+  ++impl_->soundSequence;
+}
+
+u64 Server::soundSequence() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->soundSequence;
 }
 
 DrainedInput Server::drain() {
@@ -491,6 +524,20 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "setInterval(function(){img.src='/frame.png?t='+Date.now();},100);\n";
   out << "setInterval(function(){fetch('/stats').then(function(r){return r.text();}).then(function(t){"
          "document.getElementById('stats').textContent=t;}).catch(function(){});},500);\n";
+  // Sound cues: /sound = "<seq> <name>"; a new seq plays /sfx/<name>. Browsers
+  // only play after a user gesture, so cues before the first touch are skipped.
+  out << "var sfxSeq=-1,sfxCache={},sfxArmed=false;\n";
+  out << "function armSfx(){sfxArmed=true;}\n";
+  out << "window.addEventListener('pointerdown',armSfx,{once:true});\n";
+  out << "window.addEventListener('keydown',armSfx,{once:true});\n";
+  out << "function playSfx(name){if(!sfxArmed)return;var a=sfxCache[name];"
+         "if(!a){a=new Audio('/sfx/'+name);sfxCache[name]=a;}"
+         "try{a.currentTime=0;a.play().catch(function(){});}catch(e){}}\n";
+  out << "setInterval(function(){fetch('/sound').then(function(r){return r.text();}).then(function(t){\n";
+  out << "  var sp=t.indexOf(' ');if(sp<0)return;var seq=parseInt(t.slice(0,sp),10);var name=t.slice(sp+1);\n";
+  out << "  if(sfxSeq<0){sfxSeq=seq;return;}\n";  // first poll: sync, do not replay old cues
+  out << "  if(seq!==sfxSeq){sfxSeq=seq;if(name)playSfx(name);}\n";
+  out << "}).catch(function(){});},150);\n";
   if (!keymapJs.empty()) out << keymapJs << '\n';
   out << "</script>\n</body>\n</html>\n";
   return out.str();
