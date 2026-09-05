@@ -134,8 +134,35 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
       addGoalShape(scene, preview, cube);
       break;
     }
+    case ObjectKind::Hole: {
+      // The cup preview: a flat disc (a squashed sphere), drawn slightly
+      // above the ground so it is visible while placing.
+      const f64 radius = kimia::kWorldHoleRadius;
+      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, 0.03, ghost.z}) *
+                                            Mat4::scaling(Vec3{radius, 0.03, radius}),
+                               kGhostColor, 0.9});
+      break;
+    }
     default:
       break;
+  }
+}
+
+// Shot mode: a chain of small markers along the aim direction on the ground.
+// The chain grows with the charge, like the reference golf's indicator.
+void addAimIndicator(RenderScene& scene, const WorldEditor& editor, const MeshData& cube) {
+  if (!editor.shotMode() || !editor.playing() || !editor.ballAtRest()) return;
+  const Vec3 from = editor.ballPosition();
+  const Vec3 direction = editor.aimDirection();
+  const f64 reach = 1.0 + (editor.charging() ? editor.power() : 0.0) * 4.0;
+  const i32 count = 6;
+  for (i32 i = 1; i <= count; ++i) {
+    const f64 t = static_cast<f64>(i) / static_cast<f64>(count);
+    const Vec3 at = from + direction * (reach * t);
+    const f64 marker = 0.05 + 0.02 * (1.0 - t);
+    scene.objects.push_back(
+        {&cube, Mat4::translation(Vec3{at.x, marker * 0.5, at.z}) * Mat4::scaling(Vec3{marker, marker, marker}),
+         kGhostColor, 0.9});
   }
 }
 
@@ -186,8 +213,8 @@ int main(int argc, char** argv) {
   // r/b actions.
   const char* keymapJs =
       "var km={'1':'t:num1','2':'t:num2','3':'t:num3','4':'t:num4','5':'t:num5','6':'t:num6',"
-      "'7':'t:num7','8':'t:num8',"
-      "'r':'t:r','b':'t:b','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
+      "'7':'t:num7','8':'t:num8','9':'t:num9',"
+      "'r':'t:r','b':'t:b','j':'t:j',' ':'h:space','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
       "'ArrowRight':'h:right','Shift':'h:shift'};\n"
       "function kmd(e,down){var m=km[e.key];if(!m)return;e.preventDefault();"
       "if(m[0]==='h')post('key='+m.slice(2)+'&down='+(down?1:0));else if(down)post('tap='+m.slice(2));}\n"
@@ -197,7 +224,8 @@ int main(int argc, char** argv) {
   engine.server()->stop();
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
-      "everything is menus: tap 1-8 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
+      "everything is menus: tap 1-9 for the options, arrows move, Shift = fine, r resets, b opens the menu, "
+      "Space = jump (or hold to charge a shot)"));
   std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
               static_cast<i32>(engine.server()->port()), engine.glAvailable() ? "yes" : "no (software)",
               static_cast<i32>(editor.profileCount()));
@@ -240,9 +268,16 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Num6)) editor.choose(5);
     if (input.pressed(Key::Num7)) editor.choose(6);
     if (input.pressed(Key::Num8)) editor.choose(7);
+    if (input.pressed(Key::Num9)) editor.choose(8);
     if (input.pressed(Key::R)) editor.resetBall();
     if (input.pressed(Key::B)) editor.backToMenu();
-    if (input.pressed(Key::J) || input.pressed(Key::Space)) editor.jumpPressed();
+    if (editor.shotMode()) {
+      // Golf-style: hold Space (the «شوت» pad) to charge, release to shoot.
+      editor.setShootHeld(input.down(Key::Space));
+    } else {
+      editor.setShootHeld(false);
+      if (input.pressed(Key::J) || input.pressed(Key::Space)) editor.jumpPressed();
+    }
 
     f64 moveX = 0.0;
     f64 moveZ = 0.0;
@@ -316,8 +351,10 @@ int main(int argc, char** argv) {
     scene.objects.push_back(
         {&sphereMesh, Mat4::translation(editor.ballPosition()) * Mat4::scaling(Vec3{ballRadius, ballRadius, ballRadius}),
          editor.world().ball.color, 0.3});
-    // Ghost preview while placing, selection markers while managing.
+    // Ghost preview while placing, selection markers while managing, the
+    // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
+    addAimIndicator(scene, editor, cubeMesh);
     if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
       addSelectionMarkers(scene, *editor.selectedEntity(), cubeMesh);
     }

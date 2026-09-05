@@ -32,6 +32,19 @@ inline constexpr f64 kWorldGoalSmall = 2.0;
 inline constexpr f64 kWorldGoalMedium = 3.0;
 inline constexpr f64 kWorldGoalLarge = 4.0;
 inline constexpr f64 kWorldGoalHeight = 2.0;
+// Hole («سوراخ», golf scoring): the ball is in when its centre is within
+// kWorldHoleCapture of the cup centre AND slower than kWorldHoleCaptureSpeed —
+// the reference golf rule. Drawn as a flat dark disc of kWorldHoleRadius.
+inline constexpr f64 kWorldHoleRadius = 0.22;
+inline constexpr f64 kWorldHoleCapture = 0.28;
+inline constexpr f64 kWorldHoleCaptureSpeed = 5.0;
+inline constexpr f64 kWorldHoleDepth = 0.02;  // disc thickness (sits flush in the ground)
+// Shot mode («mode shot»): aim turns at this rate, the charge fills 0 -> 1
+// in 1/kWorldChargeRate seconds and wraps, and a rolling ball is "at rest"
+// below kWorldShotStopSpeed (the next shot is taken from there).
+inline constexpr f64 kWorldAimRate = 0.9;       // radians per second
+inline constexpr f64 kWorldChargeRate = 0.9;    // power per second
+inline constexpr f64 kWorldShotStopSpeed = 0.05;
 inline constexpr f64 kWorldPlaceSpeed = 2.0;       // ghost/move speed
 inline constexpr f64 kWorldPlaceSpeedFine = 0.5;   // with Shift (ریز)
 inline constexpr f64 kWorldNudgeStep = 0.1;        // inspector: position/scale per tap
@@ -40,8 +53,9 @@ inline constexpr f64 kWorldNudgeStep = 0.1;        // inspector: position/scale 
 // compatible — nothing extra is stored in the file):
 //   "Player" -> player, "Ball" -> ball, "Wall_*" -> wall,
 //   "Block_*" -> block, "Goal*" -> goal, "Crate_*" -> dynamic crate,
-//   "Model_*" -> placed mesh file (OBJ/FBX), anything else -> decoration.
-enum class ObjectKind { Player, Ball, Block, Wall, Goal, Crate, Model, Decoration };
+//   "Model_*" -> placed mesh file (OBJ/FBX), "Hole_*" -> golf cup,
+//   anything else -> decoration.
+enum class ObjectKind { Player, Ball, Block, Wall, Goal, Crate, Model, Hole, Decoration };
 
 ObjectKind objectKindForName(const std::string& name);
 bool isPhysicsObject(ObjectKind kind);           // block/wall/goal: static colliders
@@ -211,7 +225,23 @@ public:
   Vec3 ballVelocity() const;
   u32 score() const { return world_.score; }
 
+  // Shot mode (profile «mode shot», e.g. golf): the arrows aim, holding
+  // «شوت» charges, releasing shoots the resting ball. One shot = one stroke;
+  // a hole resets the stroke count. The aim direction is on the ground plane.
+  bool shotMode() const { return world_.profile.mode == PlayMode::Shot; }
+  bool holeScoring() const { return world_.profile.scoring == Scoring::Hole; }
+  void setShootHeld(bool held);           // hold to charge, release to shoot
+  bool charging() const { return charging_; }
+  bool ballAtRest() const;                // a shot can be taken
+  f64 aimYaw() const { return aimYaw_; }  // radians, 0 = toward -Z
+  Vec3 aimDirection() const;
+  f64 power() const { return power_; }    // 0..1 while charging (wraps)
+  u32 strokes() const { return strokes_; }
+  f64 shotSpeed(f64 power) const;         // kickBase + power * kickSpeedScale
+  usize holeCount() const;
+
   // Debug/test hooks.
+  void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
   void setPlayerPosition(const Vec3& position) {
     playerPos_ = position;
     physics_.resetCharacter(position);  // teleports keep the physics body in sync
@@ -234,6 +264,8 @@ private:
   Vec3 ballRest() const;
   Vec3 playerRest() const;
   f64 kickSpeed() const;  // profile.kickBase + playerSpeed * profile.kickSpeedScale
+  void shoot(f64 power);  // shot mode: launch the resting ball along the aim
+  bool captureHole(const Vec3& position, f64 speed);  // hole scoring: ball in a cup?
   void rebuildPhysics();
   void resetBallToCenter();
   void enterPlay();
@@ -262,6 +294,13 @@ private:
   bool fine_ = false;
   bool jumpQueued_ = false;
   f64 goalTimer_ = 0.0;
+
+  // Shot mode state.
+  f64 aimYaw_ = 0.0;
+  f64 power_ = 0.0;
+  bool charging_ = false;
+  bool shootHeld_ = false;
+  u32 strokes_ = 0U;
 
   // Pending object (place flow).
   ObjectKind pendingKind_ = ObjectKind::Block;

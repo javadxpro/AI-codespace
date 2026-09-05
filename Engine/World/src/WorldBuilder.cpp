@@ -26,6 +26,7 @@ constexpr f64 kWallColorB = 0.62;
 constexpr f64 kCrateColorR = 0.55;  // wooden crate brown
 constexpr f64 kCrateColorG = 0.40;
 constexpr f64 kCrateColorB = 0.25;
+constexpr f64 kHoleColor = 0.05;    // the cup reads as a dark disc in the ground
 
 u32 nameNumber(const std::string& name, const char* prefix) {
   const usize prefixLength = std::strlen(prefix);
@@ -115,6 +116,8 @@ std::string WorldEditor::managedKindName() const {
       return "crate";
     case ObjectKind::Model:
       return "model";
+    case ObjectKind::Hole:
+      return "hole";
     default:
       return "other";
   }
@@ -220,6 +223,20 @@ void WorldEditor::confirmPlace() {
       rebuildPhysics();
       break;
     }
+    case ObjectKind::Hole: {
+      // A cup: a flat dark disc (a squashed sphere entity) flush with the
+      // ground. It is a game marker, not a collider — the ball rolls over it
+      // unless it is slow enough to drop in (captureHole).
+      EntityData hole;
+      hole.name = "Hole_" + std::to_string(nextNumber(world_.scene, "Hole_"));
+      hole.mesh = MeshKind::sphere;
+      hole.transform.position = Vec3{ghost_.x, kWorldHoleDepth * 0.5, ghost_.z};
+      hole.transform.scale = Vec3{kWorldHoleRadius * 2.0, kWorldHoleDepth, kWorldHoleRadius * 2.0};
+      hole.color = Vec3{kHoleColor, kHoleColor, kHoleColor};
+      hole.roughness = 1.0;
+      world_.scene.create(hole);
+      break;
+    }
     case ObjectKind::Model: {
       EntityData model;
       model.name = "Model_" + std::to_string(nextNumber(world_.scene, "Model_"));
@@ -296,6 +313,7 @@ void WorldEditor::nudgeSelectedPosition(f64 dx, f64 dy, f64 dz) {
 void WorldEditor::nudgeSelectedScale(f64 delta) {
   EntityData* entity = selectedEntity() != nullptr ? world_.scene.get(managed_[managedIndex_]) : nullptr;
   if (entity == nullptr) return;
+  if (objectKindForName(entity->name) == ObjectKind::Hole) return;  // a cup has one size (the capture rule)
   const f64 value = std::clamp(entity->transform.scale.x + delta, kWorldNudgeStep, 10.0);
   entity->transform.scale = Vec3{value, value, value};
   rebuildPhysics();
@@ -354,12 +372,18 @@ std::string WorldEditor::menuTitle() const {
     case Screen::AskEnvironment:
       return "محیط: چه فضایی؟";
     case Screen::Play:
+      if (shotMode()) {
+        if (charging_) return "شوت: رها کن تا بزنی — قدرت " + std::to_string(static_cast<i32>(power_ * 100.0)) + "٪";
+        if (!ballAtRest()) return "توپ می‌رود…";
+        return "نشانه بگیر (← →) و «شوت» را نگه دار";
+      }
       return "در حال بازی — با جهت‌ها حرکت کن";
     case Screen::AskModelFile:
       return "مدل از فایل: کدام فایل؟";
     case Screen::AskModelSize:
       return "مدل: چه اندازه‌ای؟";
     default:
+      if (holeScoring()) return "رفت تو سوراخ! ضربه‌ها: " + std::to_string(strokes_);
       return "گل شد!";
   }
 }
@@ -371,7 +395,7 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::Builder:
       return {"افزودن جسم", "مدیریت اجسام", "محیط", "بازی (PLAY)", "ذخیره", "منوی اصلی"};
     case Screen::Catalog:
-      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "مدل از فایل", "بازگشت"};
+      return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "مدل از فایل", "سوراخ", "بازگشت"};
     case Screen::AskProfile: {
       // The games this engine can make: 5 per screen + more/back.
       std::vector<std::string> labels;
@@ -461,6 +485,7 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
   }
   if (!playing() && screen_ != Screen::Place && screen_ != Screen::Move) return {};
   if (playing()) {
+    if (shotMode()) return {{"← نشانه", "left"}, {"نشانه →", "right"}, {"شوت (نگه دار)", "space"}};
     return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}};
   }
   return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}, {"ریز", "shift"}};
@@ -471,6 +496,7 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
     return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
   }
   if (!playing()) return {};
+  if (shotMode()) return {{"توپ از نو", "r"}, {"منو", "b"}};
   return {{"پرش", "j"}, {"توپ از نو", "r"}, {"منو", "b"}};
 }
 
@@ -567,6 +593,11 @@ void WorldEditor::choose(i32 optionIndex) {
         refreshImportFiles();
         screen_ = Screen::AskModelFile;
       } else if (optionIndex == 7) {
+        // سوراخ: the golf cup, fixed size — no question.
+        pendingKind_ = ObjectKind::Hole;
+        pendingSize_ = kWorldHoleRadius * 2.0;
+        beginPlace();
+      } else if (optionIndex == 8) {
         screen_ = Screen::Builder;
       }
       break;

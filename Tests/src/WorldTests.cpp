@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -154,14 +156,17 @@ KIMIA_TEST(world_create_project_gives_empty_ground) {
   KIMIA_REQUIRE(!editor.hasWorld());
   KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // main menu
   editor.choose(0);
-  // «دنیای جدید» asks which game first: the 4 built-ins + «بازگشت».
+  // «دنیای جدید» asks which game first: the 5 built-ins + «بازگشت»
+  // (exactly one page: 5 games + back).
   KIMIA_REQUIRE(!editor.hasWorld());
   KIMIA_REQUIRE(editor.choosingProfile());
   KIMIA_REQUIRE(editor.menuTitle() == "دنیای جدید: کدام بازی؟");
-  KIMIA_REQUIRE(editor.optionLabels().size() == 5U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "فوتبال خیابونی ایران: کوی ابوذر");
-  KIMIA_REQUIRE(editor.optionLabels()[3] == "زمین آزاد");
-  editor.choose(3);  // زمین آزاد
+  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "گلف کیمیا");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "فوتبال خیابونی ایران: کوی ابوذر");
+  KIMIA_REQUIRE(editor.optionLabels()[4] == "زمین آزاد");
+  KIMIA_REQUIRE(editor.optionLabels()[5] == "بازگشت");
+  editor.choose(4);  // زمین آزاد
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.world().name == "MyWorld");
   KIMIA_REQUIRE(editor.profile().name == "sandbox");
@@ -797,7 +802,7 @@ KIMIA_TEST(world_ball_cannot_leave_floor) {
 KIMIA_TEST(world_catalog_places_crate) {
   WorldEditor editor = editorWithWorld();
   editor.choose(0);  // catalog
-  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);  // ...جعبه و «مدل از فایل» joined the list
+  KIMIA_REQUIRE(editor.optionLabels().size() == 9U);  // ...جعبه، «مدل از فایل» و «سوراخ» joined the list
   editor.choose(5);  // جعبه
   KIMIA_REQUIRE(editor.placing());
   KIMIA_REQUIRE(editor.ghostKind() == kimia::ObjectKind::Crate);
@@ -946,7 +951,7 @@ KIMIA_TEST(world_import_file_list_pages_and_empty_dir) {
   KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // 2 files + بازگشت
   KIMIA_REQUIRE(editor.optionLabels()[2] == "بازگشت");
   editor.choose(2);  // back to the catalog
-  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);
+  KIMIA_REQUIRE(editor.optionLabels().size() == 9U);
 
   // Empty directory: the list screen shows only «بازگشت».
   const std::string emptyDir = std::string(KIMIA_TEST_TMP) + "/imports_empty";
@@ -957,7 +962,7 @@ KIMIA_TEST(world_import_file_list_pages_and_empty_dir) {
   KIMIA_REQUIRE(editor.optionLabels().size() == 1U);
   KIMIA_REQUIRE(editor.optionLabels()[0] == "بازگشت");
   editor.choose(0);
-  KIMIA_REQUIRE(editor.optionLabels().size() == 8U);  // catalog again
+  KIMIA_REQUIRE(editor.optionLabels().size() == 9U);  // catalog again
 }
 
 KIMIA_TEST(world_ball_spawns_above_overlapping_objects) {
@@ -1205,7 +1210,7 @@ KIMIA_TEST(world_old_file_takes_field_from_its_ground) {
 }
 
 KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
-  // Seven user profiles + 4 built-ins = 11 games -> 3 pages of 5.
+  // Seven user profiles + 5 built-ins = 12 games -> 3 pages of 5.
   const std::string dir = tmpPath("many_profiles");
   const int created = ::mkdir(dir.c_str(), 0755);
   static_cast<void>(created == 0 || errno == EEXIST);
@@ -1236,23 +1241,26 @@ KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
   }
   WorldEditor editor;
   editor.setProfileDirectory(dir);
-  KIMIA_REQUIRE(editor.profileCount() == 11U);
-  KIMIA_REQUIRE(editor.profileAt(0).name == "street");  // still first
-  KIMIA_REQUIRE(editor.profileAt(0).title == "خیابونی من");
-  KIMIA_REQUIRE(near(editor.profileAt(0).fieldWidth, 6.0));
+  KIMIA_REQUIRE(editor.profileCount() == 12U);
+  KIMIA_REQUIRE(editor.profileAt(0).name == "golf");    // build order: golf first
+  KIMIA_REQUIRE(editor.profileAt(1).name == "street");  // still second, retuned in place
+  KIMIA_REQUIRE(editor.profileAt(1).title == "خیابونی من");
+  KIMIA_REQUIRE(near(editor.profileAt(1).fieldWidth, 6.0));
   editor.choose(0);  // دنیای جدید
   KIMIA_REQUIRE(editor.choosingProfile());
   KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // 5 + بیشتر…
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "خیابونی من");
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "گلف کیمیا");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "خیابونی من");
   KIMIA_REQUIRE(editor.optionLabels()[5] == "بیشتر…");
-  editor.choose(5);  // page 2
+  editor.choose(5);  // page 2: custom0..custom4
   KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 1");
-  editor.choose(5);  // page 3: one game + بازگشت
-  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 6");
-  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازگشت");
-  editor.choose(0);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 0");
+  editor.choose(5);  // page 3: two games + بازگشت
+  KIMIA_REQUIRE(editor.optionLabels().size() == 3U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 5");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازی سفارشی 6");
+  KIMIA_REQUIRE(editor.optionLabels()[2] == "بازگشت");
+  editor.choose(1);
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.profile().name == "custom6");
   KIMIA_REQUIRE(near(editor.world().halfLength(), 8.0));  // (10 + 6) / 2
@@ -1262,7 +1270,325 @@ KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
   again.choose(0);
   again.choose(5);
   again.choose(5);
-  again.choose(1);  // بازگشت
+  again.choose(2);  // بازگشت
   KIMIA_REQUIRE(!again.hasWorld());
   KIMIA_REQUIRE(again.optionLabels().size() == 3U);  // main menu
+}
+
+// ---------------------------------------------------------------------------
+// Golf on KIMIA World: shot mode + hole scoring (profile «golf»).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Builder(0) -> Catalog(7) «سوراخ» -> Place at the ghost -> placed (no question).
+void addHole(WorldEditor& editor, const Vec3& ghost) {
+  editor.choose(0);  // catalog
+  editor.choose(7);  // سوراخ
+  editor.setGhostPosition(ghost);
+  editor.choose(0);  // place
+}
+
+// The catalog «توپ» entry places the ball without a question in golf.
+void addGolfBall(WorldEditor& editor, const Vec3& ghost) {
+  editor.choose(0);  // catalog
+  editor.choose(1);  // توپ -> straight to Place (choice off)
+  editor.setGhostPosition(ghost);
+  editor.choose(0);  // place
+}
+
+// Hold «شوت» for `seconds`, then release: power = seconds * kWorldChargeRate.
+void chargeAndShoot(WorldEditor& editor, f64 seconds) {
+  editor.setShootHeld(true);
+  const f64 step = 1.0 / 120.0;
+  f64 held = 0.0;
+  while (held + step <= seconds + 1e-12) {
+    editor.update(step);
+    held += step;
+  }
+  editor.setShootHeld(false);
+  editor.update(step);  // the release frame fires the shot
+}
+
+}  // namespace
+
+KIMIA_TEST(world_golf_profile_builds_a_shot_mode_world) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  KIMIA_REQUIRE(editor.hasWorld());
+  KIMIA_REQUIRE(editor.shotMode());
+  KIMIA_REQUIRE(editor.holeScoring());
+  KIMIA_REQUIRE(editor.menuTitle() == "MyWorld (گلف کیمیا) — سازنده");
+  KIMIA_REQUIRE(near(editor.world().halfLength(), 12.0));
+  KIMIA_REQUIRE(near(editor.world().halfWidth(), 5.0));
+  KIMIA_REQUIRE(editor.world().ball.type == BallType::Accurate);
+  KIMIA_REQUIRE(near(editor.world().ball.radius, kGolfBallRadius));
+  KIMIA_REQUIRE(near(editor.world().ball.rollingFriction, kGolfBallRollingFriction));
+  // The catalog now offers the cup; golf never asks which ball.
+  editor.choose(0);
+  const std::vector<std::string> catalog = editor.optionLabels();
+  KIMIA_REQUIRE(catalog.size() == 9U);
+  KIMIA_REQUIRE(catalog[7] == "سوراخ");
+  KIMIA_REQUIRE(catalog[8] == "بازگشت");
+  editor.choose(8);  // back to the builder
+  addHole(editor, Vec3{0.0, 0.0, -7.0});
+  exitPlace(editor);
+  KIMIA_REQUIRE(editor.holeCount() == 1U);
+  const EntityData* hole = editor.world().scene.get(editor.world().scene.find("Hole_1"));
+  KIMIA_REQUIRE(hole != nullptr);
+  KIMIA_REQUIRE(near3(hole->transform.position, Vec3{0.0, kimia::kWorldHoleDepth * 0.5, -7.0}));
+  KIMIA_REQUIRE(near(hole->transform.scale.x, kimia::kWorldHoleRadius * 2.0));
+  KIMIA_REQUIRE(kimia::objectKindForName("Hole_1") == kimia::ObjectKind::Hole);
+  KIMIA_REQUIRE(!kimia::isPhysicsObject(kimia::ObjectKind::Hole));  // the ball rolls over it
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 0U);
+  // Shot-mode pads: aim left/right + hold-to-shoot; no jump.
+  addGolfBall(editor, Vec3{0.0, 0.0, 7.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.playing());
+  const auto holds = editor.holdPad();
+  KIMIA_REQUIRE(holds.size() == 3U);
+  KIMIA_REQUIRE(holds[2].second == "space");
+  const auto taps = editor.tapPad();
+  KIMIA_REQUIRE(taps.size() == 2U);
+  KIMIA_REQUIRE(taps[0].second == "r");
+  KIMIA_REQUIRE(editor.menuTitle() == "نشانه بگیر (← →) و «شوت» را نگه دار");
+  KIMIA_REQUIRE(editor.statsLine().find("| stroke 0 | power 0%") != std::string::npos);
+}
+
+KIMIA_TEST(world_golf_aim_charge_and_shot_use_the_profile_numbers) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addGolfBall(editor, Vec3{0.0, 0.0, 7.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.ballAtRest());
+  KIMIA_REQUIRE(near(editor.aimYaw(), 0.0));
+  KIMIA_REQUIRE(near3(editor.aimDirection(), Vec3{0.0, 0.0, -1.0}));
+  // Holding «→» turns the aim clockwise at kWorldAimRate; the ball waits.
+  editor.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 60; ++i) editor.update(1.0 / 120.0);  // 0.5 s
+  editor.setMoveInput(0.0, 0.0);
+  KIMIA_REQUIRE(near(editor.aimYaw(), -0.5 * kimia::kWorldAimRate, 1e-9));
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 7.0}, 1e-6));
+  editor.setAimYaw(0.0);
+  // Charging: power climbs at kWorldChargeRate and wraps at 1.
+  editor.setShootHeld(true);
+  editor.update(0.5);
+  KIMIA_REQUIRE(editor.charging());
+  KIMIA_REQUIRE(near(editor.power(), 0.5 * kimia::kWorldChargeRate));
+  KIMIA_REQUIRE(editor.menuTitle().rfind("شوت: رها کن تا بزنی — قدرت ", 0) == 0);
+  editor.update(1.0);  // 0.45 + 0.9 = 1.35 -> wraps to 0.35
+  KIMIA_REQUIRE(near(editor.power(), 1.35 - 1.0, 1e-9));
+  // Release: the ball leaves at kickBase + power * kickSpeedScale along the aim.
+  const f64 power = editor.power();
+  editor.setShootHeld(false);
+  editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!editor.charging());
+  KIMIA_REQUIRE(editor.strokes() == 1U);
+  KIMIA_REQUIRE(!editor.ballAtRest());
+  const f64 expected = 2.5 + power * 13.5;
+  KIMIA_REQUIRE(near(editor.shotSpeed(power), expected));
+  KIMIA_REQUIRE(editor.ballVelocity().z < 0.0);
+  KIMIA_REQUIRE(near(editor.ballVelocity().x, 0.0, 1e-9));
+  // One physics frame of rolling friction has already acted: speed is just under the launch speed.
+  KIMIA_REQUIRE(editor.ballVelocity().length() < expected);
+  KIMIA_REQUIRE(editor.ballVelocity().length() > expected - 0.1);
+  // A rolling ball cannot be hit again: holding the button does nothing.
+  editor.setShootHeld(true);
+  editor.update(0.2);
+  KIMIA_REQUIRE(!editor.charging());
+  KIMIA_REQUIRE(editor.strokes() == 1U);
+  editor.setShootHeld(false);
+  KIMIA_REQUIRE(editor.statsLine().find("| stroke 1 |") != std::string::npos);
+  // The ball comes to rest and the next shot starts from THERE (not the tee).
+  for (i32 i = 0; i < 120 * 10 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.ballAtRest());
+  const Vec3 rest = editor.ballPosition();
+  KIMIA_REQUIRE(rest.z < 6.0);  // it moved a real distance down the fairway
+  chargeAndShoot(editor, 0.2);   // a tap: power 0.18 -> ~4.9 m/s
+  KIMIA_REQUIRE(editor.strokes() == 2U);
+  editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.ballPosition().z < rest.z);  // continues from the rest spot
+}
+
+KIMIA_TEST(world_golf_reference_shot_holes_out_and_resets_strokes) {
+  // The reference golf's proof shot: aim 0, power 0.61, tee 14 m from the cup.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -7.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 7.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setShootHeld(true);
+  // 0.61 / 0.9 s of charging, in exact 1/120 steps (power accumulates per frame).
+  f64 power = 0.0;
+  while (power + kimia::kWorldChargeRate / 120.0 <= 0.61) {
+    editor.update(1.0 / 120.0);
+    power += kimia::kWorldChargeRate / 120.0;
+  }
+  KIMIA_REQUIRE(near(editor.power(), power, 1e-9));
+  editor.setShootHeld(false);
+  editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.strokes() == 1U);
+  bool holed = false;
+  for (i32 i = 0; i < 120 * 60; ++i) {
+    editor.update(1.0 / 120.0);
+    if (editor.celebrating()) {
+      holed = true;
+      break;
+    }
+    if (editor.ballAtRest()) break;  // stopped short: no capture
+  }
+  KIMIA_REQUIRE(holed);
+  KIMIA_REQUIRE(editor.score() == 1U);
+  KIMIA_REQUIRE(editor.menuTitle() == "رفت تو سوراخ! ضربه‌ها: 1");
+  KIMIA_REQUIRE(editor.statsLine().find("| GOAL |") != std::string::npos);
+  // While celebrating the ball sits in the cup.
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -7.0}, 1e-9));
+  editor.update(0.5);
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -7.0}, 1e-9));
+  // After the celebration: back to the tee with a fresh stroke count.
+  editor.update(2.0);
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(editor.strokes() == 0U);
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, 7.0}, 1e-9));
+  KIMIA_REQUIRE(editor.ballAtRest());
+}
+
+KIMIA_TEST(world_golf_cup_needs_a_slow_ball) {
+  // Constant-force rolling friction: a = (0.25 + 0.15) * g = 3.924 m/s^2, so a
+  // ball launched at v from d metres reaches the cup at sqrt(v^2 - 2 a d).
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -7.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, -6.5});  // 0.5 m from the cup
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  // Too fast: 8 m/s arrives at ~7.75 m/s and rolls over (capture needs < 5 m/s).
+  editor.setBallVelocity(Vec3{0.0, 0.0, -8.0});
+  bool captured = false;
+  for (i32 i = 0; i < 120 && !captured; ++i) {
+    editor.update(1.0 / 120.0);
+    captured = editor.celebrating();
+  }
+  KIMIA_REQUIRE(!captured);
+  KIMIA_REQUIRE(editor.ballPosition().z < -7.3);  // it went past
+  KIMIA_REQUIRE(editor.score() == 0U);
+  // Gentle: 3 m/s arrives at ~2.26 m/s and drops in.
+  editor.resetBall();
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kGolfBallRadius, -6.5}, 1e-9));
+  editor.setBallVelocity(Vec3{0.0, 0.0, -3.0});
+  for (i32 i = 0; i < 240 && !captured; ++i) {
+    editor.update(1.0 / 120.0);
+    captured = editor.celebrating();
+  }
+  KIMIA_REQUIRE(captured);
+  KIMIA_REQUIRE(editor.score() == 1U);
+  // Too weak: 1 m/s stops after v^2 / (2a) = 0.127 m — short of the cup.
+  WorldEditor weak;
+  createWorldFor(weak, "golf");
+  addHole(weak, Vec3{0.0, 0.0, -7.0});
+  exitPlace(weak);
+  addGolfBall(weak, Vec3{0.0, 0.0, -6.5});
+  exitPlace(weak);
+  weak.choose(3);
+  weak.setBallVelocity(Vec3{0.0, 0.0, -1.0});
+  for (i32 i = 0; i < 240; ++i) weak.update(1.0 / 120.0);
+  KIMIA_REQUIRE(!weak.celebrating());
+  KIMIA_REQUIRE(weak.ballAtRest());
+  KIMIA_REQUIRE(near(weak.ballPosition().z, -6.5 - 1.0 / (2.0 * 0.40 * 9.81), 0.02));
+  // Distance rule: passing 0.3 m beside the cup is not in (0.28 capture radius).
+  WorldEditor beside;
+  createWorldFor(beside, "golf");
+  addHole(beside, Vec3{0.0, 0.0, -7.0});
+  exitPlace(beside);
+  addGolfBall(beside, Vec3{0.3, 0.0, -6.5});
+  exitPlace(beside);
+  beside.choose(3);
+  beside.setBallVelocity(Vec3{0.0, 0.0, -3.0});
+  bool besideCaptured = false;
+  for (i32 i = 0; i < 480 && !besideCaptured; ++i) {
+    beside.update(1.0 / 120.0);
+    besideCaptured = beside.celebrating();
+  }
+  KIMIA_REQUIRE(!besideCaptured);
+  KIMIA_REQUIRE(beside.ballPosition().z < -7.3);  // rolled past, beside the cup
+  KIMIA_REQUIRE(beside.score() == 0U);
+}
+
+KIMIA_TEST(world_golf_world_file_keeps_mode_scoring_and_holes) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{1.5, 0.0, -5.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  const std::string path = tmpPath("golf_world.kimia");
+  std::string error;
+  KIMIA_REQUIRE(editor.saveWorld(path, error));
+  std::string text;
+  {
+    std::ifstream file(path, std::ios::binary);
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    text = buffer.str();
+  }
+  KIMIA_REQUIRE(text.find("# profile mode shot\n") != std::string::npos);
+  KIMIA_REQUIRE(text.find("# profile scoring hole\n") != std::string::npos);
+  KIMIA_REQUIRE(text.find("e \"Hole_1\" mesh sphere pos 1.5 0.01 -5") != std::string::npos);
+  // Reload (no profile directory needed): still golf, still shot mode, cup intact.
+  WorldEditor reloaded;
+  reloaded.setProfileDirectory(tmpPath("no_such_profiles"));
+  KIMIA_REQUIRE(reloaded.loadWorld(path, error));
+  KIMIA_REQUIRE(reloaded.profile().name == "golf");
+  KIMIA_REQUIRE(reloaded.shotMode());
+  KIMIA_REQUIRE(reloaded.holeScoring());
+  KIMIA_REQUIRE(reloaded.holeCount() == 1U);
+  KIMIA_REQUIRE(reloaded.managedCount() == 0U);  // (manage list is built on demand)
+  // Byte-identical save of the reload.
+  std::string again;
+  KIMIA_REQUIRE(WorldIO::save(reloaded.world(), again));
+  KIMIA_REQUIRE(again == text);
+  // A pre-stage-20 world file (no mode/scoring lines) is a kick/gate world.
+  WorldEditor old;
+  const std::string oldPath = tmpPath("old_kick_world.kimia");
+  {
+    std::ofstream file(oldPath, std::ios::binary);
+    file << "# KIMIA scene v1\n# world name Old\n# profile name street\n"
+         << "e \"Ground\" mesh plane pos 0 0 0 scale 5 1 16 color 0.3 0.3 0.32 rough 0.95\n";
+  }
+  KIMIA_REQUIRE(old.loadWorld(oldPath, error));
+  KIMIA_REQUIRE(!old.shotMode());
+  KIMIA_REQUIRE(!old.holeScoring());
+}
+
+KIMIA_TEST(world_football_profile_can_also_use_a_cup) {
+  // The cup is an engine feature, not a golf-only one: a street world with a
+  // hole and «scoring hole» would score it too — here the plain street
+  // profile keeps gate scoring, so a ball in the cup is NOT a score.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addHole(editor, Vec3{0.0, 0.0, -3.0});
+  exitPlace(editor);
+  addPlayer(editor, 1, Vec3{0.0, 0.0, 2.0});
+  exitPlace(editor);
+  editor.choose(0);
+  editor.choose(1);  // توپ (no question in street)
+  editor.setGhostPosition(Vec3{0.0, 0.0, -2.5});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(!editor.shotMode());
+  KIMIA_REQUIRE(!editor.holeScoring());
+  editor.setBallVelocity(Vec3{0.0, 0.0, -1.0});
+  for (i32 i = 0; i < 240; ++i) editor.update(1.0 / 120.0);
+  KIMIA_REQUIRE(editor.score() == 0U);
+  KIMIA_REQUIRE(!editor.celebrating());
+  // The runner still works in the same world (kick mode untouched).
+  KIMIA_REQUIRE(editor.holdPad().size() == 4U);
+  KIMIA_REQUIRE(editor.tapPad()[0].second == "j");
 }

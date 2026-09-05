@@ -11,7 +11,7 @@ namespace kimia {
 
 namespace {
 
-constexpr f64 kGoalCelebration = 2.0;  // seconds after a goal
+constexpr f64 kGoalCelebration = 2.0;  // seconds after a goal (or a holed ball)
 constexpr f64 kKickMaxSpeed = 8.0;     // a ball rolling faster is not re-kicked
 constexpr f64 kMoveEpsilon = 1e-6;
 constexpr f64 kPlayerMargin = 0.6;  // keep the player inside the floor
@@ -115,6 +115,7 @@ ObjectKind objectKindForName(const std::string& name) {
   if (name.rfind("Goal", 0) == 0) return ObjectKind::Goal;
   if (name.rfind("Crate_", 0) == 0) return ObjectKind::Crate;
   if (name.rfind("Model_", 0) == 0) return ObjectKind::Model;
+  if (name.rfind("Hole_", 0) == 0) return ObjectKind::Hole;
   return ObjectKind::Decoration;
 }
 
@@ -363,6 +364,11 @@ void WorldEditor::enterPlay() {
   jumpQueued_ = false;
   moveInput_ = Vec3{0.0, 0.0, 0.0};
   goalTimer_ = 0.0;
+  aimYaw_ = 0.0;
+  power_ = 0.0;
+  charging_ = false;
+  shootHeld_ = false;
+  strokes_ = 0U;
   // Rebuild the physics world: the ball and every crate reset to their
   // placed spots and velocities.
   rebuildPhysics();
@@ -394,6 +400,78 @@ void WorldEditor::update(f64 hostSeconds) {
       }
     }
     resetBallToCenter();
+    return;
+  }
+  if (screen == 15 && shotMode()) {  // Play, shot mode (golf): aim / charge / roll
+    SphereBody* ball = physics_.sphere(ballId_);
+    const bool resting = ballAtRest();
+    if (resting) {
+      // Left/right turn the aim; the ball waits exactly where it stopped.
+      aimYaw_ -= moveInput_.x * kWorldAimRate * hostSeconds;
+      if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
+      if (shootHeld_ && !charging_) {
+        charging_ = true;
+        power_ = 0.0;
+      }
+      if (charging_) {
+        if (shootHeld_) {
+          power_ += kWorldChargeRate * hostSeconds;
+          while (power_ >= 1.0) power_ -= 1.0;
+        } else {
+          shoot(power_);
+        }
+      }
+    } else {
+      charging_ = false;  // a moving ball cannot be hit; the button is ignored
+    }
+    const Vec3 previous = ballPosition();
+    physics_.advance(hostSeconds);
+    ball = physics_.sphere(ballId_);
+    if (ball != nullptr) {
+      const f64 ballBoundX = world_.halfWidth() - world_.ball.radius;
+      const f64 ballBoundZ = world_.halfLength() - world_.ball.radius;
+      if (ball->position.x > ballBoundX) {
+        ball->position.x = ballBoundX;
+        if (ball->velocity.x > 0.0) ball->velocity.x = 0.0;
+      } else if (ball->position.x < -ballBoundX) {
+        ball->position.x = -ballBoundX;
+        if (ball->velocity.x < 0.0) ball->velocity.x = 0.0;
+      }
+      if (ball->position.z > ballBoundZ) {
+        ball->position.z = ballBoundZ;
+        if (ball->velocity.z > 0.0) ball->velocity.z = 0.0;
+      } else if (ball->position.z < -ballBoundZ) {
+        ball->position.z = -ballBoundZ;
+        if (ball->velocity.z < 0.0) ball->velocity.z = 0.0;
+      }
+      // Rolling is over below the stop speed: the ball rests for the next shot.
+      if (!resting && ball->velocity.length() < kWorldShotStopSpeed && ball->position.y <= world_.ball.radius + 1e-3) {
+        ball->velocity = Vec3{0.0, 0.0, 0.0};
+      }
+    }
+    const Vec3 position = ballPosition();
+    if (holeScoring()) {
+      if (captureHole(position, ballVelocity().length())) {
+        ++world_.score;
+        screen_ = Screen::Goal;
+        goalTimer_ = kGoalCelebration;
+      }
+    } else {
+      std::map<std::string, GoalGroup> goals;
+      scanGoals(world_.scene, goals);
+      for (const auto& entry : goals) {
+        const GoalGroup& goal = entry.second;
+        if (!goal.valid()) continue;
+        if (previous.z >= goal.z() && position.z < goal.z() && std::abs(position.x - goal.x()) < goal.width() * 0.5 &&
+            position.y < goal.height()) {
+          ++world_.score;
+          screen_ = Screen::Goal;
+          goalTimer_ = kGoalCelebration;
+          if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
+          break;
+        }
+      }
+    }
     return;
   }
   if (screen == 15) {  // Play
@@ -522,6 +600,15 @@ void WorldEditor::update(f64 hostSeconds) {
     }
 
     const Vec3 position = ballPosition();
+    if (holeScoring()) {
+      // Hole scoring with a runner: kick the ball slowly into the cup.
+      if (captureHole(position, ballVelocity().length())) {
+        ++world_.score;
+        screen_ = Screen::Goal;
+        goalTimer_ = kGoalCelebration;
+      }
+      return;
+    }
     // Goal capture: the ball crosses a goal plane going -Z, inside the
     // posts and below the bar.
     std::map<std::string, GoalGroup> goals;
@@ -540,11 +627,20 @@ void WorldEditor::update(f64 hostSeconds) {
     }
     return;
   }
-  if (screen == 16) {  // Goal celebration
-    physics_.advance(hostSeconds);
+  if (screen == 16) {  // Goal celebration (a goal, or a holed ball)
+    if (holeScoring()) {
+      // The ball sits in the cup while we celebrate.
+      SphereBody* ball = physics_.sphere(ballId_);
+      if (ball != nullptr) ball->velocity = Vec3{0.0, 0.0, 0.0};
+    } else {
+      physics_.advance(hostSeconds);
+    }
     goalTimer_ -= hostSeconds;
     if (goalTimer_ <= 0.0) {
       resetBallToCenter();
+      strokes_ = 0U;  // a new hole starts at zero strokes
+      charging_ = false;
+      power_ = 0.0;
       screen_ = Screen::Play;
     }
     return;
@@ -556,7 +652,68 @@ void WorldEditor::update(f64 hostSeconds) {
 void WorldEditor::resetBall() {
   resetBallToCenter();
   goalTimer_ = 0.0;
+  charging_ = false;
+  power_ = 0.0;
   if (screen_ == Screen::Goal) screen_ = Screen::Play;
+}
+
+// --- Shot mode ---
+
+void WorldEditor::setShootHeld(bool held) { shootHeld_ = held; }
+
+bool WorldEditor::ballAtRest() const {
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return true;
+  return ball->velocity.length() < kWorldShotStopSpeed && ball->position.y <= world_.ball.radius + 1e-3;
+}
+
+Vec3 WorldEditor::aimDirection() const { return Vec3{-std::sin(aimYaw_), 0.0, -std::cos(aimYaw_)}; }
+
+f64 WorldEditor::shotSpeed(f64 power) const {
+  return world_.profile.kickBase + std::min(1.0, std::max(0.0, power)) * world_.profile.kickSpeedScale;
+}
+
+void WorldEditor::shoot(f64 power) {
+  SphereBody* ball = physics_.sphere(ballId_);
+  charging_ = false;
+  if (ball == nullptr) return;
+  ball->velocity = aimDirection() * shotSpeed(power) + Vec3{0.0, world_.profile.kickUp, 0.0};
+  ++strokes_;
+  power_ = 0.0;
+}
+
+// Hole capture: within kWorldHoleCapture of a cup centre (horizontally) and
+// slower than kWorldHoleCaptureSpeed — a fast ball rolls over the cup. The
+// ball is parked in the cup so the render shows it there.
+bool WorldEditor::captureHole(const Vec3& position, f64 speed) {
+  if (speed >= kWorldHoleCaptureSpeed) return false;
+  bool captured = false;
+  Vec3 cup{0.0, 0.0, 0.0};
+  world_.scene.forEach([&](EntityHandle, const EntityData& entity) {
+    if (captured || objectKindForName(entity.name) != ObjectKind::Hole) return;
+    const f64 dx = position.x - entity.transform.position.x;
+    const f64 dz = position.z - entity.transform.position.z;
+    if (std::sqrt(dx * dx + dz * dz) < kWorldHoleCapture) {
+      captured = true;
+      cup = entity.transform.position;
+    }
+  });
+  if (captured) {
+    SphereBody* ball = physics_.sphere(ballId_);
+    if (ball != nullptr) {
+      ball->position = Vec3{cup.x, world_.ball.radius, cup.z};
+      ball->velocity = Vec3{0.0, 0.0, 0.0};
+    }
+  }
+  return captured;
+}
+
+usize WorldEditor::holeCount() const {
+  usize count = 0U;
+  world_.scene.forEach([&count](EntityHandle, const EntityData& entity) {
+    if (objectKindForName(entity.name) == ObjectKind::Hole) ++count;
+  });
+  return count;
 }
 
 void WorldEditor::backToMenu() {
@@ -595,6 +752,9 @@ std::string WorldEditor::statsLine() const {
        << " | game " << world_.profile.name << " | player " << playerSpeedName(world_.player.speed)
        << " | ball " << ballTypeName(world_.ball.type) << " | env " << environmentName(world_.environment)
        << " | score " << world_.score << " | objects " << objectCount();
+  if (shotMode()) {
+    line << " | stroke " << strokes_ << " | power " << static_cast<i32>(power_ * 100.0) << "%";
+  }
   if (!lastError_.empty()) line << " | note " << lastError_;
   return line.str();
 }
