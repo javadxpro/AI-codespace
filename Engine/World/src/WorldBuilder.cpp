@@ -60,6 +60,16 @@ bool hasExtension(const std::string& name, const char* ext) {
 
 }  // namespace
 
+void WorldEditor::setProfileDirectory(const std::string& dir) {
+  profileDir_ = dir;
+  refreshProfiles();
+}
+
+void WorldEditor::refreshProfiles() {
+  profiles_ = loadProfiles(profileDir_);
+  if (profilePage_ * 5U >= profiles_.size()) profilePage_ = 0U;
+}
+
 void WorldEditor::refreshImportFiles() {
   importFiles_.clear();
   DIR* dir = ::opendir(importDir_.c_str());
@@ -275,10 +285,11 @@ void WorldEditor::selectManagedAt(usize listIndex) {
 void WorldEditor::nudgeSelectedPosition(f64 dx, f64 dy, f64 dz) {
   EntityData* entity = selectedEntity() != nullptr ? world_.scene.get(managed_[managedIndex_]) : nullptr;
   if (entity == nullptr) return;
-  const f64 bound = kWorldFloorHalf - 0.5;
-  entity->transform.position.x = std::clamp(entity->transform.position.x + dx, -bound, bound);
+  const f64 boundX = world_.halfWidth() - 0.5;
+  const f64 boundZ = world_.halfLength() - 0.5;
+  entity->transform.position.x = std::clamp(entity->transform.position.x + dx, -boundX, boundX);
   entity->transform.position.y = std::clamp(entity->transform.position.y + dy, 0.05, 20.0);
-  entity->transform.position.z = std::clamp(entity->transform.position.z + dz, -bound, bound);
+  entity->transform.position.z = std::clamp(entity->transform.position.z + dz, -boundZ, boundZ);
   rebuildPhysics();
 }
 
@@ -305,8 +316,10 @@ std::string WorldEditor::menuTitle() const {
   switch (screen_) {
     case Screen::Main:
       return "KIMIA World — منوی اصلی";
+    case Screen::AskProfile:
+      return "دنیای جدید: کدام بازی؟";
     case Screen::Builder:
-      return world_.name + " — سازنده";
+      return world_.name + " (" + world_.profile.title + ") — سازنده";
     case Screen::Catalog:
       return "افزودن جسم: چی اضافه کنیم؟";
     case Screen::AskPlayer:
@@ -359,6 +372,19 @@ std::vector<std::string> WorldEditor::optionLabels() const {
       return {"افزودن جسم", "مدیریت اجسام", "محیط", "بازی (PLAY)", "ذخیره", "منوی اصلی"};
     case Screen::Catalog:
       return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "مدل از فایل", "بازگشت"};
+    case Screen::AskProfile: {
+      // The games this engine can make: 5 per screen + more/back.
+      std::vector<std::string> labels;
+      const usize begin = profilePage_ * 5U;
+      const usize end = begin + 5U < profiles_.size() ? begin + 5U : profiles_.size();
+      for (usize i = begin; i < end; ++i) labels.push_back(profiles_[i].title);
+      if (end < profiles_.size()) {
+        labels.push_back("بیشتر…");
+      } else {
+        labels.push_back("بازگشت");
+      }
+      return labels;
+    }
     case Screen::AskModelFile: {
       std::vector<std::string> labels;
       const usize begin = importPage_ * 5U;
@@ -421,7 +447,7 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::AskColor:
       return {"قرمز", "سبز", "آبی", "زرد", "سفید", "بازگشت"};
     case Screen::AskEnvironment:
-      return {"چمنزار", "شنی (کویر)", "شب", "بازگشت"};
+      return {"چمنزار", "شنی (کویر)", "شب", "آسفالت (خیابان)", "بازگشت"};
     default:
       return {};
   }
@@ -454,12 +480,43 @@ void WorldEditor::choose(i32 optionIndex) {
   switch (screen_) {
     case Screen::Main: {
       if (optionIndex == 0) {
-        createWorld();
+        // «دنیای جدید» asks which game first; one game skips the question.
+        refreshProfiles();
+        profilePage_ = 0U;
+        if (profiles_.size() == 1U) {
+          createWorld(profiles_[0]);
+        } else {
+          screen_ = Screen::AskProfile;
+        }
       } else if (optionIndex == 1) {
         std::string error;
         if (!loadWorld(worldPath_, error)) lastError_ = error;  // shown in stats
       } else if (optionIndex == 2) {
         quitRequested_ = true;
+      }
+      break;
+    }
+    case Screen::AskProfile: {
+      const usize begin = profilePage_ * 5U;
+      const usize shown = begin + 5U < profiles_.size() ? 5U : profiles_.size() - begin;
+      if (profiles_.empty()) {
+        screen_ = Screen::Main;
+        break;
+      }
+      if (optionIndex >= 0 && static_cast<usize>(optionIndex) < shown) {
+        const GameProfile chosen = profiles_[begin + static_cast<usize>(optionIndex)];
+        profilePage_ = 0U;
+        createWorld(chosen);
+      } else if (optionIndex == static_cast<i32>(shown)) {
+        if (begin + 5U < profiles_.size()) {
+          ++profilePage_;
+        } else {
+          profilePage_ = 0U;
+          screen_ = Screen::Main;
+        }
+      } else {
+        profilePage_ = 0U;
+        screen_ = Screen::Main;
       }
       break;
     }
@@ -486,7 +543,14 @@ void WorldEditor::choose(i32 optionIndex) {
       if (optionIndex == 0) {
         screen_ = Screen::AskPlayer;
       } else if (optionIndex == 1) {
-        screen_ = Screen::AskBall;
+        if (world_.profile.ballChoice) {
+          screen_ = Screen::AskBall;
+        } else {
+          // This game has one ball: no question, straight to placement.
+          applyBallType(world_.ball, world_.profile.ballDefault);
+          pendingKind_ = ObjectKind::Ball;
+          beginPlace();
+        }
       } else if (optionIndex == 2) {
         screen_ = Screen::AskBlock;
       } else if (optionIndex == 3) {
@@ -737,13 +801,11 @@ void WorldEditor::choose(i32 optionIndex) {
         world_.environment = EnvironmentKind::Sand;
       } else if (optionIndex == 2) {
         world_.environment = EnvironmentKind::Night;
+      } else if (optionIndex == 3) {
+        world_.environment = EnvironmentKind::Asphalt;
       }
-      if (optionIndex <= 2) {
-        applyEnvironmentToScene();
-        screen_ = Screen::Builder;
-      } else {
-        screen_ = Screen::Builder;
-      }
+      if (optionIndex <= 3) applyEnvironmentToScene();
+      screen_ = Screen::Builder;
       break;
     }
     default:

@@ -80,6 +80,17 @@ if(KIMIA_WERROR)
   target_compile_options(kimia_physics PRIVATE -Werror)
 endif()
 
+# --- Game profiles (the data that turns the engine into one game) ---
+add_library(kimia_profile STATIC
+    Engine/Profile/src/GameProfile.cpp
+)
+target_include_directories(kimia_profile PUBLIC Engine/Profile/include)
+target_link_libraries(kimia_profile PUBLIC kimia_core)
+target_compile_options(kimia_profile PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_profile PRIVATE -Werror)
+endif()
+
 # Vendored FBX loader (single-file library, upstream code).
 add_library(kimia_ufbx STATIC ThirdParty/ufbx/ufbx.c)
 target_include_directories(kimia_ufbx PUBLIC ThirdParty/ufbx)
@@ -120,15 +131,17 @@ add_executable(kimia_tests
     Tests/src/GolfTests.cpp
     Tests/src/WorldTests.cpp
     Tests/src/RaytracerTests.cpp
+    Tests/src/ProfileTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_app kimia_golf kimia_world kimia_raytracer)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE -Werror)
 endif()
 target_compile_definitions(kimia_tests PRIVATE
     KIMIA_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/assets"
+    KIMIA_PROFILE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Profiles"
     KIMIA_TEST_TMP="${CMAKE_BINARY_DIR}/kimia_test_tmp"
 )
 
@@ -252,7 +265,7 @@ add_library(kimia_world STATIC
     Engine/World/src/WorldIO.cpp
 )
 target_include_directories(kimia_world PUBLIC Engine/World/include)
-target_link_libraries(kimia_world PUBLIC kimia_golf kimia_scene kimia_physics kimia_assets)
+target_link_libraries(kimia_world PUBLIC kimia_profile kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_world PRIVATE -Werror)
@@ -265,6 +278,12 @@ target_compile_options(kimia_world_app PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_world_app PRIVATE -Werror)
 endif()
+# The game profile files ship next to the binaries (kimia_world looks in
+# ./profiles by default, --profiles DIR overrides).
+add_custom_command(TARGET kimia_world_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/Profiles $<TARGET_FILE_DIR:kimia_world_app>/profiles
+)
 
 # --- Golf (reference game logic + the kimia_golf example) ---
 add_library(kimia_golf STATIC

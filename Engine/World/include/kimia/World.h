@@ -1,5 +1,6 @@
 #pragma once
 
+#include <kimia/GameProfile.h>
 #include <kimia/Physics.h>
 #include <kimia/Scene.h>
 #include <kimia/Types.h>
@@ -13,29 +14,12 @@
 namespace kimia {
 
 // --- World tuning constants ---
+// (Player speeds, kick formula, jump height, ball presets and the sandbox
+// floor size live in GameProfile.h — a world copies them from its profile.)
 
-// Player speed presets (units/second).
-inline constexpr f64 kWorldPlayerFast = 6.0;
-inline constexpr f64 kWorldPlayerNormal = 4.0;
-inline constexpr f64 kWorldPlayerSlow = 2.5;
-
-// A kick launches the ball along the movement direction with
-// speed = kWorldKickBase + playerSpeed * kWorldKickSpeedScale plus a small pop.
-inline constexpr f64 kWorldKickBase = 2.0;
-inline constexpr f64 kWorldKickSpeedScale = 0.5;
-inline constexpr f64 kWorldKickUp = 1.2;
 inline constexpr f64 kWorldKickReach = 0.55;  // horizontal distance player-ball
 inline constexpr f64 kWorldPlayerRadius = 0.35;  // XZ radius the ball collides with
 inline constexpr f64 kWorldPlayerRestitution = 0.4;  // bounce off a still player
-inline constexpr f64 kWorldJumpHeight = 1.2;  // player jump: feet apex (v = sqrt(2 g h))
-
-// Fantasy ball: high bounce, low friction, no roll decay (the spec's words).
-inline constexpr f64 kWorldFantasyRestitution = 0.85;
-inline constexpr f64 kWorldFantasyFriction = 0.05;
-inline constexpr f64 kWorldFantasyRollingFriction = 0.0;
-inline constexpr f64 kWorldFantasyRadius = 0.15;
-
-inline constexpr f64 kWorldFloorHalf = 10.0;  // the floor is 20 x 20
 
 // --- Object builder constants (all chosen from menus) ---
 inline constexpr f64 kWorldBlockSmall = 0.5;
@@ -51,11 +35,6 @@ inline constexpr f64 kWorldGoalHeight = 2.0;
 inline constexpr f64 kWorldPlaceSpeed = 2.0;       // ghost/move speed
 inline constexpr f64 kWorldPlaceSpeedFine = 0.5;   // with Shift (ریز)
 inline constexpr f64 kWorldNudgeStep = 0.1;        // inspector: position/scale per tap
-
-// Ball physics presets. Accurate = the golf tuning; fantasy = bouncy/slick.
-enum class BallType { Accurate, Fantasy };
-
-enum class EnvironmentKind { Grass, Sand, Night };
 
 // Game-object kinds, inferred from entity names (fully SceneIO-v1
 // compatible — nothing extra is stored in the file):
@@ -109,31 +88,50 @@ struct EnvironmentColors {
 // through WorldIO.
 struct WorldData {
   std::string name = "MyWorld";
+  GameProfile profile;  // the game this world belongs to (copied on create)
   PlayerConfig player;
   BallConfig ball;
   EnvironmentKind environment = EnvironmentKind::Grass;
   Scene scene;
   u32 score = 0U;
+
+  f64 halfLength() const { return profile.halfLength(); }  // Z
+  f64 halfWidth() const { return profile.halfWidth(); }    // X
 };
 
 void applyBallType(BallConfig& ball, BallType type);
 EnvironmentColors environmentColors(EnvironmentKind kind);
 
-// Fills world.scene with an EMPTY ground (just the floor plane) — the user
-// builds their game on it object by object.
+// Resets the world to its profile's defaults (player speed, ball type,
+// environment) — the answers the user has not given yet.
+void applyProfileDefaults(WorldData& world);
+
+// Fills world.scene with an EMPTY ground (just the floor plane, sized by the
+// profile's field) — the user builds their game on it object by object.
 void buildEmptyWorldScene(WorldData& world);
 
 // The option-driven editor / builder. Every interaction is a menu option
 // (Num1..Num6 taps) or a named action; nothing requires a keyboard.
 //
-//   Main ─ Create World ─> Builder ─ Catalog ─ questions ─> Place
-//                                    ├─ Manage (list/move/delete/color)
-//                                    ├─ Environment
-//                                    ├─ PLAY ─> Play <-> Goal
-//                                    └─ Save / Main
+//   Main ─ Create World ─ «کدام بازی؟» (profile) ─> Builder ─ Catalog ─ questions ─> Place
+//                                                       ├─ Manage (list/move/delete/color)
+//                                                       ├─ Environment
+//                                                       ├─ PLAY ─> Play <-> Goal
+//                                                       └─ Save / Main
 class WorldEditor {
 public:
   WorldEditor();
+
+  // --- Game profiles (the games this engine can make) ---
+  // Built-ins plus every *.kimiaprofile in the profile directory; the menu
+  // «دنیای جدید» lists them (5 per page + «بیشتر…»/«بازگشت»).
+  void setProfileDirectory(const std::string& dir);
+  const std::string& profileDirectory() const { return profileDir_; }
+  void refreshProfiles();
+  usize profileCount() const { return profiles_.size(); }
+  const GameProfile& profileAt(usize index) const { return profiles_[index]; }
+  const GameProfile& profile() const { return world_.profile; }  // the current world's game
+  bool choosingProfile() const { return screen_ == Screen::AskProfile; }
 
   // --- Menu model (what the web page shows) ---
   std::string menuTitle() const;
@@ -161,7 +159,8 @@ public:
   bool hasWorld() const { return hasWorld_; }
   void setWorldPath(const std::string& path) { worldPath_ = path; }
   const std::string& worldPath() const { return worldPath_; }
-  void createWorld();  // resets to a fresh EMPTY ground
+  void createWorld();                             // fresh EMPTY ground with the current profile
+  void createWorld(const GameProfile& profile);   // fresh EMPTY ground for this game
   bool loadWorld(const std::string& path, std::string& error);
   bool saveWorld(const std::string& path, std::string& error);
   std::string lastError() const { return lastError_; }
@@ -229,11 +228,12 @@ private:
   enum class Screen {
     Main, Builder, Catalog, AskPlayer, AskBall, AskBlock, AskWallLen, AskWallAxis, AskGoal, Place,
     Manage, Move, ConfirmDelete, AskColor, AskEnvironment, Play, Goal, AskModelFile, AskModelSize,
-    Inspector,
+    Inspector, AskProfile,
   };
 
   Vec3 ballRest() const;
   Vec3 playerRest() const;
+  f64 kickSpeed() const;  // profile.kickBase + playerSpeed * profile.kickSpeedScale
   void rebuildPhysics();
   void resetBallToCenter();
   void enterPlay();
@@ -268,6 +268,11 @@ private:
   f64 pendingSize_ = kWorldBlockMedium;
   bool pendingAxisZ_ = true;
   Vec3 ghost_{0.0, 0.0, 0.0};
+
+  // Game profiles («دنیای جدید» -> «کدام بازی؟»).
+  std::string profileDir_ = "profiles";
+  std::vector<GameProfile> profiles_;
+  usize profilePage_ = 0U;  // 5 games per screen
 
   // Model file placement (catalog -> file list -> size -> place).
   std::string importDir_ = "assets";

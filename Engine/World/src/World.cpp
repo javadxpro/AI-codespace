@@ -1,8 +1,6 @@
 #include <kimia/World.h>
 #include <kimia/WorldIO.h>
 
-#include <kimia/Golf.h>  // the "accurate" ball IS the golf tuning
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -17,24 +15,12 @@ constexpr f64 kGoalCelebration = 2.0;  // seconds after a goal
 constexpr f64 kKickMaxSpeed = 8.0;     // a ball rolling faster is not re-kicked
 constexpr f64 kMoveEpsilon = 1e-6;
 constexpr f64 kPlayerMargin = 0.6;  // keep the player inside the floor
+constexpr f64 kEditMargin = 0.5;    // ghost / moved objects stay this far from the edge
 
 const char* playerSpeedName(f64 speed) {
   if (speed >= kWorldPlayerFast - 0.5) return "fast";
   if (speed <= kWorldPlayerSlow + 0.5) return "slow";
   return "normal";
-}
-
-const char* ballTypeName(BallType type) { return type == BallType::Fantasy ? "fantasy" : "accurate"; }
-
-const char* environmentName(EnvironmentKind kind) {
-  switch (kind) {
-    case EnvironmentKind::Sand:
-      return "sand";
-    case EnvironmentKind::Night:
-      return "night";
-    default:
-      return "grass";
-  }
 }
 
 const char* screenName(int screen) {
@@ -57,7 +43,9 @@ const char* screenName(int screen) {
     case 15: return "PLAY";
     case 16: return "GOAL";
     case 17: return "MODELFILE";
-    default: return "MODELSIZE";
+    case 18: return "MODELSIZE";
+    case 19: return "INSPECTOR";
+    default: return "PROFILE";
   }
 }
 
@@ -150,10 +138,10 @@ void applyBallType(BallConfig& ball, BallType type) {
     ball.color = Vec3{0.75, 0.25, 0.9};
   } else {
     ball.type = BallType::Accurate;
-    ball.radius = kGolfBallRadius;
-    ball.restitution = kGolfBallRestitution;
-    ball.friction = kGolfBallFriction;
-    ball.rollingFriction = kGolfBallRollingFriction;
+    ball.radius = kWorldAccurateRadius;
+    ball.restitution = kWorldAccurateRestitution;
+    ball.friction = kWorldAccurateFriction;
+    ball.rollingFriction = kWorldAccurateRollingFriction;
     ball.color = Vec3{0.95, 0.95, 0.92};
   }
 }
@@ -164,9 +152,17 @@ EnvironmentColors environmentColors(EnvironmentKind kind) {
       return EnvironmentColors{Vec3{0.76, 0.70, 0.50}, Vec3{0.78, 0.60, 0.38}};
     case EnvironmentKind::Night:
       return EnvironmentColors{Vec3{0.16, 0.26, 0.20}, Vec3{0.03, 0.04, 0.10}};
+    case EnvironmentKind::Asphalt:
+      return EnvironmentColors{Vec3{0.30, 0.30, 0.32}, Vec3{0.62, 0.70, 0.82}};
     default:
       return EnvironmentColors{Vec3{0.22, 0.45, 0.24}, Vec3{0.40, 0.62, 0.88}};
   }
+}
+
+void applyProfileDefaults(WorldData& world) {
+  world.player.speed = world.profile.playerSpeed;
+  applyBallType(world.ball, world.profile.ballDefault);
+  world.environment = world.profile.environment;
 }
 
 void buildEmptyWorldScene(WorldData& world) {
@@ -174,7 +170,7 @@ void buildEmptyWorldScene(WorldData& world) {
   EntityData ground;
   ground.name = "Ground";
   ground.mesh = MeshKind::plane;
-  ground.transform.scale = Vec3{kWorldFloorHalf * 2.0, 1.0, kWorldFloorHalf * 2.0};
+  ground.transform.scale = Vec3{world.profile.fieldWidth, 1.0, world.profile.fieldLength};
   ground.color = environmentColors(world.environment).floor;
   ground.roughness = 0.95;
   world.scene.create(ground);
@@ -192,7 +188,10 @@ Vec3 WorldEditor::playerRest() const {
   return Vec3{0.0, 0.5, 4.0};
 }
 
-WorldEditor::WorldEditor() { rebuildPhysics(); }
+WorldEditor::WorldEditor() {
+  refreshProfiles();  // built-ins (plus any *.kimiaprofile next to the app)
+  rebuildPhysics();
+}
 
 void WorldEditor::rebuildPhysics() {
   physics_.clear();
@@ -238,7 +237,8 @@ void WorldEditor::rebuildPhysics() {
   ball.rollingFriction = world_.ball.rollingFriction;
   // Objects placed on the ball's spawn point must not swallow the ball:
   // raise it on top of the overlapping colliders instead of spawning inside.
-  const f64 raised = physics_.resolveSpawnHeight(ball.position, ball.radius, kWorldFloorHalf);
+  const f64 raised = physics_.resolveSpawnHeight(ball.position, ball.radius,
+                                                 std::max(world_.halfLength(), world_.halfWidth()));
   if (raised > ball.position.y) ball.position.y = raised;
   ballId_ = physics_.addSphere(ball);
 }
@@ -309,10 +309,13 @@ void WorldEditor::applyEnvironmentToScene() {
   if (ground != nullptr) ground->color = environmentColors(world_.environment).floor;
 }
 
-void WorldEditor::createWorld() {
+void WorldEditor::createWorld() { createWorld(world_.profile); }
+
+void WorldEditor::createWorld(const GameProfile& profile) {
   world_ = WorldData{};
+  world_.profile = profile;
+  applyProfileDefaults(world_);
   buildEmptyWorldScene(world_);
-  applyBallType(world_.ball, BallType::Accurate);
   hasWorld_ = true;
   lastError_.clear();
   screen_ = Screen::Builder;
@@ -369,10 +372,14 @@ void WorldEditor::enterPlay() {
 
 void WorldEditor::update(f64 hostSeconds) {
   const int screen = static_cast<int>(screen_);
+  // The ghost and a live-moved object stay inside the field (same margin
+  // as the inspector nudges) — on a 5-wide street court this matters.
+  const f64 editBoundX = world_.halfWidth() - kEditMargin;
+  const f64 editBoundZ = world_.halfLength() - kEditMargin;
   if (screen == 9) {  // Place: move the ghost with the arrows.
     const f64 speed = fine_ ? kWorldPlaceSpeedFine : kWorldPlaceSpeed;
-    ghost_.x += moveInput_.x * speed * hostSeconds;
-    ghost_.z += moveInput_.z * speed * hostSeconds;
+    ghost_.x = std::min(editBoundX, std::max(-editBoundX, ghost_.x + moveInput_.x * speed * hostSeconds));
+    ghost_.z = std::min(editBoundZ, std::max(-editBoundZ, ghost_.z + moveInput_.z * speed * hostSeconds));
     resetBallToCenter();
     return;
   }
@@ -381,8 +388,9 @@ void WorldEditor::update(f64 hostSeconds) {
       EntityData* entity = world_.scene.get(managed_[managedIndex_]);
       if (entity != nullptr) {
         const f64 speed = fine_ ? kWorldPlaceSpeedFine : kWorldPlaceSpeed;
-        entity->transform.position.x += moveInput_.x * speed * hostSeconds;
-        entity->transform.position.z += moveInput_.z * speed * hostSeconds;
+        Vec3& at = entity->transform.position;
+        at.x = std::min(editBoundX, std::max(-editBoundX, at.x + moveInput_.x * speed * hostSeconds));
+        at.z = std::min(editBoundZ, std::max(-editBoundZ, at.z + moveInput_.z * speed * hostSeconds));
       }
     }
     resetBallToCenter();
@@ -400,14 +408,15 @@ void WorldEditor::update(f64 hostSeconds) {
     // Character controller: gravity, jumping and collisions live in the
     // physics module; the player shoves and kicks crates/ball as before.
     // A jump pressed in the air is buffered until the feet touch down.
-    if (jumpQueued_ && physics_.characterJump(kWorldJumpHeight)) {
+    if (jumpQueued_ && world_.profile.jumpHeight > 0.0 && physics_.characterJump(world_.profile.jumpHeight)) {
       jumpQueued_ = false;
     }
     physics_.moveCharacter(hostSeconds, direction * world_.player.speed);
     playerPos_ = physics_.character()->position;
-    const f64 bound = kWorldFloorHalf - kPlayerMargin;
-    playerPos_.x = std::min(bound, std::max(-bound, playerPos_.x));
-    playerPos_.z = std::min(bound, std::max(-bound, playerPos_.z));
+    const f64 boundX = world_.halfWidth() - kPlayerMargin;
+    const f64 boundZ = world_.halfLength() - kPlayerMargin;
+    playerPos_.x = std::min(boundX, std::max(-boundX, playerPos_.x));
+    playerPos_.z = std::min(boundZ, std::max(-boundZ, playerPos_.z));
 
     const Vec3 previous = ballPosition();
     physics_.advance(hostSeconds);
@@ -415,20 +424,21 @@ void WorldEditor::update(f64 hostSeconds) {
     // The ball stays on the floor: clamp it inside the play area and stop
     // any outward motion so it can never roll away forever.
     SphereBody* ball = physics_.sphere(ballId_);
-    const f64 ballBound = kWorldFloorHalf - world_.ball.radius;
+    const f64 ballBoundX = world_.halfWidth() - world_.ball.radius;
+    const f64 ballBoundZ = world_.halfLength() - world_.ball.radius;
     if (ball != nullptr) {
-      if (ball->position.x > ballBound) {
-        ball->position.x = ballBound;
+      if (ball->position.x > ballBoundX) {
+        ball->position.x = ballBoundX;
         if (ball->velocity.x > 0.0) ball->velocity.x = 0.0;
-      } else if (ball->position.x < -ballBound) {
-        ball->position.x = -ballBound;
+      } else if (ball->position.x < -ballBoundX) {
+        ball->position.x = -ballBoundX;
         if (ball->velocity.x < 0.0) ball->velocity.x = 0.0;
       }
-      if (ball->position.z > ballBound) {
-        ball->position.z = ballBound;
+      if (ball->position.z > ballBoundZ) {
+        ball->position.z = ballBoundZ;
         if (ball->velocity.z > 0.0) ball->velocity.z = 0.0;
-      } else if (ball->position.z < -ballBound) {
-        ball->position.z = -ballBound;
+      } else if (ball->position.z < -ballBoundZ) {
+        ball->position.z = -ballBoundZ;
         if (ball->velocity.z < 0.0) ball->velocity.z = 0.0;
       }
     }
@@ -458,8 +468,7 @@ void WorldEditor::update(f64 hostSeconds) {
       }
       const f64 kickDistance = world_.ball.radius + kWorldKickReach;
       if (moving && distance < kickDistance && ball->velocity.length() < kKickMaxSpeed) {
-        ball->velocity = direction * (kWorldKickBase + world_.player.speed * kWorldKickSpeedScale) +
-                         Vec3{0.0, kWorldKickUp, 0.0};
+        ball->velocity = direction * kickSpeed() + Vec3{0.0, world_.profile.kickUp, 0.0};
       }
     }
 
@@ -467,22 +476,23 @@ void WorldEditor::update(f64 hostSeconds) {
     // them by walking into them and kick them like the ball. Crates collide
     // with the ball through the physics world, so they can push it around.
     const f64 crateHalf = kWorldCrateSize * 0.5;
-    const f64 crateBound = kWorldFloorHalf - crateHalf;
+    const f64 crateBoundX = world_.halfWidth() - crateHalf;
+    const f64 crateBoundZ = world_.halfLength() - crateHalf;
     for (const u32 crateId : crateBodyIds_) {
       DynamicBox* crate = physics_.dynamicBox(crateId);
       if (crate == nullptr) continue;
-      if (crate->position.x > crateBound) {
-        crate->position.x = crateBound;
+      if (crate->position.x > crateBoundX) {
+        crate->position.x = crateBoundX;
         if (crate->velocity.x > 0.0) crate->velocity.x = 0.0;
-      } else if (crate->position.x < -crateBound) {
-        crate->position.x = -crateBound;
+      } else if (crate->position.x < -crateBoundX) {
+        crate->position.x = -crateBoundX;
         if (crate->velocity.x < 0.0) crate->velocity.x = 0.0;
       }
-      if (crate->position.z > crateBound) {
-        crate->position.z = crateBound;
+      if (crate->position.z > crateBoundZ) {
+        crate->position.z = crateBoundZ;
         if (crate->velocity.z > 0.0) crate->velocity.z = 0.0;
-      } else if (crate->position.z < -crateBound) {
-        crate->position.z = -crateBound;
+      } else if (crate->position.z < -crateBoundZ) {
+        crate->position.z = -crateBoundZ;
         if (crate->velocity.z < 0.0) crate->velocity.z = 0.0;
       }
 
@@ -507,8 +517,7 @@ void WorldEditor::update(f64 hostSeconds) {
       }
       const f64 crateKickDistance = crateHalf + kWorldKickReach;
       if (moving && distance < crateKickDistance && crate->velocity.length() < kKickMaxSpeed) {
-        const f64 kickSpeed = kWorldKickBase + world_.player.speed * kWorldKickSpeedScale;
-        crate->velocity = direction * (kickSpeed * kWorldCrateKickScale) + Vec3{0.0, kWorldCrateKickUp, 0.0};
+        crate->velocity = direction * (kickSpeed() * kWorldCrateKickScale) + Vec3{0.0, kWorldCrateKickUp, 0.0};
       }
     }
 
@@ -576,12 +585,16 @@ usize WorldEditor::objectCount() const {
   return count;
 }
 
+f64 WorldEditor::kickSpeed() const {
+  return world_.profile.kickBase + world_.player.speed * world_.profile.kickSpeedScale;
+}
+
 std::string WorldEditor::statsLine() const {
   std::ostringstream line;
   line << "KIMIA WORLD | " << screenName(static_cast<int>(screen_)) << " | world " << world_.name
-       << " | player " << playerSpeedName(world_.player.speed) << " | ball " << ballTypeName(world_.ball.type)
-       << " | env " << environmentName(world_.environment) << " | score " << world_.score
-       << " | objects " << objectCount();
+       << " | game " << world_.profile.name << " | player " << playerSpeedName(world_.player.speed)
+       << " | ball " << ballTypeName(world_.ball.type) << " | env " << environmentName(world_.environment)
+       << " | score " << world_.score << " | objects " << objectCount();
   if (!lastError_.empty()) line << " | note " << lastError_;
   return line.str();
 }

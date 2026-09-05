@@ -1,6 +1,6 @@
 // KIMIA World — the option-driven editor / object builder (spec section 8).
 //
-//   kimia_world [--port N] [--world <file.kimia>]
+//   kimia_world [--port N] [--world <file.kimia>] [--assets DIR] [--profiles DIR]
 //
 // Start with an EMPTY ground and build your game with menus only: add a
 // player, a ball, blocks, walls, goals — each object asks a few plain
@@ -104,11 +104,13 @@ void addGhostShape(RenderScene& scene, const WorldEditor& editor, const MeshData
                                kGhostColor, 0.9});
       break;
     }
-    case ObjectKind::Ball:
-      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, 0.12, ghost.z}) *
-                                            Mat4::scaling(Vec3{0.12, 0.12, 0.12}),
+    case ObjectKind::Ball: {
+      const f64 radius = editor.world().ball.radius;
+      scene.objects.push_back({&sphere, Mat4::translation(Vec3{ghost.x, radius, ghost.z}) *
+                                            Mat4::scaling(Vec3{radius, radius, radius}),
                                kGhostColor, 0.9});
       break;
+    }
     case ObjectKind::Block:
     case ObjectKind::Crate:
     case ObjectKind::Model:
@@ -142,6 +144,7 @@ int main(int argc, char** argv) {
   int port = 8080;
   std::string worldPath = "my_world.kimia";
   std::string assetsDir = "assets";
+  std::string profilesDir = "profiles";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
@@ -150,12 +153,15 @@ int main(int argc, char** argv) {
       worldPath = argv[++i];
     } else if (arg == "--assets" && i + 1 < argc) {
       assetsDir = argv[++i];
+    } else if (arg == "--profiles" && i + 1 < argc) {
+      profilesDir = argv[++i];
     }
   }
 
   WorldEditor editor;
   editor.setWorldPath(worldPath);
   editor.setImportDirectory(assetsDir);
+  editor.setProfileDirectory(profilesDir);  // built-ins + *.kimiaprofile files
 
   EngineOptions options;
   options.headless = true;
@@ -188,8 +194,8 @@ int main(int argc, char** argv) {
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
       "everything is menus: tap 1-8 for the options, arrows move, Shift = fine, r resets, b opens the menu"));
-  std::printf("KIMIA World serving on port %d | GL: %s\n", static_cast<i32>(engine.server()->port()),
-              engine.glAvailable() ? "yes" : "no (software)");
+  std::printf("KIMIA World serving on port %d | GL: %s | games: %d\n", static_cast<i32>(engine.server()->port()),
+              engine.glAvailable() ? "yes" : "no (software)", static_cast<i32>(editor.profileCount()));
 
   Renderer renderer;
   std::string rendererError;

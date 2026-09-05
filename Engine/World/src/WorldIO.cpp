@@ -1,8 +1,8 @@
 #include <kimia/WorldIO.h>
 
 #include <kimia/SceneIO.h>
+#include <kimia/TextFormat.h>
 
-#include <cstdio>
 #include <fstream>
 #include <sstream>
 
@@ -10,63 +10,18 @@ namespace kimia {
 
 namespace {
 
-std::string escapeName(const std::string& name) {
-  std::string out;
-  out.reserve(name.size());
-  for (const char c : name) {
-    if (c == '\\') {
-      out += "\\\\";
-    } else if (c == '\n') {
-      out += "\\n";
-    } else {
-      out += c;
-    }
-  }
-  return out;
-}
+constexpr const char* kProfilePrefix = "# profile ";  // + one ProfileIO body line
 
-std::string unescapeName(const std::string& text) {
-  std::string out;
-  out.reserve(text.size());
-  for (usize i = 0; i < text.size(); ++i) {
-    if (text[i] == '\\' && i + 1U < text.size()) {
-      ++i;
-      out += text[i] == 'n' ? '\n' : text[i];
-    } else {
-      out += text[i];
-    }
-  }
-  return out;
-}
-
-bool parseF64(const std::string& token, f64& out) {
-  if (token.empty()) return false;
-  try {
-    usize consumed = 0;
-    out = std::stod(token, &consumed);
-    return consumed == token.size();
-  } catch (...) {
-    return false;
-  }
-}
-
-std::string formatF64(f64 value) {
-  char buffer[32];
-  std::snprintf(buffer, sizeof(buffer), "%.6f", value);
-  return buffer;
-}
-
-const char* ballTypeName(BallType type) { return type == BallType::Fantasy ? "fantasy" : "accurate"; }
-
-const char* environmentName(EnvironmentKind kind) {
-  switch (kind) {
-    case EnvironmentKind::Sand:
-      return "sand";
-    case EnvironmentKind::Night:
-      return "night";
-    default:
-      return "grass";
-  }
+// Old files carry no field size: the ground plane they saved is the field.
+// Any world without a `# profile field` line takes its size from the ground
+// so a 20 x 20 sandbox file still plays on 20 x 20.
+void fieldFromGround(WorldData& world) {
+  const EntityData* ground = world.scene.get(world.scene.find("Ground"));
+  if (ground == nullptr || ground->mesh != MeshKind::plane) return;
+  const f64 width = ground->transform.scale.x;
+  const f64 length = ground->transform.scale.z;
+  if (width >= kProfileFieldMin && width <= kProfileFieldMax) world.profile.fieldWidth = width;
+  if (length >= kProfileFieldMin && length <= kProfileFieldMax) world.profile.fieldLength = length;
 }
 
 }  // namespace
@@ -76,9 +31,10 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
   if (!SceneIO::save(world.scene, sceneText)) return false;
   std::ostringstream stream;
   stream << "# KIMIA scene v1\n";
-  stream << "# world name " << escapeName(world.name) << '\n';
-  stream << "# player speed " << formatF64(world.player.speed) << " color " << formatF64(world.player.color.x)
-         << ' ' << formatF64(world.player.color.y) << ' ' << formatF64(world.player.color.z) << '\n';
+  stream << "# world name " << escapeLineText(world.name) << '\n';
+  for (const std::string& line : ProfileIO::lines(world.profile)) stream << kProfilePrefix << line << '\n';
+  stream << "# player speed " << formatFixed6(world.player.speed) << " color " << formatFixed6(world.player.color.x)
+         << ' ' << formatFixed6(world.player.color.y) << ' ' << formatFixed6(world.player.color.z) << '\n';
   stream << "# ball type " << ballTypeName(world.ball.type) << '\n';
   stream << "# env " << environmentName(world.environment) << '\n';
   stream << "# score " << world.score << '\n';
@@ -111,17 +67,22 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
   out.scene = std::move(scene);
   // Scan the comment lines for our metadata; anything unknown is ignored
   // (tolerant load — old v1 files simply use the defaults).
+  bool hasField = false;
   std::istringstream stream(text);
   std::string line;
   while (std::getline(stream, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
     if (line.rfind("# world name ", 0) == 0) {
-      out.name = unescapeName(line.substr(13U));
+      out.name = unescapeLineText(line.substr(13U));
+    } else if (line.rfind(kProfilePrefix, 0) == 0) {
+      const std::string body = line.substr(10U);
+      if (ProfileIO::parseLine(body, out.profile) && body.rfind("field ", 0) == 0) hasField = true;
     } else if (line.rfind("# player speed ", 0) == 0) {
       std::istringstream tokens(line.substr(15U));
       std::string speedToken;
       tokens >> speedToken;
       f64 speed = kWorldPlayerNormal;
-      if (parseF64(speedToken, speed)) out.player.speed = speed;
+      if (parseF64Token(speedToken, speed)) out.player.speed = speed;
       std::string keyword;
       std::string tr;
       std::string tg;
@@ -129,21 +90,18 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
       f64 r = 0.0;
       f64 g = 0.0;
       f64 b = 0.0;
-      if (tokens >> keyword >> tr >> tg >> tb && keyword == "color" && parseF64(tr, r) && parseF64(tg, g) &&
-          parseF64(tb, b)) {
+      if (tokens >> keyword >> tr >> tg >> tb && keyword == "color" && parseF64Token(tr, r) &&
+          parseF64Token(tg, g) && parseF64Token(tb, b)) {
         out.player.color = Vec3{r, g, b};
       }
     } else if (line.rfind("# ball type ", 0) == 0) {
-      applyBallType(out.ball, line.substr(12U) == "fantasy" ? BallType::Fantasy : BallType::Accurate);
+      BallType type = BallType::Accurate;
+      ballTypeFromName(line.substr(12U), type);
+      applyBallType(out.ball, type);
     } else if (line.rfind("# env ", 0) == 0) {
-      const std::string kind = line.substr(6U);
-      if (kind == "sand") {
-        out.environment = EnvironmentKind::Sand;
-      } else if (kind == "night") {
-        out.environment = EnvironmentKind::Night;
-      } else {
-        out.environment = EnvironmentKind::Grass;
-      }
+      EnvironmentKind kind = EnvironmentKind::Grass;
+      environmentFromName(line.substr(6U), kind);
+      out.environment = kind;
     } else if (line.rfind("# score ", 0) == 0) {
       const std::string token = line.substr(8U);
       try {
@@ -154,6 +112,7 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
       }
     }
   }
+  if (!hasField) fieldFromGround(out);
   return true;
 }
 
