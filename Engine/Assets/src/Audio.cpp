@@ -15,6 +15,8 @@
 #include <dr_wav.h>
 #pragma GCC diagnostic pop
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <limits>
 
@@ -182,6 +184,110 @@ std::optional<AudioBuffer> AudioBuffer::loadWAV(const std::string& path, std::st
 std::optional<AudioBuffer> AudioBuffer::loadMP3(const std::string& path, std::string& error) { return fromMP3(path, error); }
 std::optional<AudioBuffer> AudioBuffer::loadOGG(const std::string& path, std::string& error) { return fromOGG(path, error); }
 std::optional<AudioBuffer> AudioBuffer::loadFLAC(const std::string& path, std::string& error) { return fromFLAC(path, error); }
+
+std::vector<u8> AudioBuffer::encodeWAV() const {
+  std::vector<u8> out;
+  if (isEmpty()) return out;
+  const u32 dataBytes = static_cast<u32>(samples.size() * 2U);
+  const u32 byteRate = static_cast<u32>(sampleRate) * static_cast<u32>(channels) * 2U;
+  const u16 blockAlign = static_cast<u16>(channels * 2);
+  auto put16 = [&out](u16 value) {
+    out.push_back(static_cast<u8>(value & 0xFFU));
+    out.push_back(static_cast<u8>((value >> 8U) & 0xFFU));
+  };
+  auto put32 = [&out](u32 value) {
+    out.push_back(static_cast<u8>(value & 0xFFU));
+    out.push_back(static_cast<u8>((value >> 8U) & 0xFFU));
+    out.push_back(static_cast<u8>((value >> 16U) & 0xFFU));
+    out.push_back(static_cast<u8>((value >> 24U) & 0xFFU));
+  };
+  auto putTag = [&out](const char* tag) {
+    for (usize i = 0; i < 4U; ++i) out.push_back(static_cast<u8>(tag[i]));
+  };
+  out.reserve(44U + dataBytes);
+  putTag("RIFF");
+  put32(36U + dataBytes);
+  putTag("WAVE");
+  putTag("fmt ");
+  put32(16U);
+  put16(1U);  // PCM
+  put16(static_cast<u16>(channels));
+  put32(static_cast<u32>(sampleRate));
+  put32(byteRate);
+  put16(blockAlign);
+  put16(16U);
+  putTag("data");
+  put32(dataBytes);
+  // The same quantization as dr_wav's f32 -> s16 (so the bytes equal writeWAV's).
+  for (const f32 sample : samples) {
+    i16 pcm = 0;
+    if (sample != sample) {
+      pcm = 0;  // NaN
+    } else if (sample <= -1.0f) {
+      pcm = -32768;
+    } else if (sample >= 1.0f) {
+      pcm = 32767;
+    } else {
+      pcm = static_cast<i16>(sample * 32768.0f);
+    }
+    put16(static_cast<u16>(pcm));
+  }
+  return out;
+}
+
+AudioBuffer AudioBuffer::tone(f64 frequency, f64 seconds, f64 amplitude, f64 endFrequency, i32 sampleRateHz) {
+  AudioBuffer out;
+  if (frequency <= 0.0 || seconds <= 0.0 || sampleRateHz <= 0) return out;
+  out.channels = 1;
+  out.sampleRate = sampleRateHz;
+  out.frameCount = static_cast<u64>(seconds * static_cast<f64>(sampleRateHz));
+  out.samples.resize(static_cast<usize>(out.frameCount));
+  const f64 target = endFrequency > 0.0 ? endFrequency : frequency;
+  const f64 twoPi = 6.283185307179586;
+  f64 phase = 0.0;
+  for (usize i = 0; i < out.samples.size(); ++i) {
+    const f64 t = static_cast<f64>(i) / static_cast<f64>(sampleRateHz);
+    const f64 progress = t / seconds;
+    const f64 hz = frequency + (target - frequency) * progress;
+    phase += twoPi * hz / static_cast<f64>(sampleRateHz);
+    const f64 envelope = std::exp(-5.0 * progress);  // -43 dB by the end
+    out.samples[i] = static_cast<f32>(std::sin(phase) * amplitude * envelope);
+  }
+  return out;
+}
+
+AudioBuffer AudioBuffer::thock(f64 seconds, f64 cutoffHz, f64 amplitude, i32 sampleRateHz) {
+  AudioBuffer out;
+  if (seconds <= 0.0 || sampleRateHz <= 0) return out;
+  out.channels = 1;
+  out.sampleRate = sampleRateHz;
+  out.frameCount = static_cast<u64>(seconds * static_cast<f64>(sampleRateHz));
+  out.samples.resize(static_cast<usize>(out.frameCount));
+  // Deterministic noise (LCG) so the cue is the same on every machine.
+  u32 state = 0x9E3779B9U;
+  const f64 rc = 1.0 / (6.283185307179586 * std::max(1.0, cutoffHz));
+  const f64 dt = 1.0 / static_cast<f64>(sampleRateHz);
+  const f64 alpha = dt / (rc + dt);
+  f64 filtered = 0.0;
+  for (usize i = 0; i < out.samples.size(); ++i) {
+    state = state * 1664525U + 1013904223U;
+    const f64 noise = static_cast<f64>(state >> 8U) / 8388608.0 - 1.0;  // [-1, 1)
+    filtered += alpha * (noise - filtered);
+    const f64 progress = static_cast<f64>(i) / static_cast<f64>(out.samples.size());
+    const f64 envelope = std::exp(-9.0 * progress);
+    out.samples[i] = static_cast<f32>(filtered * amplitude * 3.0 * envelope);
+  }
+  return out;
+}
+
+AudioBuffer AudioBuffer::concat(const AudioBuffer& first, const AudioBuffer& second) {
+  if (first.isEmpty()) return second;
+  if (second.isEmpty() || second.channels != first.channels || second.sampleRate != first.sampleRate) return first;
+  AudioBuffer out = first;
+  out.samples.insert(out.samples.end(), second.samples.begin(), second.samples.end());
+  out.frameCount = first.frameCount + second.frameCount;
+  return out;
+}
 
 bool AudioBuffer::writeWAV(const std::string& path) const {
   if (isEmpty()) return false;

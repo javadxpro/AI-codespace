@@ -242,6 +242,77 @@ KIMIA_TEST(audio_wav_tone_roundtrip) {
   }
 }
 
+KIMIA_TEST(audio_encode_wav_bytes_match_the_file_writer_and_reload) {
+  // encodeWAV() is what the web page streams as /sfx/<name>: a canonical
+  // 44-byte header + 16-bit little-endian PCM, byte-identical to writeWAV.
+  const kimia::AudioBuffer tone = kimia::AudioBuffer::tone(440.0, 0.1, 0.5, 0.0, 8000);
+  KIMIA_REQUIRE(tone.channels == 1 && tone.sampleRate == 8000 && tone.frameCount == 800U);
+  const std::vector<kimia::u8> bytes = tone.encodeWAV();
+  KIMIA_REQUIRE(bytes.size() == 44U + 800U * 2U);
+  KIMIA_REQUIRE(std::string(bytes.begin(), bytes.begin() + 4) == "RIFF");
+  KIMIA_REQUIRE(std::string(bytes.begin() + 8, bytes.begin() + 16) == "WAVEfmt ");
+  KIMIA_REQUIRE(std::string(bytes.begin() + 36, bytes.begin() + 40) == "data");
+  KIMIA_REQUIRE(bytes[22] == 1 && bytes[23] == 0);      // channels
+  KIMIA_REQUIRE(bytes[24] == 0x40 && bytes[25] == 0x1F);  // 8000 Hz
+  KIMIA_REQUIRE(bytes[34] == 16 && bytes[35] == 0);     // bits per sample
+  KIMIA_REQUIRE(bytes[40] == 0x40 && bytes[41] == 0x06);  // 1600 data bytes
+  KIMIA_REQUIRE(tone.writeWAV(tmpPath("cue.kimi.wav")));
+  std::ifstream in(tmpPath("cue.kimi.wav"), std::ios::binary);
+  const std::vector<kimia::u8> fromFile((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(fromFile == bytes);
+  std::string error;
+  const auto reloaded = kimia::AudioBuffer::load(tmpPath("cue.kimi.wav"), error);
+  KIMIA_REQUIRE(reloaded.has_value());
+  KIMIA_REQUIRE(reloaded->frameCount == 800U);
+  for (usize i = 0; i < reloaded->samples.size(); ++i) {
+    KIMIA_REQUIRE(std::abs(reloaded->samples[i] - tone.samples[i]) <= 0.001f);
+  }
+  KIMIA_REQUIRE(kimia::AudioBuffer{}.encodeWAV().empty());
+}
+
+KIMIA_TEST(audio_procedural_cues_are_deterministic_and_decay) {
+  using kimia::AudioBuffer;
+  // Tone: starts at zero, peaks near the amplitude early, decays to ~0.7%.
+  const AudioBuffer tone = AudioBuffer::tone(660.0, 0.2, 0.6);
+  KIMIA_REQUIRE(tone.channels == 1 && tone.sampleRate == 22050 && tone.frameCount == 4410U);
+  KIMIA_REQUIRE(std::abs(tone.samples[0]) < 0.2f);
+  f32 peak = 0.0f;
+  for (f32 sample : tone.samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.5f && peak <= 0.6f);
+  f32 tail = 0.0f;
+  for (usize i = tone.samples.size() - 100U; i < tone.samples.size(); ++i) tail = std::max(tail, std::abs(tone.samples[i]));
+  KIMIA_REQUIRE(tail < 0.01f);
+  KIMIA_REQUIRE(AudioBuffer::tone(660.0, 0.2).samples == tone.samples);  // deterministic
+  // A pitch slide changes the samples but not the shape.
+  const AudioBuffer slide = AudioBuffer::tone(440.0, 0.2, 0.6, 880.0);
+  KIMIA_REQUIRE(slide.frameCount == tone.frameCount);
+  KIMIA_REQUIRE(slide.samples != tone.samples);
+  // Thock: noise with energy, decaying, same on every run.
+  const AudioBuffer thock = AudioBuffer::thock(0.1);
+  KIMIA_REQUIRE(thock.frameCount == 2205U);
+  f64 headEnergy = 0.0;
+  f64 tailEnergy = 0.0;
+  for (usize i = 0; i < 200U; ++i) headEnergy += static_cast<f64>(thock.samples[i]) * static_cast<f64>(thock.samples[i]);
+  for (usize i = thock.samples.size() - 200U; i < thock.samples.size(); ++i) {
+    tailEnergy += static_cast<f64>(thock.samples[i]) * static_cast<f64>(thock.samples[i]);
+  }
+  KIMIA_REQUIRE(headEnergy > 0.01);
+  KIMIA_REQUIRE(tailEnergy < headEnergy * 0.01);
+  KIMIA_REQUIRE(AudioBuffer::thock(0.1).samples == thock.samples);
+  // Concat: back to back; mismatched formats keep the first.
+  const AudioBuffer both = AudioBuffer::concat(tone, thock);
+  KIMIA_REQUIRE(both.frameCount == 4410U + 2205U);
+  KIMIA_REQUIRE(both.samples.size() == 6615U);
+  KIMIA_REQUIRE(both.samples[4410U] == thock.samples[0]);
+  const AudioBuffer other = AudioBuffer::tone(440.0, 0.1, 0.5, 0.0, 8000);
+  KIMIA_REQUIRE(AudioBuffer::concat(tone, other).frameCount == tone.frameCount);
+  KIMIA_REQUIRE(AudioBuffer::concat(AudioBuffer{}, tone).frameCount == tone.frameCount);
+  // Degenerate arguments give an empty buffer, never a crash.
+  KIMIA_REQUIRE(AudioBuffer::tone(0.0, 1.0).isEmpty());
+  KIMIA_REQUIRE(AudioBuffer::tone(440.0, 0.0).isEmpty());
+  KIMIA_REQUIRE(AudioBuffer::thock(-1.0).isEmpty());
+}
+
 KIMIA_TEST(audio_mp3_440hz_loads_with_signal) {
   std::string error;
   auto audio = kimia::AudioBuffer::load(kAssets + "440hz.mp3", error);

@@ -28,6 +28,20 @@ struct AudioBuffer {
 
   // Writes 16-bit PCM WAV.
   bool writeWAV(const std::string& path) const;
+  // The same 16-bit PCM WAV as bytes (44-byte RIFF header + data); empty if
+  // the buffer is empty. What the web page streams as /sfx/<name>.
+  std::vector<u8> encodeWAV() const;
+
+  // Procedural cues (no asset files needed): a short mono tone with an
+  // exponential decay — `frequency` Hz for `seconds`, optional pitch slide to
+  // `endFrequency` (0 = none). Deterministic: same arguments, same samples.
+  static AudioBuffer tone(f64 frequency, f64 seconds, f64 amplitude = 0.6, f64 endFrequency = 0.0,
+                          i32 sampleRateHz = 22050);
+  // A soft noise burst (the "thock" of a club/foot on a ball): white noise
+  // through a one-pole low-pass at `cutoffHz`, decaying over `seconds`.
+  static AudioBuffer thock(f64 seconds, f64 cutoffHz = 900.0, f64 amplitude = 0.7, i32 sampleRateHz = 22050);
+  // Two buffers played one after the other (same channel count/sample rate).
+  static AudioBuffer concat(const AudioBuffer& first, const AudioBuffer& second);
 };
 
 }  // namespace kimia
