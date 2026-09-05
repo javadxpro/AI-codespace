@@ -21,9 +21,15 @@ an option-driven Unity-like editor (section 8).
 ## 2. Who I am (the user) — non-negotiable rules
 
 - I speak **Persian** — reply to me in Persian, always.
-- I run on an **Android phone in Termux** (weak GPU → software rendering) and
-  sometimes Ubuntu. I paste terminal output back to you. Always give exact,
-  copy-pasteable commands.
+- I run on an **Android phone in Termux** (weak GPU → software rendering,
+  **Clang 21** — stricter than GCC: `-Wsign-conversion` is on under
+  `-Wconversion`) and sometimes Ubuntu. I paste terminal output back to you.
+  Always give exact, copy-pasteable commands.
+- **The engine is NOT on GitHub `main`** (main = the Core skeleton only). It
+  lives on the `arena/01a07125-ai-codespace` branch. Clone/update commands
+  must say `--branch arena/01a07125-ai-codespace`, or use
+  `bash Tools/termux_build.sh` which switches branches by itself. A plain
+  clone of main builds only a 2-test `kimia_tests` and no `kimia_world`.
 - **I author game content, never you.** No hardcoded courses/levels/demos
   written by the AI — build tools that let *me* make content.
 - No explain-only answers, no pseudocode, no fake/placeholder files, no "TODO
@@ -35,6 +41,17 @@ an option-driven Unity-like editor (section 8).
   (`-DKIMIA_ENABLE_SDL2=ON|OFF`), zlib via PNG encoding.
 - Small, staged **conventional commits** (`feat(core):`, `fix(physics):`,
   `docs(...)`). Docs for every shipped system in `Documentation/`.
+- **Division of labour: I build and test the game; you only add
+  capabilities** (tools, objects, rules, profile keys) that I then use to
+  make and tune the game in its different modes. Do not decide the game for
+  me and do not ship "finished" content.
+- **Version numbers move by the size of the change, never by the date:**
+  `MAJOR.MINOR.PATCH` in `Engine/Core/include/kimia/Version.h` +
+  `CMakeLists.txt` (kept identical by a test). Small change or bug fix →
+  `+0.0.1`; a stage or a big change → `+0.1.0`; MAJOR only when I say so.
+  Every bump gets a new entry at the TOP of `CHANGELOG.md` (version, what
+  changed, dev time, today's date) — the test requires the newest entry to be
+  the current version. Never rewrite old entries.
 
 ## 3. HOW to build it bug-free (the method — follow it literally)
 

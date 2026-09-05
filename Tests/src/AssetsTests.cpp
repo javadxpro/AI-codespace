@@ -1,0 +1,601 @@
+#include <kimia/AssetPipeline.h>
+#include <kimia/Audio.h>
+#include <kimia/Image.h>
+#include <kimia/Mesh.h>
+#include <kimia/Vec.h>
+#include <kimia_test.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
+
+#ifndef KIMIA_ASSET_DIR
+#error "KIMIA_ASSET_DIR must be defined by CMake"
+#endif
+#ifndef KIMIA_TEST_TMP
+#error "KIMIA_TEST_TMP must be defined by CMake"
+#endif
+
+#include <sys/stat.h>
+
+namespace {
+using kimia::Vec2;
+using kimia::Vec3;
+using kimia::f32;
+using kimia::f64;
+using kimia::u8;
+using kimia::usize;
+
+const std::string kAssets = std::string(KIMIA_ASSET_DIR) + "/";
+
+// Test outputs go into the (gitignored) build directory, never into the
+// source tree, no matter where the binary is run from.
+std::string tmpPath(const std::string& name) {
+  static const bool created = ::mkdir(KIMIA_TEST_TMP, 0755) == 0 || errno == EEXIST;
+  static_cast<void>(created);
+  return std::string(KIMIA_TEST_TMP) + "/" + name;
+}
+
+constexpr f64 kEps = 1e-9;
+
+bool near3(const Vec3& a, const Vec3& b, f64 eps = kEps) {
+  return std::abs(a.x - b.x) <= eps && std::abs(a.y - b.y) <= eps && std::abs(a.z - b.z) <= eps;
+}
+
+bool nearVec3List(const std::vector<Vec3>& a, const std::vector<Vec3>& b, f64 eps = 1e-6) {
+  if (a.size() != b.size()) return false;
+  for (usize i = 0; i < a.size(); ++i) {
+    if (!near3(a[i], b[i], eps)) return false;
+  }
+  return true;
+}
+}  // namespace
+
+// --- OBJ ---
+
+KIMIA_TEST(obj_loads_generated_cube) {
+  kimia::MeshData mesh;
+  std::string error;
+  KIMIA_REQUIRE(kimia::loadFromOBJFile(kAssets + "cube.obj", mesh, error));
+  KIMIA_REQUIRE(mesh.name == "Cube");
+  KIMIA_REQUIRE(mesh.positions.size() == 24U);
+  KIMIA_REQUIRE(mesh.indices.size() == 36U);
+  KIMIA_REQUIRE(mesh.isValid());
+  // First corner is (-0.5, -0.5, -0.5) with normal (0, 0, -1).
+  KIMIA_REQUIRE(near3(mesh.positions[0], Vec3{-0.5, -0.5, -0.5}));
+  KIMIA_REQUIRE(near3(mesh.normals[0], Vec3{0.0, 0.0, -1.0}));
+  for (const Vec3& n : mesh.normals) {
+    KIMIA_REQUIRE(std::abs(n.length() - 1.0) <= 1e-9);
+  }
+  for (const Vec2& uv : mesh.uvs) {
+    KIMIA_REQUIRE(uv.x >= -1e-9 && uv.x <= 1.0 + 1e-9);
+    KIMIA_REQUIRE(uv.y >= -1e-9 && uv.y <= 1.0 + 1e-9);
+  }
+  // All faces CCW from outside (dot(cross(e1,e2), n) > 0).
+  for (usize i = 0; i + 2U < mesh.indices.size(); i += 3U) {
+    const Vec3 p0 = mesh.positions[mesh.indices[i]];
+    const Vec3 p1 = mesh.positions[mesh.indices[i + 1U]];
+    const Vec3 p2 = mesh.positions[mesh.indices[i + 2U]];
+    KIMIA_REQUIRE(kimia::dot(kimia::cross(p1 - p0, p2 - p0), mesh.normals[mesh.indices[i]]) > 0.0);
+  }
+}
+
+KIMIA_TEST(obj_dedupe_merges_shared_triplets) {
+  kimia::MeshData mesh;
+  std::string error;
+  KIMIA_REQUIRE(kimia::loadFromOBJFile(kAssets + "quad.obj", mesh, error));
+  KIMIA_REQUIRE(mesh.positions.size() == 6U);  // no dedupe: 2 triangles x 3 verts
+  kimia::MeshData deduped;
+  KIMIA_REQUIRE(kimia::loadFromOBJFile(kAssets + "quad.obj", deduped, error, true));
+  KIMIA_REQUIRE(deduped.positions.size() == 4U);  // shared full tuple merged
+  KIMIA_REQUIRE(deduped.indices.size() == 6U);
+}
+
+KIMIA_TEST(obj_missing_file_returns_error) {
+  kimia::MeshData mesh;
+  std::string error;
+  KIMIA_REQUIRE(!kimia::loadFromOBJFile(kAssets + "does_not_exist.obj", mesh, error));
+  KIMIA_REQUIRE(!error.empty());
+}
+
+// --- FBX ---
+
+KIMIA_TEST(fbx_binary_cube_loads) {
+  std::string error;
+  auto loaded = kimia::assets::loadMesh(kAssets + "box.fbx", error);
+  KIMIA_REQUIRE(loaded.has_value());
+  const kimia::MeshData& mesh = loaded->mesh;
+  KIMIA_REQUIRE(loaded->sourceFormat == "fbx");
+  KIMIA_REQUIRE(mesh.isValid());
+  KIMIA_REQUIRE(mesh.vertexCount() >= 8U);
+  KIMIA_REQUIRE(mesh.triangleCount() >= 12U);
+  KIMIA_REQUIRE(!mesh.name.empty());
+  // Normals must be unit-length (ufbx generates them when missing).
+  for (const Vec3& n : mesh.normals) {
+    KIMIA_REQUIRE(std::abs(n.length() - 1.0) <= 1e-3);
+  }
+}
+
+KIMIA_TEST(fbx_blender_cube_24v_36i) {
+  std::string error;
+  auto loaded = kimia::assets::loadMesh(kAssets + "blender_cube.fbx", error);
+  KIMIA_REQUIRE(loaded.has_value());
+  KIMIA_REQUIRE(loaded->mesh.positions.size() == 24U);
+  KIMIA_REQUIRE(loaded->mesh.indices.size() == 36U);
+}
+
+KIMIA_TEST(fbx_missing_file_returns_error) {
+  std::string error;
+  KIMIA_REQUIRE(!kimia::assets::loadMesh(kAssets + "missing.fbx", error).has_value());
+  KIMIA_REQUIRE(!error.empty());
+}
+
+// --- Mesh text format ---
+
+KIMIA_TEST(mesh_text_roundtrip_identical) {
+  std::string error;
+  kimia::MeshData source;
+  KIMIA_REQUIRE(kimia::loadFromOBJFile(kAssets + "cube.obj", source, error));
+  std::string text;
+  KIMIA_REQUIRE(kimia::meshToText(source, text));
+  kimia::MeshData loaded;
+  KIMIA_REQUIRE(kimia::meshFromText(text, loaded, error));
+  KIMIA_REQUIRE(loaded.name == source.name);
+  KIMIA_REQUIRE(loaded.indices == source.indices);
+  KIMIA_REQUIRE(nearVec3List(loaded.positions, source.positions));
+  KIMIA_REQUIRE(nearVec3List(loaded.normals, source.normals));
+  KIMIA_REQUIRE(loaded.uvs.size() == source.uvs.size());
+  for (usize i = 0; i < loaded.uvs.size(); ++i) {
+    KIMIA_REQUIRE(std::abs(loaded.uvs[i].x - source.uvs[i].x) <= 1e-6);
+    KIMIA_REQUIRE(std::abs(loaded.uvs[i].y - source.uvs[i].y) <= 1e-6);
+  }
+}
+
+KIMIA_TEST(mesh_text_tolerant_load) {
+  std::string error;
+  kimia::MeshData source;
+  KIMIA_REQUIRE(kimia::loadFromOBJFile(kAssets + "cube.obj", source, error));
+  std::string text;
+  KIMIA_REQUIRE(kimia::meshToText(source, text));
+  // Garbage lines and unknown keywords must be skipped.
+  text = "# extra comment\nunknown_token 1 2 3\n" + text + "\n# trailing comment\n";
+  kimia::MeshData loaded;
+  KIMIA_REQUIRE(kimia::meshFromText(text, loaded, error));
+  KIMIA_REQUIRE(loaded.positions.size() == source.positions.size());
+  KIMIA_REQUIRE(loaded.indices == source.indices);
+}
+
+// --- Images (PNG / JPG) ---
+
+KIMIA_TEST(image_png_roundtrip) {
+  std::string error;
+  auto image = kimia::Image::load(kAssets + "2x3.png", error);
+  KIMIA_REQUIRE(image.has_value());
+  KIMIA_REQUIRE(image->width == 6 && image->height == 3 && image->channels == 3);
+  const u8* topLeft = image->at(0, 0);
+  KIMIA_REQUIRE(topLeft[0] == 255 && topLeft[1] == 0 && topLeft[2] == 0);
+  const u8* bottomRight = image->at(5, 2);
+  KIMIA_REQUIRE(bottomRight[0] == 64 && bottomRight[1] == 0 && bottomRight[2] == 64);
+  const u8* middle = image->at(2, 1);
+  KIMIA_REQUIRE(middle[0] == 191 && middle[1] == 191 && middle[2] == 0);  // yellow * 0.75
+  // Encode to PNG bytes and reload: lossless, must be identical.
+  const std::vector<u8> pngBytes = image->encodePNG();
+  KIMIA_REQUIRE(pngBytes.size() > 8U);
+  KIMIA_REQUIRE(image->writePNG(tmpPath("png_roundtrip.png")));
+  auto reloaded = kimia::Image::load(tmpPath("png_roundtrip.png"), error);
+  KIMIA_REQUIRE(reloaded.has_value());
+  KIMIA_REQUIRE(reloaded->width == 6 && reloaded->height == 3 && reloaded->channels == 3);
+  KIMIA_REQUIRE(reloaded->pixels == image->pixels);
+}
+
+KIMIA_TEST(image_jpg_roundtrip) {
+  std::string error;
+  auto image = kimia::Image::load(kAssets + "2x2.jpg", error);
+  KIMIA_REQUIRE(image.has_value());
+  KIMIA_REQUIRE(image->width == 2 && image->height == 2 && image->channels == 3);
+  // JPEG is lossy: allow a small tolerance.
+  const u8* white = image->at(0, 0);
+  KIMIA_REQUIRE(white[0] > 240 && white[1] > 240 && white[2] > 240);
+  const u8* green = image->at(1, 1);
+  KIMIA_REQUIRE(green[0] < 20 && green[1] > 235 && green[2] < 20);
+  KIMIA_REQUIRE(image->writeJPG(tmpPath("jpg_roundtrip.jpg"), 95));
+  auto reloaded = kimia::Image::load(tmpPath("jpg_roundtrip.jpg"), error);
+  KIMIA_REQUIRE(reloaded.has_value());
+  KIMIA_REQUIRE(reloaded->width == 2 && reloaded->height == 2);
+  const u8* green2 = reloaded->at(1, 1);
+  KIMIA_REQUIRE(green2[1] > 235 && green2[0] < 20 && green2[2] < 20);
+}
+
+KIMIA_TEST(image_missing_file_returns_error) {
+  std::string error;
+  KIMIA_REQUIRE(!kimia::Image::load(kAssets + "missing.png", error).has_value());
+  KIMIA_REQUIRE(!error.empty());
+}
+
+// --- Audio (WAV / MP3) ---
+
+KIMIA_TEST(audio_wav_tone_roundtrip) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "tone.wav", error);
+  KIMIA_REQUIRE(audio.has_value());
+  KIMIA_REQUIRE(audio->channels == 2);
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->frameCount == 22050U);
+  KIMIA_REQUIRE(std::abs(audio->durationSeconds() - 0.5) <= 1e-6);
+  // Sine at t=0 starts at zero.
+  KIMIA_REQUIRE(std::abs(audio->samples[0]) <= 0.01f);
+  // Peak amplitude 0.4.
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.35f && peak < 0.45f);
+  // 16-bit WAV round-trip: same shape within quantization noise.
+  KIMIA_REQUIRE(audio->writeWAV(tmpPath("tone.kimi.wav")));
+  auto reloaded = kimia::AudioBuffer::load(tmpPath("tone.kimi.wav"), error);
+  KIMIA_REQUIRE(reloaded.has_value());
+  KIMIA_REQUIRE(reloaded->channels == 2 && reloaded->sampleRate == 44100);
+  KIMIA_REQUIRE(reloaded->frameCount == 22050U);
+  for (usize i = 0; i < reloaded->samples.size(); ++i) {
+    KIMIA_REQUIRE(std::abs(reloaded->samples[i] - audio->samples[i]) <= 0.001f);
+  }
+}
+
+KIMIA_TEST(audio_encode_wav_bytes_match_the_file_writer_and_reload) {
+  // encodeWAV() is what the web page streams as /sfx/<name>: a canonical
+  // 44-byte header + 16-bit little-endian PCM, byte-identical to writeWAV.
+  const kimia::AudioBuffer tone = kimia::AudioBuffer::tone(440.0, 0.1, 0.5, 0.0, 8000);
+  KIMIA_REQUIRE(tone.channels == 1 && tone.sampleRate == 8000 && tone.frameCount == 800U);
+  const std::vector<kimia::u8> bytes = tone.encodeWAV();
+  KIMIA_REQUIRE(bytes.size() == 44U + 800U * 2U);
+  KIMIA_REQUIRE(std::string(bytes.begin(), bytes.begin() + 4) == "RIFF");
+  KIMIA_REQUIRE(std::string(bytes.begin() + 8, bytes.begin() + 16) == "WAVEfmt ");
+  KIMIA_REQUIRE(std::string(bytes.begin() + 36, bytes.begin() + 40) == "data");
+  KIMIA_REQUIRE(bytes[22] == 1 && bytes[23] == 0);      // channels
+  KIMIA_REQUIRE(bytes[24] == 0x40 && bytes[25] == 0x1F);  // 8000 Hz
+  KIMIA_REQUIRE(bytes[34] == 16 && bytes[35] == 0);     // bits per sample
+  KIMIA_REQUIRE(bytes[40] == 0x40 && bytes[41] == 0x06);  // 1600 data bytes
+  KIMIA_REQUIRE(tone.writeWAV(tmpPath("cue.kimi.wav")));
+  std::ifstream in(tmpPath("cue.kimi.wav"), std::ios::binary);
+  const std::vector<kimia::u8> fromFile((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(fromFile == bytes);
+  std::string error;
+  const auto reloaded = kimia::AudioBuffer::load(tmpPath("cue.kimi.wav"), error);
+  KIMIA_REQUIRE(reloaded.has_value());
+  KIMIA_REQUIRE(reloaded->frameCount == 800U);
+  for (usize i = 0; i < reloaded->samples.size(); ++i) {
+    KIMIA_REQUIRE(std::abs(reloaded->samples[i] - tone.samples[i]) <= 0.001f);
+  }
+  KIMIA_REQUIRE(kimia::AudioBuffer{}.encodeWAV().empty());
+}
+
+KIMIA_TEST(audio_procedural_cues_are_deterministic_and_decay) {
+  using kimia::AudioBuffer;
+  // Tone: starts at zero, peaks near the amplitude early, decays to ~0.7%.
+  const AudioBuffer tone = AudioBuffer::tone(660.0, 0.2, 0.6);
+  KIMIA_REQUIRE(tone.channels == 1 && tone.sampleRate == 22050 && tone.frameCount == 4410U);
+  KIMIA_REQUIRE(std::abs(tone.samples[0]) < 0.2f);
+  f32 peak = 0.0f;
+  for (f32 sample : tone.samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.5f && peak <= 0.6f);
+  f32 tail = 0.0f;
+  for (usize i = tone.samples.size() - 100U; i < tone.samples.size(); ++i) tail = std::max(tail, std::abs(tone.samples[i]));
+  KIMIA_REQUIRE(tail < 0.01f);
+  KIMIA_REQUIRE(AudioBuffer::tone(660.0, 0.2).samples == tone.samples);  // deterministic
+  // A pitch slide changes the samples but not the shape.
+  const AudioBuffer slide = AudioBuffer::tone(440.0, 0.2, 0.6, 880.0);
+  KIMIA_REQUIRE(slide.frameCount == tone.frameCount);
+  KIMIA_REQUIRE(slide.samples != tone.samples);
+  // Thock: noise with energy, decaying, same on every run.
+  const AudioBuffer thock = AudioBuffer::thock(0.1);
+  KIMIA_REQUIRE(thock.frameCount == 2205U);
+  f64 headEnergy = 0.0;
+  f64 tailEnergy = 0.0;
+  for (usize i = 0; i < 200U; ++i) headEnergy += static_cast<f64>(thock.samples[i]) * static_cast<f64>(thock.samples[i]);
+  for (usize i = thock.samples.size() - 200U; i < thock.samples.size(); ++i) {
+    tailEnergy += static_cast<f64>(thock.samples[i]) * static_cast<f64>(thock.samples[i]);
+  }
+  KIMIA_REQUIRE(headEnergy > 0.01);
+  KIMIA_REQUIRE(tailEnergy < headEnergy * 0.01);
+  KIMIA_REQUIRE(AudioBuffer::thock(0.1).samples == thock.samples);
+  // Concat: back to back; mismatched formats keep the first.
+  const AudioBuffer both = AudioBuffer::concat(tone, thock);
+  KIMIA_REQUIRE(both.frameCount == 4410U + 2205U);
+  KIMIA_REQUIRE(both.samples.size() == 6615U);
+  KIMIA_REQUIRE(both.samples[4410U] == thock.samples[0]);
+  const AudioBuffer other = AudioBuffer::tone(440.0, 0.1, 0.5, 0.0, 8000);
+  KIMIA_REQUIRE(AudioBuffer::concat(tone, other).frameCount == tone.frameCount);
+  KIMIA_REQUIRE(AudioBuffer::concat(AudioBuffer{}, tone).frameCount == tone.frameCount);
+  // Degenerate arguments give an empty buffer, never a crash.
+  KIMIA_REQUIRE(AudioBuffer::tone(0.0, 1.0).isEmpty());
+  KIMIA_REQUIRE(AudioBuffer::tone(440.0, 0.0).isEmpty());
+  KIMIA_REQUIRE(AudioBuffer::thock(-1.0).isEmpty());
+}
+
+KIMIA_TEST(audio_mp3_440hz_loads_with_signal) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "440hz.mp3", error);
+  KIMIA_REQUIRE(audio.has_value());
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->channels > 0);
+  KIMIA_REQUIRE(audio->frameCount > 0U);
+  KIMIA_REQUIRE(audio->durationSeconds() > 0.5);
+  // Real tone: the decoded signal must carry energy (a silent file would not).
+  f64 energy = 0.0;
+  const usize channelCount = static_cast<usize>(audio->channels);
+  for (f32 sample : audio->samples) energy += static_cast<f64>(sample) * static_cast<f64>(sample);
+  const f64 rms = std::sqrt(energy / static_cast<f64>(audio->samples.size() / channelCount));
+  KIMIA_REQUIRE(rms > 0.05);
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.2f);
+  // Downmix halves the sample count and keeps the same duration.
+  const std::vector<f32> mono = audio->downmixMono();
+  KIMIA_REQUIRE(mono.size() == static_cast<usize>(audio->frameCount));
+}
+
+KIMIA_TEST(audio_missing_file_returns_error) {
+  std::string error;
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.wav", error).has_value());
+  KIMIA_REQUIRE(!error.empty());
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.mp3", error).has_value());
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.ogg", error).has_value());
+  KIMIA_REQUIRE(!kimia::AudioBuffer::load(kAssets + "missing.flac", error).has_value());
+}
+
+KIMIA_TEST(audio_ogg_vorbis_loads_with_real_signal) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "sfx.ogg", error);
+  KIMIA_REQUIRE(audio.has_value());
+  // The asset is a real-world Vorbis file (chromium's media test "sfx"):
+  // mono, 44100 Hz, 15435 total samples (0.35 s).
+  KIMIA_REQUIRE(audio->channels == 1);
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->frameCount == 15435U);
+  KIMIA_REQUIRE(std::abs(audio->durationSeconds() - 15435.0 / 44100.0) <= 1e-6);
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.01f);  // decoded audio carries a real signal
+  KIMIA_REQUIRE(audio->writeWAV(tmpPath("sfx.kimi.wav")));
+}
+
+KIMIA_TEST(audio_flac_loads_with_real_signal) {
+  std::string error;
+  auto audio = kimia::AudioBuffer::load(kAssets + "tone.flac", error);
+  KIMIA_REQUIRE(audio.has_value());
+  // IETF FLAC test vector "60 - mono audio": mono, 44100 Hz, 227247 samples.
+  KIMIA_REQUIRE(audio->channels == 1);
+  KIMIA_REQUIRE(audio->sampleRate == 44100);
+  KIMIA_REQUIRE(audio->frameCount == 227247U);
+  KIMIA_REQUIRE(std::abs(audio->durationSeconds() - 227247.0 / 44100.0) <= 1e-3);
+  f32 peak = 0.0f;
+  for (f32 sample : audio->samples) peak = std::max(peak, std::abs(sample));
+  KIMIA_REQUIRE(peak > 0.1f);  // the corpus tone is not silence
+  KIMIA_REQUIRE(audio->writeWAV(tmpPath("tone.kimi.wav")));
+}
+
+// --- OBJ materials (MTL) and FBX materials/textures ---
+
+KIMIA_TEST(obj_mtl_splits_usemtl_into_submeshes) {
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(kAssets + "cube_usemtl.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  // 12 triangle faces: usemtl mtl3 x2, mtl x3, mtl2 x4, mtl x3 again (a
+  // material can come back; the runs stay separate sub-meshes).
+  KIMIA_REQUIRE(asset->mesh.triangleCount() == 12U);
+  KIMIA_REQUIRE(asset->subMeshes.size() == 4U);
+  KIMIA_REQUIRE(asset->subMeshes[0].materialName == "mtl3");
+  KIMIA_REQUIRE(asset->subMeshes[1].materialName == "mtl");
+  KIMIA_REQUIRE(asset->subMeshes[2].materialName == "mtl2");
+  KIMIA_REQUIRE(asset->subMeshes[3].materialName == "mtl");
+  KIMIA_REQUIRE(asset->subMeshes[0].triangleCount() == 2U);
+  KIMIA_REQUIRE(asset->subMeshes[1].triangleCount() == 3U);
+  KIMIA_REQUIRE(asset->subMeshes[2].triangleCount() == 4U);
+  KIMIA_REQUIRE(asset->subMeshes[3].triangleCount() == 3U);
+  // Sub-meshes partition the combined mesh's faces; each sub-mesh is
+  // internally deduped, so its vertex count can be lower than its slice.
+  kimia::u64 totalVerts = 0U;
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    KIMIA_REQUIRE(sub.isValid());
+    for (kimia::u32 index : sub.indices) {
+      KIMIA_REQUIRE(index < sub.vertexCount());
+    }
+    totalVerts += sub.vertexCount();
+  }
+  KIMIA_REQUIRE(totalVerts <= asset->mesh.vertexCount());
+  // "mtl3" is referenced but not defined in the MTL: it becomes a
+  // default-white placeholder so the name always resolves.
+  KIMIA_REQUIRE(asset->materials.size() == 3U);
+  KIMIA_REQUIRE(asset->materials[0].name == "mtl");
+  KIMIA_REQUIRE(asset->materials[1].name == "mtl2");
+  KIMIA_REQUIRE(asset->materials[2].name == "mtl3");
+  KIMIA_REQUIRE(near3(asset->materials[2].color, Vec3{1.0, 1.0, 1.0}));
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    bool found = false;
+    for (const kimia::MaterialData& material : asset->materials) {
+      if (material.name == sub.materialName) found = true;
+    }
+    KIMIA_REQUIRE(found);
+  }
+}
+
+KIMIA_TEST(obj_mtl_spider_loads_materials_with_colors_and_textures) {
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(kAssets + "spider.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 5U);
+  KIMIA_REQUIRE(asset->materials[0].name == "Skin");
+  KIMIA_REQUIRE(asset->materials[1].name == "Brusttex");
+  KIMIA_REQUIRE(asset->materials[2].name == "HLeibTex");
+  KIMIA_REQUIRE(asset->materials[3].name == "BeinTex");
+  KIMIA_REQUIRE(asset->materials[4].name == "Augentex");
+  // Real Kd values from spider.mtl.
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{0.827451, 0.792157, 0.772549}, 1e-6));
+  // map_Kd ".\wal67ar_small.jpg" resolved against the MTL's directory.
+  KIMIA_REQUIRE(asset->materials[0].texturePath.size() > 9U);
+  KIMIA_REQUIRE(asset->materials[0].texturePath.substr(asset->materials[0].texturePath.size() - 18U) ==
+                "/wal67ar_small.jpg");
+  KIMIA_REQUIRE(!asset->subMeshes.empty());
+  kimia::u64 totalVerts = 0U;
+  for (const kimia::MeshData& sub : asset->subMeshes) {
+    KIMIA_REQUIRE(sub.isValid());
+    for (kimia::u32 index : sub.indices) {
+      KIMIA_REQUIRE(index < sub.vertexCount());
+    }
+    totalVerts += sub.vertexCount();
+  }
+  KIMIA_REQUIRE(totalVerts <= asset->mesh.vertexCount());
+}
+
+KIMIA_TEST(obj_mtl_texture_path_points_at_a_loadable_image) {
+  // A tiny authored scene: OBJ + MTL + PNG. The material entry must resolve
+  // the texture path so that placing the image on the object "just works".
+  const std::string dir = std::string(KIMIA_TEST_TMP) + "/";
+  {
+    std::ofstream obj(dir + "mtl_test.obj");
+    obj << "mtllib mtl_test.mtl\nusemtl mat\nv 0 0 0\nv 1 0 0\nv 0 0 1\nf 1 2 3\n";
+  }
+  {
+    std::ofstream mtl(dir + "mtl_test.mtl");
+    mtl << "newmtl mat\nKd 0.8 0.4 0.2\nmap_Kd tex.png\n";
+  }
+  kimia::Image image;
+  image.width = 2;
+  image.height = 2;
+  image.channels = 3;
+  image.pixels = {255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0};
+  KIMIA_REQUIRE(image.writePNG(dir + "tex.png"));
+
+  std::string error;
+  auto asset = kimia::assets::loadOBJAsset(dir + "mtl_test.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 1U);
+  KIMIA_REQUIRE(asset->materials[0].name == "mat");
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{0.8, 0.4, 0.2}, 1e-9));
+  KIMIA_REQUIRE(asset->materials[0].texturePath == dir + "tex.png");
+  KIMIA_REQUIRE(asset->subMeshes.size() == 1U);
+  KIMIA_REQUIRE(asset->subMeshes[0].materialName == "mat");
+  // The resolved texture is a real, loadable image.
+  auto texture = kimia::assets::loadImage(asset->materials[0].texturePath, error);
+  KIMIA_REQUIRE(texture.has_value());
+  KIMIA_REQUIRE(texture->width == 2 && texture->height == 2);
+}
+
+KIMIA_TEST(fbx_material_mapping_reports_material_colors) {
+  std::string error;
+  auto asset = kimia::assets::loadFBXAsset(kAssets + "material_mapping.fbx", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(!asset->materials.empty());
+  KIMIA_REQUIRE(!asset->subMeshes.empty());
+  bool sawNamed = false;
+  for (const kimia::MaterialData& material : asset->materials) {
+    if (!material.name.empty()) sawNamed = true;
+    KIMIA_REQUIRE(material.color.x >= -1e-6 && material.color.x <= 1.0 + 1e-6);
+    KIMIA_REQUIRE(material.color.y >= -1e-6 && material.color.y <= 1.0 + 1e-6);
+    KIMIA_REQUIRE(material.color.z >= -1e-6 && material.color.z <= 1.0 + 1e-6);
+  }
+  KIMIA_REQUIRE(sawNamed);
+  // The combined mesh is the first sub-mesh, material name included.
+  KIMIA_REQUIRE(asset->mesh.materialName == asset->subMeshes.front().materialName);
+  KIMIA_REQUIRE(asset->subMeshes.front().isValid());
+}
+
+KIMIA_TEST(fbx_embedded_texture_extracts_next_to_file) {
+  // Copy the asset into the test tmp dir: extraction writes beside the
+  // source file and must not pollute the repository's asset directory.
+  const std::string src = kAssets + "textured.fbx";
+  std::ifstream input(src, std::ios::binary);
+  KIMIA_REQUIRE(input.good());
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  input.close();
+  const std::string dst = tmpPath("textured_copy.fbx");
+  {
+    std::ofstream output(dst, std::ios::binary);
+    output << buffer.str();
+  }
+
+  std::string error;
+  auto asset = kimia::assets::loadFBXAsset(dst, error);
+  KIMIA_REQUIRE(asset.has_value());
+  bool sawTexture = false;
+  for (const kimia::MaterialData& material : asset->materials) {
+    if (material.texturePath.empty()) continue;
+    sawTexture = true;
+    KIMIA_REQUIRE(material.texturePath.size() > 4U);
+    KIMIA_REQUIRE(material.texturePath.substr(material.texturePath.size() - 4U) == ".png");
+    auto image = kimia::assets::loadImage(material.texturePath, error);
+    KIMIA_REQUIRE(image.has_value());
+    KIMIA_REQUIRE(image->width > 0 && image->height > 0);
+  }
+  KIMIA_REQUIRE(sawTexture);  // the embedded texture was extracted and is loadable
+}
+
+// --- Pipeline dispatch ---
+
+KIMIA_TEST(pipeline_detects_types_case_insensitive) {
+  KIMIA_REQUIRE(kimia::assets::detectType("a.obj") == kimia::assets::AssetType::mesh);
+  KIMIA_REQUIRE(kimia::assets::detectType("A.FBX") == kimia::assets::AssetType::mesh);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.PNG") == kimia::assets::AssetType::image);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.jpg") == kimia::assets::AssetType::image);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.jpeg") == kimia::assets::AssetType::image);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.wav") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.Mp3") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.OGG") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(kimia::assets::detectType("x.flac") == kimia::assets::AssetType::audio);
+  KIMIA_REQUIRE(!kimia::assets::detectType("x.txt").has_value());
+  KIMIA_REQUIRE(!kimia::assets::detectType("no_extension").has_value());
+  KIMIA_REQUIRE(!kimia::assets::detectType("x.mtl").has_value());   // auxiliary, read via OBJ
+  KIMIA_REQUIRE(!kimia::assets::detectType("x.blend").has_value()); // export path, not a format
+}
+
+KIMIA_TEST(pipeline_blend_error_points_at_the_export_path) {
+  std::string error;
+  KIMIA_REQUIRE(!kimia::assets::loadMesh("scene.blend", error).has_value());
+  KIMIA_REQUIRE(error.find("Export") != std::string::npos);
+  KIMIA_REQUIRE(error.find(".obj") != std::string::npos);
+  KIMIA_REQUIRE(error.find(".fbx") != std::string::npos);
+}
+
+KIMIA_TEST(pipeline_loads_each_format) {
+  std::string error;
+  auto mesh = kimia::assets::loadMesh(kAssets + "cube.obj", error);
+  KIMIA_REQUIRE(mesh.has_value() && mesh->sourceFormat == "obj");
+  mesh = kimia::assets::loadMesh(kAssets + "blender_cube.fbx", error);
+  KIMIA_REQUIRE(mesh.has_value() && mesh->sourceFormat == "fbx");
+  KIMIA_REQUIRE(kimia::assets::loadImage(kAssets + "2x3.png", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadImage(kAssets + "2x2.jpg", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "tone.wav", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "440hz.mp3", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "sfx.ogg", error).has_value());
+  KIMIA_REQUIRE(kimia::assets::loadAudio(kAssets + "tone.flac", error).has_value());
+}
+
+KIMIA_TEST(obj_with_missing_mtl_still_loads_the_mesh) {
+  // A model dropped without its .mtl must load: the mesh survives with
+  // default-white placeholder materials (Unity-style tolerance).
+  const std::string path = tmpPath("no_mtl.obj");
+  {
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+    KIMIA_REQUIRE(file != nullptr);
+    const char* text =
+        "mtllib gone.mtl\n"
+        "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+        "usemtl Red\n"
+        "f 1 2 3\nf 1 3 4\n";
+    std::fwrite(text, 1U, std::strlen(text), file);
+    std::fclose(file);
+  }
+  std::string error;
+  auto loaded = kimia::assets::loadMesh(path, error);
+  KIMIA_REQUIRE(loaded.has_value());
+  // dedupe=false: one vertex per face corner -> 6 positions for 2 triangles.
+  KIMIA_REQUIRE(loaded->mesh.positions.size() == 6U);
+  KIMIA_REQUIRE(loaded->mesh.indices.size() == 6U);
+  auto asset = kimia::assets::loadOBJAsset(path, error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(asset->materials.size() == 1U);
+  KIMIA_REQUIRE(asset->materials[0].name == "Red");
+  KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{1.0, 1.0, 1.0}));  // placeholder
+}
