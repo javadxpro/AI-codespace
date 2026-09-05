@@ -2,6 +2,8 @@
 
 موتور بازی C++17 و ویرایشگر گزینه‌محور KIMIA World — ساخته‌شده از صفر، بدون وابستگی غیرآزاد.
 
+**نسخهٔ موتور: `1405.06.14`** (= تاریخ شمسی انتشار؛ `kimia_world --version`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
+
 ## وضعیت
 
 - [x] هستهٔ مستقل (Types، Log، Profiler، FixedTimeStep)
@@ -27,7 +29,7 @@
 ```bash
 cmake -B build -DKIMIA_WERROR=ON
 cmake --build build -j4
-./build/bin/kimia_tests      # 189/189 tests passed
+./build/bin/kimia_tests      # 190/190 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -43,7 +45,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 189/189 tests passed
+./build-nosdl/bin/kimia_tests    # 190/190 tests passed
 ```
 
 ## هدف: سه بازی روی یک موتور
@@ -53,9 +55,9 @@ cmake --build build-nosdl -j4
 
 | بازی | پروفایل | زمین | توپ |
 | --- | --- | --- | --- |
-| فوتبال خیابونی ایران (فانتزی + حرکات نمایشی) | `Profiles/street.kimiaprofile` | ۵ × ۱۶ آسفالت | فانتزی |
-| زمین چمن (فوتبال دقیق و حرفه‌ای) | `Profiles/grass.kimiaprofile` | ۲۵ × ۴۰ چمن | دقیق |
-| بتل گراند (گیم‌پلی دقیق + گرافیک بالا) | `Profiles/battleground.kimiaprofile` | ۴۰ × ۴۰ | دقیق |
+| فوتبال خیابونی ایران (فانتزی + حرکات نمایشی، ۵ در برابر ۵) | `Profiles/street.kimiaprofile` | ۵ × ۱۶ آسفالت | فانتزی |
+| زمین چمن (فوتبال دقیق و حرفه‌ای، ۱۱ در برابر ۱۱) | `Profiles/grass.kimiaprofile` | ۲۵ × ۴۰ چمن | دقیق |
+| بتل گراند (PUBG-مانند، بدون pay-to-win؛ آرنا ۴×۴ و بتل گراند ۱۲ یا ۸ تیم ۴ نفره) | `Profiles/battleground.kimiaprofile` | ۴۰ × ۴۰ | دقیق |
 
 پروفایل یک فایل متنی است: عددها را عوض کنید یا فایل پنجمی کنارشان بگذارید —
 بازی جدید بدون یک خط کد در منو ظاهر می‌شود. جزئیات در
