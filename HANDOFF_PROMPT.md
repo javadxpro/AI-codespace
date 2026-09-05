@@ -35,6 +35,17 @@ an option-driven Unity-like editor (section 8).
   (`-DKIMIA_ENABLE_SDL2=ON|OFF`), zlib via PNG encoding.
 - Small, staged **conventional commits** (`feat(core):`, `fix(physics):`,
   `docs(...)`). Docs for every shipped system in `Documentation/`.
+- **Division of labour: I build and test the game; you only add
+  capabilities** (tools, objects, rules, profile keys) that I then use to
+  make and tune the game in its different modes. Do not decide the game for
+  me and do not ship "finished" content.
+- **Version numbers move by the size of the change, never by the date:**
+  `MAJOR.MINOR.PATCH` in `Engine/Core/include/kimia/Version.h` +
+  `CMakeLists.txt` (kept identical by a test). Small change or bug fix →
+  `+0.0.1`; a stage or a big change → `+0.1.0`; MAJOR only when I say so.
+  Every bump gets a new entry at the TOP of `CHANGELOG.md` (version, what
+  changed, dev time, today's date) — the test requires the newest entry to be
+  the current version. Never rewrite old entries.
 
 ## 3. HOW to build it bug-free (the method — follow it literally)
 
