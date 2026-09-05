@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 # Engine version = Jalali release date (YEAR.MONTH.DAY). The same literal lives
 # in Engine/Core/include/kimia/Version.h; the configure step below and a unit
 # test keep the two identical. Bump both + add a CHANGELOG.md entry per release.
-project(KIMIA VERSION 1405.06.14.2 LANGUAGES C CXX)
+project(KIMIA VERSION 1405.06.14.3 LANGUAGES C CXX)
 file(STRINGS Engine/Core/include/kimia/Version.h KIMIA_VERSION_LINE REGEX "#define KIMIA_ENGINE_VERSION \"")
 string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" KIMIA_HEADER_VERSION "${KIMIA_VERSION_LINE}")
 if(NOT KIMIA_HEADER_VERSION STREQUAL PROJECT_VERSION)
