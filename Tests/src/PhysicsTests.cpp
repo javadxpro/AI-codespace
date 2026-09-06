@@ -972,3 +972,94 @@ KIMIA_TEST(physics_dry_weather_changes_nothing_at_all) {
   KIMIA_REQUIRE(untouched.y == explicitDry.y);
   KIMIA_REQUIRE(untouched.z == explicitDry.z);
 }
+
+// --- Stage 30: raycasting ---
+
+KIMIA_TEST(physics_raycast_hits_the_nearest_box_with_the_right_normal) {
+  PhysicsWorld world;
+  // Every PhysicsWorld ships with character 1 (the player) at the origin,
+  // so a ray fired from there starts inside a body. Move it out of the way.
+  world.character()->position = Vec3{0.0, 50.0, 0.0};
+  // Two boxes in a line: a ray must stop at the FIRST one.
+  const u32 nearBox = world.addBox(Vec3{0.0, 0.0, 5.0}, Vec3{1.0, 1.0, 1.0});
+  world.addBox(Vec3{0.0, 0.0, 12.0}, Vec3{1.0, 1.0, 1.0});
+
+  const PhysicsWorld::RayHit hit = world.raycast(Vec3{0.0, 0.0, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0);
+  KIMIA_REQUIRE(hit.hit);
+  KIMIA_REQUIRE(hit.box == nearBox);
+  KIMIA_REQUIRE(hit.character == 0U);
+  // The near face of the first box is at z = 4.
+  KIMIA_REQUIRE(near(hit.distance, 4.0, 1e-9));
+  KIMIA_REQUIRE(near(hit.point.z, 4.0, 1e-9));
+  // Struck on the face pointing back at the shooter.
+  KIMIA_REQUIRE(near(hit.normal.z, -1.0, 1e-9));
+
+  // A ray pointing the other way hits nothing at all.
+  KIMIA_REQUIRE(!world.raycast(Vec3{0.0, 0.0, 0.0}, Vec3{0.0, 0.0, -1.0}, 50.0).hit);
+  // Nor does one that stops short.
+  KIMIA_REQUIRE(!world.raycast(Vec3{0.0, 0.0, 0.0}, Vec3{0.0, 0.0, 1.0}, 3.0).hit);
+  // A ray that misses sideways finds nothing.
+  KIMIA_REQUIRE(!world.raycast(Vec3{9.0, 0.0, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0).hit);
+}
+
+KIMIA_TEST(physics_raycast_finds_characters_and_skips_the_shooter) {
+  PhysicsWorld world;
+  // Character 1 always exists; make IT the shooter rather than adding a
+  // second body on top of it.
+  const u32 me = kimia::kPrimaryCharacter;
+  world.character()->position = Vec3{0.0, 0.5, 0.0};
+  kimia::CharacterBody target;
+  target.position = Vec3{0.0, 0.5, 6.0};
+  const u32 them = world.addCharacter(target);
+
+  // Firing from inside my own body must not hit me.
+  const PhysicsWorld::RayHit hit = world.raycast(Vec3{0.0, 0.5, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0, me);
+  KIMIA_REQUIRE(hit.hit);
+  KIMIA_REQUIRE(hit.character == them);
+  KIMIA_REQUIRE(hit.box == 0U);
+  // Default half extents are 0.3 deep, so the near face is at z = 5.7.
+  KIMIA_REQUIRE(near(hit.distance, 5.7, 1e-9));
+
+  // Without the ignore, the shooter's own body is the nearest thing.
+  const PhysicsWorld::RayHit self = world.raycast(Vec3{0.0, 0.5, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0);
+  KIMIA_REQUIRE(self.hit);
+  KIMIA_REQUIRE(self.character == me);
+}
+
+KIMIA_TEST(physics_raycast_stops_at_cover_between_shooter_and_target) {
+  // The whole point of cover: a wall in the way means the shot does not
+  // reach the man behind it.
+  PhysicsWorld world;
+  world.character()->position = Vec3{0.0, 50.0, 0.0};  // the built-in player, out of the way
+  kimia::CharacterBody target;
+  target.position = Vec3{0.0, 0.5, 10.0};
+  const u32 them = world.addCharacter(target);
+  KIMIA_REQUIRE(world.raycast(Vec3{0.0, 0.5, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0).character == them);
+
+  const u32 wall = world.addBox(Vec3{0.0, 0.5, 5.0}, Vec3{2.0, 2.0, 0.5});
+  const PhysicsWorld::RayHit blocked = world.raycast(Vec3{0.0, 0.5, 0.0}, Vec3{0.0, 0.0, 1.0}, 50.0);
+  KIMIA_REQUIRE(blocked.hit);
+  KIMIA_REQUIRE(blocked.box == wall);
+  KIMIA_REQUIRE(blocked.character == 0U);  // the target is safe behind it
+  KIMIA_REQUIRE(blocked.distance < 5.0);
+}
+
+KIMIA_TEST(physics_raycast_finds_the_ground_and_ignores_a_zero_ray) {
+  PhysicsWorld world;
+  world.character()->position = Vec3{99.0, 0.5, 99.0};  // the built-in player, far aside
+  world.addPlane(0.0);
+  // Firing down at 45 degrees from 3 m up meets the floor 3 m along.
+  const PhysicsWorld::RayHit down = world.raycast(Vec3{0.0, 3.0, 0.0}, Vec3{0.0, -1.0, 1.0}, 50.0);
+  KIMIA_REQUIRE(down.hit);
+  KIMIA_REQUIRE(down.ground);
+  KIMIA_REQUIRE(near(down.point.y, 0.0, 1e-9));
+  KIMIA_REQUIRE(near(down.point.z, 3.0, 1e-9));
+  KIMIA_REQUIRE(near(down.normal.y, 1.0, 1e-9));
+
+  // Firing up from above the floor never comes back down to it.
+  KIMIA_REQUIRE(!world.raycast(Vec3{0.0, 3.0, 0.0}, Vec3{0.0, 1.0, 0.0}, 50.0).hit);
+  // A direction of zero length is not a ray.
+  KIMIA_REQUIRE(!world.raycast(Vec3{0.0, 3.0, 0.0}, Vec3{0.0, 0.0, 0.0}, 50.0).hit);
+  // Neither is a zero range.
+  KIMIA_REQUIRE(!world.raycast(Vec3{0.0, 3.0, 0.0}, Vec3{0.0, -1.0, 0.0}, 0.0).hit);
+}

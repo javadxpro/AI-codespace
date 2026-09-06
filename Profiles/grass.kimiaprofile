@@ -21,3 +21,5 @@ ai 0.850000
 camera broadcast
 rules on
 stamina 0.550000
+arena off
+weapon 100 30 6.000000 17 60.000000 1.800000

@@ -264,11 +264,19 @@ void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cu
     if (id == kimia::kPrimaryCharacter) continue;
     const Vec3 at = editor.squadPosition(id);
     const kimia::u32 team = editor.squadTeam(id);
-    const bool keeper = id == editor.aiKeeper(team);
-    const Vec3 color = keeper ? keeperColor : (team == 1U ? ourColor : theirColor);
-    scene.objects.push_back({&cube,
-                             Mat4::translation(at) * Mat4::scaling(Vec3{0.6, 1.0, 0.6}),
-                             color, 1.0});
+    Vec3 color = team == 1U ? ourColor : theirColor;
+    Vec3 size{0.6, 1.0, 0.6};
+    if (editor.arenaMode()) {
+      // A downed fighter lies flat and goes grey, so it is obvious at a
+      // glance who is still in the fight.
+      if (editor.downed(id)) {
+        color = Vec3{0.45, 0.45, 0.45};
+        size = Vec3{0.9, 0.25, 0.9};
+      }
+    } else if (id == editor.aiKeeper(team)) {
+      color = keeperColor;
+    }
+    scene.objects.push_back({&cube, Mat4::translation(at) * Mat4::scaling(size), color, 1.0});
   }
 }
 
@@ -458,6 +466,12 @@ int main(int argc, char** argv) {
     // Skill moves (stage 26): tap N to nutmeg, O to roulette, U to juggle.
     // They are taps because you commit to them — there is no holding back
     // half way through a nutmeg.
+    // Arena mode (stage 30): hold F to fire, tap R to reload. The football
+    // keys below are harmless there — there is no ball to kick.
+    if (editor.arenaMode()) {
+      editor.setFireHeld(input.down(Key::F));
+      if (input.pressed(Key::R)) editor.reload();
+    }
     if (input.pressed(Key::N)) editor.startTrick(WorldEditor::Trick::Nutmeg);
     if (input.pressed(Key::O)) editor.startTrick(WorldEditor::Trick::Roulette);
     if (input.pressed(Key::U)) editor.startTrick(WorldEditor::Trick::Juggle);
@@ -540,6 +554,23 @@ int main(int argc, char** argv) {
     // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
     addSquads(scene, editor, cubeMesh);
+    // Arena tracer: a thin line along the last shot, so a firefight is
+    // readable instead of invisible.
+    if (editor.arenaMode() && editor.playing()) {
+      const Vec3 from = editor.lastShotFrom();
+      const Vec3 to = editor.lastShotTo();
+      const Vec3 along = to - from;
+      const f64 length = along.length();
+      if (length > 0.01) {
+        const i32 beads = 12;
+        for (i32 i = 1; i <= beads; ++i) {
+          const f64 t = static_cast<f64>(i) / static_cast<f64>(beads + 1);
+          const Vec3 at = from + along * t;
+          scene.objects.push_back({&cubeMesh, Mat4::translation(at) * Mat4::scaling(Vec3{0.05, 0.05, 0.05}),
+                                   Vec3{1.0, 0.9, 0.4}, 0.9});
+        }
+      }
+    }
     addAimIndicator(scene, editor, cubeMesh);
     addCurrentCupFlag(scene, editor, cubeMesh);
     if (editor.selectingObject() && editor.selectedEntity() != nullptr) {

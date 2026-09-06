@@ -249,6 +249,9 @@ std::vector<GameProfile> builtinProfiles() {
   battleground.kickUp = 1.2;
   battleground.teamSize = 4U;         // تیم‌های ۴ نفره
   battleground.matchSeconds = 420.0;  // ۷ دقیقه
+  battleground.arena = true;   // the shooter, not football
+  battleground.fireRate = 6.0;
+  battleground.damage = 17U;   // six hits: a one-second time-to-kill
   battleground.camera = CameraStyle::Chase;
   battleground.aiSkill = 0.7;
   battleground.hour = 20.5;  // dusk raid
@@ -311,6 +314,10 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back(std::string("camera ") + cameraStyleName(profile.camera));
   out.push_back(std::string("rules ") + (profile.rules ? "on" : "off"));
   out.push_back("stamina " + formatFixed6(profile.stamina));
+  out.push_back(std::string("arena ") + (profile.arena ? "on" : "off"));
+  out.push_back("weapon " + std::to_string(profile.health) + ' ' + std::to_string(profile.magazine) + ' ' +
+                formatFixed6(profile.fireRate) + ' ' + std::to_string(profile.damage) + ' ' +
+                formatFixed6(profile.range) + ' ' + formatFixed6(profile.reloadTime));
   return out;
 }
 
@@ -454,6 +461,31 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 hour = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
     out.hour = clampF64(hour, 0.0, kProfileHourMax);
+    return true;
+  }
+  if (key == "arena") {
+    std::string value;
+    if (!(tokens >> value)) return false;
+    if (value != "on" && value != "off") return false;
+    out.arena = value == "on";
+    return true;
+  }
+  if (key == "weapon") {
+    // All six numbers or none: a half-written weapon line is ignored whole
+    // rather than leaving a rifle with someone else's reload time.
+    std::string a1, a2, a3, a4, a5, a6;
+    f64 health = 0.0, magazine = 0.0, fireRate = 0.0, damage = 0.0, range = 0.0, reload = 0.0;
+    if (!(tokens >> a1 >> a2 >> a3 >> a4 >> a5 >> a6)) return false;
+    if (!parseF64Token(a1, health) || !parseF64Token(a2, magazine) || !parseF64Token(a3, fireRate) ||
+        !parseF64Token(a4, damage) || !parseF64Token(a5, range) || !parseF64Token(a6, reload)) {
+      return false;
+    }
+    out.health = static_cast<u32>(clampF64(std::floor(health), 1.0, static_cast<f64>(kProfileHealthMax)));
+    out.magazine = static_cast<u32>(clampF64(std::floor(magazine), 1.0, static_cast<f64>(kProfileMagazineMax)));
+    out.fireRate = clampF64(fireRate, 0.1, kProfileFireRateMax);
+    out.damage = static_cast<u32>(clampF64(std::floor(damage), 1.0, static_cast<f64>(kProfileDamageMax)));
+    out.range = clampF64(range, 1.0, kProfileRangeMax);
+    out.reloadTime = clampF64(reload, 0.1, kProfileReloadMax);
     return true;
   }
   if (key == "rules") {

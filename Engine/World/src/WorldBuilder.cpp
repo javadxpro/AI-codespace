@@ -529,6 +529,11 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
               {"چرخ ←", "q"},
               {"چرخ →", "e"}};
     }
+    if (arenaMode()) {
+      // Hold to fire, like a real trigger; the arrows aim and move.
+      return {{"↑", "up"},   {"←", "left"}, {"↓", "down"}, {"→", "right"},
+              {"شلیک", "f"}};
+    }
     if (teamSize() > 1U) {
       return {{"↑", "up"},   {"←", "left"},  {"↓", "down"},  {"→", "right"},
               {"دریبل", "c"}, {"چرخ ←", "q"}, {"چرخ →", "e"}};
@@ -543,6 +548,10 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
     return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
   }
   if (!playing() || screen_ == Screen::RoundEnd) return {};
+  // Arena mode (stage 30): a rifle, not a ball.
+  if (arenaMode()) {
+    return {{"شلیک", "f"}, {"خشاب", "r"}, {"منو", "b"}};
+  }
   if (shotMode()) return {{"توپ از نو", "r"}, {"منو", "b"}};
   // Skill moves (stage 26) are tap moves: you commit to them, so they are
   // one press, not something you hold. Only the games that allow them.

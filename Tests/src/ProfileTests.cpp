@@ -176,7 +176,9 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "ai 0.600000\n"
                 "camera broadcast\n"
                 "rules off\n"
-                "stamina 0.000000\n");
+                "stamina 0.000000\n"
+                "arena off\n"
+                "weapon 100 30 6.000000 17 60.000000 1.800000\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -200,7 +202,9 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "ai 0.000000\n"
                 "camera chase\n"
                 "rules off\n"
-                "stamina 0.000000\n");
+                "stamina 0.000000\n"
+                "arena off\n"
+                "weapon 100 30 6.000000 17 60.000000 1.800000\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {

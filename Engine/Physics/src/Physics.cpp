@@ -718,4 +718,111 @@ void PhysicsWorld::moveCharacter(u32 id, f64 dt, const Vec3& desiredVelocity) {
   if (character.onGround && !characterSupported(character, id)) character.onGround = false;
 }
 
+// --- Raycasting (stage 30) ---
+
+namespace {
+
+// Slab test: where does a ray enter and leave an axis-aligned box?
+// Returns false when it misses or the box is entirely behind the origin.
+bool rayBox(const Vec3& origin, const Vec3& direction, const Vec3& center, const Vec3& halfExtents,
+            f64 maxDistance, f64& outDistance, Vec3& outNormal) {
+  f64 nearest = 0.0;
+  f64 farthest = maxDistance;
+  i32 nearAxis = 0;
+  f64 nearSign = 0.0;
+
+  const f64 o[3] = {origin.x, origin.y, origin.z};
+  const f64 d[3] = {direction.x, direction.y, direction.z};
+  const f64 c[3] = {center.x, center.y, center.z};
+  const f64 h[3] = {halfExtents.x, halfExtents.y, halfExtents.z};
+
+  for (i32 axis = 0; axis < 3; ++axis) {
+    const f64 lo = c[axis] - h[axis];
+    const f64 hi = c[axis] + h[axis];
+    if (std::abs(d[axis]) < 1e-12) {
+      // Parallel to this pair of faces: a miss unless we start between them.
+      if (o[axis] < lo || o[axis] > hi) return false;
+      continue;
+    }
+    const f64 inverse = 1.0 / d[axis];
+    f64 t1 = (lo - o[axis]) * inverse;
+    f64 t2 = (hi - o[axis]) * inverse;
+    f64 sign = -1.0;
+    if (t1 > t2) {
+      const f64 swap = t1;
+      t1 = t2;
+      t2 = swap;
+      sign = 1.0;
+    }
+    if (t1 > nearest) {
+      nearest = t1;
+      nearAxis = axis;
+      nearSign = sign;
+    }
+    if (t2 < farthest) farthest = t2;
+    if (nearest > farthest) return false;
+  }
+  outDistance = nearest;
+  outNormal = Vec3{0.0, 0.0, 0.0};
+  if (nearAxis == 0) outNormal.x = nearSign;
+  else if (nearAxis == 1) outNormal.y = nearSign;
+  else outNormal.z = nearSign;
+  return true;
+}
+
+}  // namespace
+
+PhysicsWorld::RayHit PhysicsWorld::raycast(const Vec3& origin, const Vec3& direction, f64 maxDistance,
+                                           u32 ignoreCharacter) const {
+  RayHit best;
+  const f64 length = direction.length();
+  if (length < 1e-12 || maxDistance <= 0.0) return best;
+  const Vec3 ray = direction * (1.0 / length);
+
+  const auto consider = [&best](f64 distance, const Vec3& point, const Vec3& normal, u32 character, u32 box,
+                                bool ground) {
+    if (best.hit && distance >= best.distance) return;
+    best.hit = true;
+    best.distance = distance;
+    best.point = point;
+    best.normal = normal;
+    best.character = character;
+    best.box = box;
+    best.ground = ground;
+  };
+
+  // --- Static boxes: the walls and cover ---
+  for (const auto& entry : boxes_) {
+    f64 distance = 0.0;
+    Vec3 normal{0.0, 0.0, 0.0};
+    if (!rayBox(origin, ray, entry.second.center, entry.second.halfExtents, maxDistance, distance, normal)) {
+      continue;
+    }
+    consider(distance, origin + ray * distance, normal, 0U, entry.first, false);
+  }
+
+  // --- Characters: the targets ---
+  // A character is its axis-aligned box proxy, so the same slab test does.
+  for (const auto& entry : characters_) {
+    if (entry.first == ignoreCharacter) continue;  // never shoot yourself
+    f64 distance = 0.0;
+    Vec3 normal{0.0, 0.0, 0.0};
+    if (!rayBox(origin, ray, entry.second.position, entry.second.halfExtents, maxDistance, distance, normal)) {
+      continue;
+    }
+    consider(distance, origin + ray * distance, normal, entry.first, 0U, false);
+  }
+
+  // --- Ground planes ---
+  if (std::abs(ray.y) > 1e-12) {
+    for (const auto& entry : planes_) {
+      const f64 distance = (entry.second.y - origin.y) / ray.y;
+      if (distance < 0.0 || distance > maxDistance) continue;
+      consider(distance, origin + ray * distance, Vec3{0.0, 1.0, 0.0}, 0U, 0U, true);
+    }
+  }
+  return best;
+}
+
+
 }  // namespace kimia

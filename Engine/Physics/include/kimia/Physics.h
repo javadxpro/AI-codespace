@@ -167,6 +167,29 @@ public:
   u32 addPlane(f64 y);
   u32 addBox(const Vec3& center, const Vec3& halfExtents);
 
+  // --- Raycasting (stage 30) ---
+  //
+  // A shot is a ray, not a projectile: at rifle speed a bullet crosses a
+  // 40 m arena in a few milliseconds, so simulating its flight would just
+  // be an expensive way of drawing a straight line. Everything a shooter
+  // needs is "what does this line hit first".
+  struct RayHit {
+    bool hit = false;
+    f64 distance = 0.0;      // along the ray, in meters
+    Vec3 point{0.0, 0.0, 0.0};
+    Vec3 normal{0.0, 0.0, 0.0};
+    // What was struck. Exactly one of these is set when `hit` is true.
+    u32 character = 0U;  // character id, 0 = not a character
+    u32 box = 0U;        // static box id, 0 = not a box
+    bool ground = false;
+  };
+
+  // Casts `direction` (need not be normalised) from `origin` up to
+  // `maxDistance`, returning the NEAREST hit. `ignoreCharacter` skips the
+  // shooter so nobody shoots themselves in the foot.
+  RayHit raycast(const Vec3& origin, const Vec3& direction, f64 maxDistance,
+                 u32 ignoreCharacter = 0U) const;
+
   // --- Characters (stage 21: N of them) ---
   //
   // Characters have their OWN 1-based id space (they are kinematic, not

@@ -141,6 +141,22 @@ inline constexpr f64 kRulesStaminaRecover = 0.06;
 // tire, you do not stop dead.
 inline constexpr f64 kRulesTiredPace = 0.55;
 
+// --- Arena mode (stage 30) ---
+// A shot leaves the muzzle at about chest height, not from the floor.
+inline constexpr f64 kArenaMuzzleHeight = 0.35;
+// A downed fighter respawns after this long, at their own end.
+inline constexpr f64 kArenaRespawnTime = 3.0;
+// How wide the computer fighters' aim wanders at skill 0, in radians.
+// A perfect AI is a dead shot, so skill has to spoil the aim.
+inline constexpr f64 kArenaAiSpread = 0.30;
+// Computer fighters only shoot when the target is roughly in front.
+inline constexpr f64 kArenaAiAimCone = 0.9;
+// How far a computer fighter holds off its target: close enough to shoot,
+// far enough that a firefight is not decided by who bumped into whom.
+inline constexpr f64 kArenaEngageRange = 8.0;
+// Sideways offset so a squad advances spread out, not in single file.
+inline constexpr f64 kArenaSpreadOut = 3.0;
+
 // The match clock blows a whistle at kick-off and at full time, and warns
 // when the last stretch begins.
 inline constexpr f64 kMatchFinalWhistleWarning = 30.0;
@@ -561,6 +577,37 @@ public:
   enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver, Whistle, Tackle, Trick };
   std::vector<GameEvent> drainEvents();
 
+  // --- Arena mode (stage 30) ---
+  // The third-person shooter the battleground profile asks for. Off
+  // everywhere else, so every football world behaves exactly as before.
+  bool arenaMode() const { return world_.profile.arena; }
+
+  // Hit points left for a fighter (the human is kPrimaryCharacter).
+  u32 health(u32 id) const;
+  bool downed(u32 id) const { return arenaMode() && health(id) == 0U; }
+  // Rounds left in the magazine, and whether a reload is running.
+  u32 ammo(u32 id) const;
+  bool reloading(u32 id) const;
+  // Kills scored by each side.
+  u32 arenaScore(u32 team) const;
+
+  // Fires along the aim. Returns true when a round actually left the
+  // barrel — false while reloading, empty, downed or between shots.
+  bool fire();
+  // Starts a reload. False when the magazine is already full or one is
+  // already running.
+  bool reload();
+  // Held trigger, like the dribble button: the app sets it every frame.
+  void setFireHeld(bool held) { fireHeld_ = held; }
+  bool fireHeld() const { return fireHeld_; }
+  // Where the last shot landed and whether it hit somebody — the app draws
+  // a tracer along it.
+  Vec3 lastShotFrom() const { return lastShotFrom_; }
+  Vec3 lastShotTo() const { return lastShotTo_; }
+  bool lastShotHit() const { return lastShotHit_; }
+  // HUD line like "HP 76  AMMO 12/30" (or "RELOADING"), empty outside arena.
+  std::string arenaHudText() const;
+
   // --- The laws of the game (stage 29) ---
   // Why play is currently stopped, if it is.
   enum class Stoppage { None, ThrowIn, Offside, Foul };
@@ -631,6 +678,9 @@ private:
   Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
   void updateTrick(f64 seconds);  // advance and finish the running trick
   void updateAi(f64 seconds);     // drive every computer player one step
+  void updateArena(f64 seconds);  // weapons, reloads, respawns
+  void arenaReset();              // full health and ammo for everyone
+  bool arenaShoot(u32 id, const Vec3& aim);  // one fighter pulls the trigger
   Vec3 aiSeparation(u32 id) const;  // push away from crowding team-mates
   void updateStamina(f64 seconds, bool running);
   void updateRules(f64 seconds, const Vec3& previousBall);
@@ -677,6 +727,19 @@ private:
   Vec3 restartSpot_{0.0, 0.0, 0.0};
   f64 stamina_ = 1.0;
   bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
+
+  // Arena state, kept per character id.
+  std::map<u32, u32> arenaHealth_;
+  std::map<u32, u32> arenaAmmo_;
+  std::map<u32, f64> arenaReload_;    // seconds left, 0 = not reloading
+  std::map<u32, f64> arenaCooldown_;  // seconds until the next shot is allowed
+  std::map<u32, f64> arenaRespawn_;   // seconds until a downed fighter returns
+  u32 arenaKills1_ = 0U;
+  u32 arenaKills2_ = 0U;
+  bool fireHeld_ = false;
+  Vec3 lastShotFrom_{0.0, 0.0, 0.0};
+  Vec3 lastShotTo_{0.0, 0.0, 0.0};
+  bool lastShotHit_ = false;
   // Per-character jam detection: where it was, how long it has failed to
   // get anywhere, and how long it should keep sidestepping.
   std::map<u32, Vec3> aiLastPos_;

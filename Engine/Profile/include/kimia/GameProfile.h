@@ -72,6 +72,14 @@ inline constexpr f64 kProfileWetMax = 1.0;
 inline constexpr f64 kProfileHourMax = 24.0;
 inline constexpr f64 kProfileAiMax = 1.0;
 inline constexpr f64 kProfileStaminaMax = 1.0;
+// Weapon limits. Generous, but they stop a hand-edited profile making a
+// one-shot instant-kill rifle with infinite ammo.
+inline constexpr u32 kProfileHealthMax = 1000U;
+inline constexpr u32 kProfileMagazineMax = 500U;
+inline constexpr f64 kProfileFireRateMax = 30.0;
+inline constexpr u32 kProfileDamageMax = 200U;
+inline constexpr f64 kProfileRangeMax = 500.0;
+inline constexpr f64 kProfileReloadMax = 10.0;
 
 // How the camera follows the play (stage 28).
 //   orbit     - the plain editor orbit, parked over the action
@@ -149,6 +157,21 @@ struct GameProfile {
   // How quickly a sprinting player tires, 0 = never (the endless runner
   // every game had until now).
   f64 stamina = 0.0;
+  // Arena mode (stage 30). Off everywhere except battleground: this turns
+  // the football pitch into a third-person shooter. The engine provides
+  // the weapon, the profile only supplies numbers — no pay-to-win, because
+  // there is nothing to buy.
+  bool arena = false;
+  u32 health = 100U;      // hit points each fighter starts with
+  u32 magazine = 30U;     // rounds before a reload
+  f64 fireRate = 6.0;     // shots per second
+  // Six hits to kill at 6 rounds a second is a one-second time-to-kill IF
+  // every shot lands — which leaves room to react, take cover and shoot
+  // back. The first tuning (five hits at 8/s) killed in half a second and
+  // an eight-man arena produced 183 kills a minute.
+  u32 damage = 17U;
+  f64 range = 60.0;       // how far a shot carries, meters
+  f64 reloadTime = 1.8;   // seconds
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -196,6 +219,8 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   camera broadcast             (orbit / chase / broadcast)
 //   rules on                     (throw-ins, offside and fouls: on/off)
 //   stamina 0.600000             (how fast a runner tires, 0 = never)
+//   arena on                     (third-person shooter mode: on/off)
+//   weapon 100 30 8.0 24 60.0 1.8    (health mag fireRate damage range reload)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

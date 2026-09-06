@@ -332,6 +332,29 @@ void WorldEditor::createWorld(const GameProfile& profile) {
   world_.profile = profile;
   applyProfileDefaults(world_);
   buildEmptyWorldScene(world_);
+  // An arena needs COVER. Without it every fighter can see every other
+  // fighter from anywhere and the match is decided in seconds — the first
+  // build produced 183 kills a minute in an empty box. These blocks are
+  // real static bodies, so they stop bullets as well as bodies.
+  if (world_.profile.arena) {
+    const f64 spanX = world_.halfWidth() * 0.55;
+    const f64 spanZ = world_.halfLength() * 0.55;
+    const Vec3 spots[] = {
+        {0.0, 0.0, 0.0},        {spanX, 0.0, spanZ},   {-spanX, 0.0, spanZ},
+        {spanX, 0.0, -spanZ},   {-spanX, 0.0, -spanZ}, {0.0, 0.0, spanZ * 1.4},
+        {0.0, 0.0, -spanZ * 1.4}, {spanX * 1.3, 0.0, 0.0}, {-spanX * 1.3, 0.0, 0.0},
+    };
+    i32 index = 1;
+    for (const Vec3& spot : spots) {
+      EntityData block;
+      block.name = "Block_" + std::to_string(index++);
+      block.transform.position = Vec3{spot.x, kWorldBlockMedium * 0.5, spot.z};
+      block.transform.scale = Vec3{kWorldBlockMedium * 1.6, kWorldBlockMedium, kWorldBlockMedium * 1.6};
+      block.mesh = MeshKind::cube;
+      block.color = Vec3{0.55, 0.48, 0.38};
+      world_.scene.create(block);
+    }
+  }
   hasWorld_ = true;
   lastError_.clear();
   screen_ = Screen::Builder;
@@ -475,6 +498,9 @@ void WorldEditor::kickOff() {
 }
 
 void WorldEditor::enterPlay() {
+  arenaKills1_ = 0U;
+  arenaKills2_ = 0U;
+  fireHeld_ = false;
   playerPos_ = playerRest();
   physics_.resetCharacter(playerPos_);  // feet on the ground, velocity zero
   jumpQueued_ = false;
@@ -491,6 +517,8 @@ void WorldEditor::enterPlay() {
   // placed spots and velocities.
   rebuildPhysics();
   spawnSquads();
+  // Everyone starts the round whole and loaded (no-op outside arena mode).
+  arenaReset();
   // A match starts 0-0 with a full clock; an endless kickabout has neither.
   matchOver_ = false;
   matchClock_ = world_.profile.matchSeconds;
@@ -727,6 +755,11 @@ void WorldEditor::update(f64 hostSeconds) {
         }
       }
     }
+
+    // Arena mode (stage 30): weapons, reloads and respawns. The football
+    // rules below still run — the pitch, the walls and the characters are
+    // shared — but nothing here depends on the ball.
+    updateArena(hostSeconds);
 
     // The laws of the game (stage 29), checked against where the ball was
     // BEFORE physics so a ball that shot out and got clamped back is still
@@ -1131,6 +1164,218 @@ void WorldEditor::updateTrick(f64 seconds) {
   events_.push_back(GameEvent::Trick);
 }
 
+// --- Arena mode (stage 30) ---
+//
+// The same engine, the same characters, the same physics — but the ball is
+// replaced by a rifle. A shot is a RAYCAST, not a projectile: at rifle
+// speed a bullet crosses this arena in a few milliseconds, so simulating
+// its flight would be an expensive way to draw a straight line.
+
+u32 WorldEditor::health(u32 id) const {
+  if (!arenaMode()) return 0U;
+  const auto found = arenaHealth_.find(id);
+  return found == arenaHealth_.end() ? 0U : found->second;
+}
+
+u32 WorldEditor::ammo(u32 id) const {
+  if (!arenaMode()) return 0U;
+  const auto found = arenaAmmo_.find(id);
+  return found == arenaAmmo_.end() ? 0U : found->second;
+}
+
+bool WorldEditor::reloading(u32 id) const {
+  if (!arenaMode()) return false;
+  const auto found = arenaReload_.find(id);
+  return found != arenaReload_.end() && found->second > 0.0;
+}
+
+u32 WorldEditor::arenaScore(u32 team) const {
+  if (team == 1U) return arenaKills1_;
+  if (team == 2U) return arenaKills2_;
+  return 0U;
+}
+
+void WorldEditor::arenaReset() {
+  arenaHealth_.clear();
+  arenaAmmo_.clear();
+  arenaReload_.clear();
+  arenaCooldown_.clear();
+  arenaRespawn_.clear();
+  if (!arenaMode()) return;
+  for (const u32 id : physics_.characterIds()) {
+    arenaHealth_[id] = world_.profile.health;
+    arenaAmmo_[id] = world_.profile.magazine;
+  }
+}
+
+std::string WorldEditor::arenaHudText() const {
+  if (!arenaMode()) return std::string();
+  const u32 hp = health(kPrimaryCharacter);
+  if (hp == 0U) return "DOWN";
+  if (reloading(kPrimaryCharacter)) return "HP " + std::to_string(hp) + "  RELOADING";
+  return "HP " + std::to_string(hp) + "  AMMO " + std::to_string(ammo(kPrimaryCharacter)) + "/" +
+         std::to_string(world_.profile.magazine);
+}
+
+// One fighter pulls the trigger along `aim`. Everything a shot needs to be
+// fair is checked here, so the human and the computer use the identical
+// path — no special cases that quietly favour one of them.
+bool WorldEditor::arenaShoot(u32 id, const Vec3& aim) {
+  if (!arenaMode() || !playing() || roundOver()) return false;
+  if (health(id) == 0U) return false;      // downed fighters do not shoot
+  if (reloading(id)) return false;         // nor mid-reload
+  if (arenaAmmo_[id] == 0U) return false;  // nor with an empty magazine
+  const auto cooldown = arenaCooldown_.find(id);
+  if (cooldown != arenaCooldown_.end() && cooldown->second > 0.0) return false;  // rate of fire
+
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return false;
+  const f64 length = std::sqrt(aim.x * aim.x + aim.y * aim.y + aim.z * aim.z);
+  if (length < kMoveEpsilon) return false;
+  const Vec3 direction{aim.x / length, aim.y / length, aim.z / length};
+  const Vec3 muzzle{body->position.x, body->position.y + kArenaMuzzleHeight, body->position.z};
+
+  --arenaAmmo_[id];
+  arenaCooldown_[id] = 1.0 / world_.profile.fireRate;
+
+  const PhysicsWorld::RayHit shot = physics_.raycast(muzzle, direction, world_.profile.range, id);
+  lastShotFrom_ = muzzle;
+  lastShotTo_ = shot.hit ? shot.point : muzzle + direction * world_.profile.range;
+  lastShotHit_ = false;
+
+  if (shot.hit && shot.character != 0U) {
+    const CharacterBody* target = physics_.characterById(shot.character);
+    // Friendly fire does no damage: teams would shred each other in the
+    // scramble and the match would be decided by accidents.
+    if (target != nullptr && target->team != body->team) {
+      u32& hp = arenaHealth_[shot.character];
+      hp = hp > world_.profile.damage ? hp - world_.profile.damage : 0U;
+      lastShotHit_ = true;
+      if (hp == 0U) {
+        arenaRespawn_[shot.character] = kArenaRespawnTime;
+        if (body->team == 1U) {
+          ++arenaKills1_;
+        } else {
+          ++arenaKills2_;
+        }
+        events_.push_back(GameEvent::Goal);  // a downed opponent is the score here
+      } else {
+        events_.push_back(GameEvent::Tackle);  // the hit marker
+      }
+    }
+  }
+  events_.push_back(GameEvent::Shot);
+  return true;
+}
+
+bool WorldEditor::fire() { return arenaShoot(kPrimaryCharacter, aimDirection()); }
+
+bool WorldEditor::reload() {
+  if (!arenaMode() || health(kPrimaryCharacter) == 0U) return false;
+  if (reloading(kPrimaryCharacter)) return false;
+  if (arenaAmmo_[kPrimaryCharacter] >= world_.profile.magazine) return false;  // already full
+  arenaReload_[kPrimaryCharacter] = world_.profile.reloadTime;
+  return true;
+}
+
+void WorldEditor::updateArena(f64 seconds) {
+  if (!arenaMode() || seconds <= 0.0) return;
+  // Late joiners (a character spawned after the reset) start whole.
+  for (const u32 id : physics_.characterIds()) {
+    if (arenaHealth_.find(id) == arenaHealth_.end()) {
+      arenaHealth_[id] = world_.profile.health;
+      arenaAmmo_[id] = world_.profile.magazine;
+    }
+  }
+
+  for (const u32 id : physics_.characterIds()) {
+    // Rate of fire.
+    f64& cooldown = arenaCooldown_[id];
+    if (cooldown > 0.0) cooldown = cooldown > seconds ? cooldown - seconds : 0.0;
+
+    // Reloads.
+    f64& reloadLeft = arenaReload_[id];
+    if (reloadLeft > 0.0) {
+      reloadLeft -= seconds;
+      if (reloadLeft <= 0.0) {
+        reloadLeft = 0.0;
+        arenaAmmo_[id] = world_.profile.magazine;
+      }
+    }
+
+    // Respawns: a downed fighter comes back at their own end, whole again.
+    if (arenaHealth_[id] == 0U) {
+      f64& respawn = arenaRespawn_[id];
+      respawn -= seconds;
+      if (respawn <= 0.0) {
+        respawn = 0.0;
+        arenaHealth_[id] = world_.profile.health;
+        arenaAmmo_[id] = world_.profile.magazine;
+        CharacterBody* body = physics_.characterById(id);
+        if (body != nullptr) {
+          const f64 ownEnd = body->team == 1U ? world_.halfLength() - kPlayerMargin
+                                              : -(world_.halfLength() - kPlayerMargin);
+          body->position.z = ownEnd;
+          body->velocity = Vec3{0.0, 0.0, 0.0};
+          if (id == kPrimaryCharacter) playerPos_ = body->position;
+        }
+      }
+      continue;  // no shooting while down
+    }
+
+    // An empty magazine reloads itself: nobody stands in a firefight
+    // holding an empty rifle waiting to be told.
+    if (arenaAmmo_[id] == 0U && reloadLeft <= 0.0) {
+      arenaReload_[id] = world_.profile.reloadTime;
+      continue;
+    }
+
+    if (id == kPrimaryCharacter) {
+      // The human's held trigger fires at the weapon's rate.
+      if (fireHeld_) arenaShoot(id, aimDirection());
+      continue;
+    }
+
+    // --- Computer fighters ---
+    if (!aiActive()) continue;
+    const CharacterBody* body = physics_.characterById(id);
+    if (body == nullptr) continue;
+    // Shoot at the nearest standing opponent that is roughly in front.
+    u32 target = 0U;
+    f64 bestDistance = 0.0;
+    for (const u32 other : physics_.characterIds()) {
+      const CharacterBody* enemy = physics_.characterById(other);
+      if (enemy == nullptr || enemy->team == body->team) continue;
+      if (arenaHealth_[other] == 0U) continue;  // do not shoot the downed
+      const f64 dx = enemy->position.x - body->position.x;
+      const f64 dz = enemy->position.z - body->position.z;
+      const f64 distance = std::sqrt(dx * dx + dz * dz);
+      if (distance > world_.profile.range) continue;
+      if (target == 0U || distance < bestDistance) {
+        target = other;
+        bestDistance = distance;
+      }
+    }
+    if (target == 0U) continue;
+    const CharacterBody* enemy = physics_.characterById(target);
+    if (enemy == nullptr) continue;
+    Vec3 aim{enemy->position.x - body->position.x, 0.0, enemy->position.z - body->position.z};
+    const f64 aimLength = std::sqrt(aim.x * aim.x + aim.z * aim.z);
+    if (aimLength < kMoveEpsilon) continue;
+    aim.x /= aimLength;
+    aim.z /= aimLength;
+    // Skill spoils the aim: a perfect AI would be a dead shot at any range
+    // and no human could ever win. The wobble is deterministic — derived
+    // from the ids — so a replay of the same match plays out the same way.
+    const f64 spread = kArenaAiSpread * (1.0 - world_.profile.aiSkill);
+    const f64 wobble = spread * (static_cast<f64>((id * 7U + target * 13U) % 11U) / 5.0 - 1.0);
+    const f64 sin = std::sin(wobble);
+    const f64 cos = std::cos(wobble);
+    const Vec3 spread_aim{aim.x * cos - aim.z * sin, 0.0, aim.x * sin + aim.z * cos};
+    arenaShoot(id, spread_aim);
+  }
+}
+
 // --- The laws of the game (stage 29) ---
 //
 // Only grass plays by these. An alley kickabout has no linesman, and
@@ -1525,6 +1770,48 @@ Vec3 WorldEditor::aiSeparation(u32 id) const {
 Vec3 WorldEditor::aiTargetFor(u32 id) const {
   const CharacterBody* body = physics_.characterById(id);
   if (body == nullptr || id == kPrimaryCharacter) return Vec3{0.0, 0.0, 0.0};
+
+  // --- Arena fighters (stage 30) ---
+  // A shooter has no ball to chase and no net to mind, so the football
+  // roles are meaningless here: a "keeper" standing on a goal line in a
+  // firefight is just an easy target.
+  if (arenaMode()) {
+    const f64 boundX = world_.halfWidth() - kPlayerMargin;
+    const f64 boundZ = world_.halfLength() - kPlayerMargin;
+    // Close to the nearest standing enemy, but stop at a fighting distance
+    // rather than walking into their muzzle.
+    u32 target = 0U;
+    f64 bestDistance = 0.0;
+    for (const u32 other : physics_.characterIds()) {
+      const CharacterBody* enemy = physics_.characterById(other);
+      if (enemy == nullptr || enemy->team == body->team) continue;
+      const auto hp = arenaHealth_.find(other);
+      if (hp != arenaHealth_.end() && hp->second == 0U) continue;  // ignore the downed
+      const f64 dx = enemy->position.x - body->position.x;
+      const f64 dz = enemy->position.z - body->position.z;
+      const f64 distance = std::sqrt(dx * dx + dz * dz);
+      if (target == 0U || distance < bestDistance) {
+        target = other;
+        bestDistance = distance;
+      }
+    }
+    if (target == 0U) return body->position;  // nobody left standing: hold
+    const CharacterBody* enemy = physics_.characterById(target);
+    if (enemy == nullptr) return body->position;
+    // Hold at engagement range: close enough to shoot, far enough that a
+    // firefight is not decided by who bumped into whom.
+    const f64 dx = enemy->position.x - body->position.x;
+    const f64 dz = enemy->position.z - body->position.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    if (distance < kMoveEpsilon) return body->position;
+    const f64 want = distance - kArenaEngageRange;
+    // Fan out sideways so a squad does not advance in single file.
+    const f64 lane = (static_cast<f64>(id % 3U) - 1.0) * kArenaSpreadOut;
+    return Vec3{std::min(boundX, std::max(-boundX, body->position.x + dx / distance * want - dz / distance * lane)),
+                body->position.y,
+                std::min(boundZ, std::max(-boundZ, body->position.z + dz / distance * want + dx / distance * lane))};
+  }
+
   const SphereBody* ball = physics_.sphere(ballId_);
   if (ball == nullptr) return body->position;
   const u32 team = body->team;
@@ -2011,6 +2298,20 @@ std::vector<std::string> WorldEditor::hudLines() const {
       const std::string trick = trickHudText();
       if (!trick.empty()) lines.push_back(trick);
     }
+    return lines;
+  }
+  if (arenaMode()) {
+    // A shooter's HUD is health and ammo, not a football score.
+    lines.push_back("MA " + std::to_string(arenaKills1_) + " - " + std::to_string(arenaKills2_) + " ANHA  " +
+                    matchClockText());
+    const std::string arena = arenaHudText();
+    if (!arena.empty()) lines.push_back(arena);
+    if (screen_ == Screen::RoundEnd) {
+      const u32 winner = arenaKills1_ > arenaKills2_ ? 1U : (arenaKills2_ > arenaKills1_ ? 2U : 0U);
+      lines.push_back(winner == 0U ? "DRAW" : (winner == 1U ? "MA BORDIM" : "ANHA BORDAND"));
+    }
+    const std::string sky = skyHudText();
+    if (!sky.empty()) lines.push_back(sky);
     return lines;
   }
   if (matchMode()) {

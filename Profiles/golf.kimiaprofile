@@ -27,3 +27,5 @@ ai 0.000000
 camera chase
 rules off
 stamina 0.000000
+arena off
+weapon 100 30 6.000000 17 60.000000 1.800000

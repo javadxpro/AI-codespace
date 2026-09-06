@@ -3890,3 +3890,269 @@ KIMIA_TEST(world_offside_only_fires_when_the_player_plays_the_ball) {
   // whistled to a standstill.
   KIMIA_REQUIRE(stopped < 600);  // under a sixth of the time
 }
+
+// --- Stage 30: arena mode (the third-person shooter) ---
+
+namespace {
+void arenaInPlay(WorldEditor& editor) {
+  createWorldFor(editor, "battleground");
+  editor.choose(3);  // straight to PLAY: a shooter needs no ball
+}
+}  // namespace
+
+KIMIA_TEST(world_arena_is_a_battleground_thing_only) {
+  // The same engine, but the ball is replaced by a rifle. Every football
+  // profile must be completely untouched by it.
+  WorldEditor arena;
+  arenaInPlay(arena);
+  KIMIA_REQUIRE(arena.arenaMode());
+  KIMIA_REQUIRE(arena.profile().arena);
+
+  for (const char* name : {"street", "grass", "golf"}) {
+    WorldEditor football;
+    createWorldFor(football, name);
+    KIMIA_REQUIRE(!football.arenaMode());
+    // No weapon state leaks into a football world.
+    KIMIA_REQUIRE(football.health(kimia::kPrimaryCharacter) == 0U);
+    KIMIA_REQUIRE(football.ammo(kimia::kPrimaryCharacter) == 0U);
+    KIMIA_REQUIRE(football.arenaHudText().empty());
+    KIMIA_REQUIRE(!football.fire());   // no rifle in a football match
+    KIMIA_REQUIRE(!football.reload());
+    // And no cover blocks are dropped onto a pitch.
+    KIMIA_REQUIRE(football.objectCount() == 0U);
+  }
+}
+
+KIMIA_TEST(world_arena_starts_everyone_whole_and_loaded) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  KIMIA_REQUIRE(editor.squadCount() > 1U);
+  for (const u32 id : editor.squadIds()) {
+    KIMIA_REQUIRE(editor.health(id) == editor.profile().health);
+    KIMIA_REQUIRE(editor.ammo(id) == editor.profile().magazine);
+    KIMIA_REQUIRE(!editor.reloading(id));
+    KIMIA_REQUIRE(!editor.downed(id));
+  }
+  KIMIA_REQUIRE(editor.arenaScore(1U) == 0U);
+  KIMIA_REQUIRE(editor.arenaScore(2U) == 0U);
+  KIMIA_REQUIRE(editor.arenaHudText() == "HP 100  AMMO 30/30");
+}
+
+KIMIA_TEST(world_arena_firing_spends_a_round_and_respects_the_fire_rate) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  const u32 magazine = editor.profile().magazine;
+
+  KIMIA_REQUIRE(editor.fire());
+  KIMIA_REQUIRE(editor.ammo(kimia::kPrimaryCharacter) == magazine - 1U);
+  // A second shot in the same instant is not allowed: the weapon has a
+  // rate of fire, or a held trigger would empty the magazine in one frame.
+  KIMIA_REQUIRE(!editor.fire());
+  KIMIA_REQUIRE(editor.ammo(kimia::kPrimaryCharacter) == magazine - 1U);
+
+  // Wait out the interval and it fires again.
+  editor.update(1.0 / editor.profile().fireRate + 0.01);
+  KIMIA_REQUIRE(editor.fire());
+  KIMIA_REQUIRE(editor.ammo(kimia::kPrimaryCharacter) == magazine - 2U);
+
+  // The shot is a real ray with a start and an end.
+  KIMIA_REQUIRE((editor.lastShotTo() - editor.lastShotFrom()).length() > 0.5);
+}
+
+KIMIA_TEST(world_arena_reload_refills_after_its_time) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  const u32 magazine = editor.profile().magazine;
+  // A full magazine cannot be reloaded.
+  KIMIA_REQUIRE(!editor.reload());
+
+  KIMIA_REQUIRE(editor.fire());
+  KIMIA_REQUIRE(editor.reload());
+  KIMIA_REQUIRE(editor.reloading(kimia::kPrimaryCharacter));
+  KIMIA_REQUIRE(editor.arenaHudText() == "HP 100  RELOADING");
+  // No shooting mid-reload, and no starting a second one.
+  KIMIA_REQUIRE(!editor.fire());
+  KIMIA_REQUIRE(!editor.reload());
+
+  // Half way through it is still running.
+  editor.update(editor.profile().reloadTime * 0.5);
+  KIMIA_REQUIRE(editor.reloading(kimia::kPrimaryCharacter));
+  KIMIA_REQUIRE(editor.ammo(kimia::kPrimaryCharacter) == magazine - 1U);
+  // Finished: a full magazine.
+  editor.update(editor.profile().reloadTime * 0.6);
+  KIMIA_REQUIRE(!editor.reloading(kimia::kPrimaryCharacter));
+  KIMIA_REQUIRE(editor.ammo(kimia::kPrimaryCharacter) == magazine);
+}
+
+KIMIA_TEST(world_arena_a_shot_damages_the_enemy_but_never_a_team_mate) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  // Find one of each and line them up point blank in front of the human.
+  u32 enemy = 0U;
+  u32 mate = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (id == kimia::kPrimaryCharacter) continue;
+    if (editor.squadTeam(id) == 2U && enemy == 0U) enemy = id;
+    if (editor.squadTeam(id) == 1U && mate == 0U) mate = id;
+  }
+  KIMIA_REQUIRE(enemy != 0U);
+  KIMIA_REQUIRE(mate != 0U);
+
+  // Everyone else well out of the line of fire.
+  for (const u32 id : editor.squadIds()) {
+    if (id != kimia::kPrimaryCharacter) editor.setSquadPosition(id, Vec3{40.0, 0.5, 40.0});
+  }
+  // Duel off to one side: the middle of the arena has a cover block in it,
+  // and a bullet that stops on concrete proves nothing about damage.
+  const f64 lane = editor.world().halfWidth() * 0.2;
+  editor.setPlayerPosition(Vec3{lane, 0.5, 3.0});
+  editor.setAimYaw(0.0);  // toward -Z
+
+  // A team-mate in the way takes nothing: friendly fire would decide the
+  // match by accident.
+  editor.setSquadPosition(mate, Vec3{lane, 0.5, 0.0});
+  KIMIA_REQUIRE(editor.fire());
+  KIMIA_REQUIRE(editor.health(mate) == editor.profile().health);
+  KIMIA_REQUIRE(!editor.lastShotHit());
+  editor.setSquadPosition(mate, Vec3{40.0, 0.5, 40.0});
+
+  // An enemy in the same spot loses exactly one hit's worth.
+  editor.setSquadPosition(enemy, Vec3{lane, 0.5, 0.0});
+  editor.update(1.0 / editor.profile().fireRate + 0.01);
+  KIMIA_REQUIRE(editor.fire());
+  KIMIA_REQUIRE(editor.lastShotHit());
+  KIMIA_REQUIRE(editor.health(enemy) == editor.profile().health - editor.profile().damage);
+}
+
+KIMIA_TEST(world_arena_enough_hits_downs_a_fighter_and_scores_a_kill) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  u32 enemy = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) == 2U) {
+      enemy = id;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(enemy != 0U);
+  for (const u32 id : editor.squadIds()) {
+    if (id != kimia::kPrimaryCharacter) editor.setSquadPosition(id, Vec3{40.0, 0.5, 40.0});
+  }
+  const f64 lane = editor.world().halfWidth() * 0.2;  // clear of the centre block
+  editor.setPlayerPosition(Vec3{lane, 0.5, 3.0});
+  editor.setAimYaw(0.0);
+  editor.setSquadPosition(enemy, Vec3{lane, 0.5, 0.0});
+
+  // Exactly the number of hits the numbers say it should take.
+  const u32 needed = (editor.profile().health + editor.profile().damage - 1U) / editor.profile().damage;
+  KIMIA_REQUIRE(needed > 1U);  // a one-shot kill would be no fun
+  for (u32 shot = 0U; shot < needed; ++shot) {
+    editor.setSquadPosition(enemy, Vec3{lane, 0.5, 0.0});  // hold it in place
+    KIMIA_REQUIRE(editor.fire());
+    editor.update(1.0 / editor.profile().fireRate + 0.01);
+  }
+  KIMIA_REQUIRE(editor.health(enemy) == 0U);
+  KIMIA_REQUIRE(editor.downed(enemy));
+  KIMIA_REQUIRE(editor.arenaScore(1U) == 1U);  // our kill
+  KIMIA_REQUIRE(editor.arenaScore(2U) == 0U);
+}
+
+KIMIA_TEST(world_arena_a_downed_fighter_comes_back_whole) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  u32 enemy = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) == 2U) {
+      enemy = id;
+      break;
+    }
+  }
+  for (const u32 id : editor.squadIds()) {
+    if (id != kimia::kPrimaryCharacter) editor.setSquadPosition(id, Vec3{40.0, 0.5, 40.0});
+  }
+  const f64 lane = editor.world().halfWidth() * 0.2;
+  editor.setPlayerPosition(Vec3{lane, 0.5, 3.0});
+  editor.setAimYaw(0.0);
+  const u32 needed = (editor.profile().health + editor.profile().damage - 1U) / editor.profile().damage;
+  for (u32 shot = 0U; shot < needed; ++shot) {
+    editor.setSquadPosition(enemy, Vec3{lane, 0.5, 0.0});
+    editor.fire();
+    editor.update(1.0 / editor.profile().fireRate + 0.01);
+  }
+  KIMIA_REQUIRE(editor.downed(enemy));
+
+  // Still down a moment later, back on their feet after the respawn.
+  editor.update(kimia::kArenaRespawnTime * 0.4);
+  KIMIA_REQUIRE(editor.downed(enemy));
+  editor.update(kimia::kArenaRespawnTime);
+  KIMIA_REQUIRE(!editor.downed(enemy));
+  KIMIA_REQUIRE(editor.health(enemy) == editor.profile().health);
+  KIMIA_REQUIRE(editor.ammo(enemy) == editor.profile().magazine);
+  // And back at their own end rather than where they fell.
+  KIMIA_REQUIRE(editor.squadPosition(enemy).z < 0.0);
+}
+
+KIMIA_TEST(world_arena_cover_stops_a_bullet) {
+  // An arena without cover is a shooting gallery: the first build managed
+  // 183 kills a minute in an empty box.
+  WorldEditor editor;
+  arenaInPlay(editor);
+  KIMIA_REQUIRE(editor.objectCount() > 0U);  // the arena really has cover in it
+
+  // Fire at the middle of the arena from outside it: the shot must stop
+  // on a block well short of its full range.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 8.0});
+  editor.setAimYaw(0.0);
+  KIMIA_REQUIRE(editor.fire());
+  const f64 travelled = (editor.lastShotTo() - editor.lastShotFrom()).length();
+  KIMIA_REQUIRE(travelled < editor.profile().range);
+}
+
+KIMIA_TEST(world_arena_fights_itself_without_stalling) {
+  // Left alone, the two squads must have a real firefight: shots fired,
+  // hits landed, and nobody frozen.
+  WorldEditor editor;
+  arenaInPlay(editor);
+  i32 shots = 0;
+  for (i32 f = 0; f < 1800; ++f) {  // thirty seconds
+    editor.update(1.0 / 60.0);
+    for (const WorldEditor::GameEvent event : editor.drainEvents()) {
+      if (event == WorldEditor::GameEvent::Shot) ++shots;
+    }
+  }
+  KIMIA_REQUIRE(shots > 100);  // they are actually shooting
+  // And somebody is winning something: a firefight that scores nothing in
+  // thirty seconds is a stalemate, not a game.
+  KIMIA_REQUIRE(editor.arenaScore(1U) + editor.arenaScore(2U) > 0U);
+}
+
+KIMIA_TEST(world_arena_hud_and_pads_replace_the_football_ones) {
+  WorldEditor editor;
+  arenaInPlay(editor);
+  // The trigger and the magazine, not a dribble button.
+  bool hasFire = false;
+  bool hasReload = false;
+  for (const auto& pad : editor.tapPad()) {
+    if (pad.second == "f") hasFire = true;
+    if (pad.second == "r") hasReload = true;
+  }
+  KIMIA_REQUIRE(hasFire);
+  KIMIA_REQUIRE(hasReload);
+  // Held fire is on the movement pad too.
+  bool heldFire = false;
+  for (const auto& pad : editor.holdPad()) {
+    if (pad.second == "f") heldFire = true;
+  }
+  KIMIA_REQUIRE(heldFire);
+
+  // The HUD shows health and ammo alongside the kill count.
+  const std::vector<std::string> lines = editor.hudLines();
+  bool hasHealth = false;
+  bool hasKills = false;
+  for (const std::string& line : lines) {
+    if (line.find("HP 100") != std::string::npos) hasHealth = true;
+    if (line.find("MA 0 - 0 ANHA") != std::string::npos) hasKills = true;
+  }
+  KIMIA_REQUIRE(hasHealth);
+  KIMIA_REQUIRE(hasKills);
+}
