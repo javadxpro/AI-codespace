@@ -579,6 +579,10 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "#skip{position:fixed;right:16px;bottom:16px;z-index:100;padding:10px 18px;font-size:15px;"
          "border:1px solid #55555f;border-radius:10px;background:rgba(20,20,26,.85);color:#e8e8ec;"
          "cursor:pointer}\n";
+  out << "#benchlink{display:inline-block;margin:0 0 10px;padding:7px 16px;"
+         "background:#22272e;color:#d9a441;border:1px solid #333b45;border-radius:6px;"
+         "text-decoration:none;font-size:14px}\n";
+  out << "#benchlink:hover{border-color:#d9a441}\n";
   out << "</style>\n</head>\n<body>\n";
   // No poster attribute on purpose: a still poster frame is impossible to
   // tell apart from a video that failed to decode ("it is only a picture").
@@ -588,6 +592,10 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
          "<source src=\"/intro.mp4\" type=\"video/mp4\"></video>"
          "<div id=\"skip\">رد کردن / SKIP</div></div>\n";
   out << "<h1>" << htmlEscape(title) << "</h1>\n";
+  // A way IN to the editor. Without this the Workbench existed but there
+  // was no route to it from the game page, so the only way to find it was
+  // to already know the address — which is no use to anybody.
+  out << "<a id=\"benchlink\" href=\"/bench\">&#9881; Workbench &mdash; ویرایشگر</a>\n";
   if (!hint.empty()) out << "<div class=\"hint\">" << htmlEscape(hint) << "</div>\n";
   out << "<img id=\"frame\" alt=\"engine frame\">\n<div id=\"stats\">waiting for first frame...</div>\n";
   out << "<div id=\"menutitle\"></div>\n";

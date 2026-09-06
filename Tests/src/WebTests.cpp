@@ -555,3 +555,15 @@ KIMIA_TEST(web_shipped_intro_film_is_decodable_on_a_phone) {
   // And it must stay small enough to stream off a phone in a moment.
   KIMIA_REQUIRE(bytes.size() < 5000000U);
 }
+
+// --- The editor has to be REACHABLE ---
+
+KIMIA_TEST(web_game_page_links_to_the_workbench) {
+  // The Workbench existed for a whole release with no route to it from the
+  // game page: the only way in was to already know the address, which is
+  // no use to anybody. The player ran the engine, saw the same old page
+  // and reported it as unchanged — quite rightly.
+  const std::string page = kimia::web::makePageHtml("KIMIA", {}, "", "");
+  KIMIA_REQUIRE(page.find("/bench") != std::string::npos);
+  KIMIA_REQUIRE(page.find("Workbench") != std::string::npos);
+}

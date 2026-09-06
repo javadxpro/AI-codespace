@@ -51,8 +51,17 @@
 pkg install -y git clang cmake ninja
 git clone --branch arena/01a07447-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
-bash Tools/termux_build.sh          # ابزار → cmake → build → 345/345 → دستور بعدی
+bash Tools/termux_build.sh          # ابزار → cmake → build → 346/346 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
+
+سپس در مرورگر:
+
+- **`http://127.0.0.1:8080`** — خودِ بازی
+- **`http://127.0.0.1:8080/bench`** — **KIMIA Workbench**، ویرایشگر
+  (دکمهٔ «⚙ Workbench» بالای صفحهٔ بازی هم همان‌جا می‌بردت)
+
+در Workbench می‌توانی فایل `.obj`/`.fbx` وارد کنی، فیزیک رویش بگذاری،
+برچسب بزنی، و انیمیشن و صدا را به دکمه وصل کنی.
 ```
 
 `Tools/termux_build.sh` خودش شاخهٔ درست را تشخیص می‌دهد (اگر روی `main`
@@ -79,7 +88,7 @@ bash Tools/package_release.sh --game=golf     # → release/kimia-golf-0.3.0.tar
 ```bash
 cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
-./build/bin/kimia_tests      # 345/345 tests passed
+./build/bin/kimia_tests      # 346/346 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -98,7 +107,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 345/345 tests passed
+./build-nosdl/bin/kimia_tests    # 346/346 tests passed
 ```
 
 ## هدف: چهار بازی روی یک موتور
