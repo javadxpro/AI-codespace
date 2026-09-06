@@ -383,3 +383,156 @@ KIMIA_TEST(studio_custom_bones_survive_a_save_and_load) {
   kimia::WorldIO::save(plain.world(), plainText);
   KIMIA_REQUIRE(plainText.find(" bone ") == std::string::npos);
 }
+
+// --- Visual logic through the Workbench: a game with no code ---
+
+KIMIA_TEST(studio_builds_a_whole_game_out_of_rules) {
+  // The point of the whole feature: a person makes a working game by
+  // filling in forms, and never writes a line of C++.
+  WorldEditor editor;
+  streetWorld(editor);
+
+  // WHEN start DO set score 0
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-rule", {{"rulename", "setup"}, {"trigger", "start"}}),
+                    "\"index\":0"));
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "set"}, {"target", "score"}, {"number", "0"}});
+
+  // WHEN key space DO add score 1
+  ask(editor, "/api/add-rule", {{"rulename", "score"}, {"trigger", "key"}, {"subject", "space"}});
+  ask(editor, "/api/add-action", {{"index", "1"}, {"act", "add"}, {"target", "score"}, {"number", "1"}});
+
+  // WHEN every-frame IF score >= 3 DO message, end-game
+  ask(editor, "/api/add-rule", {{"rulename", "win"}, {"trigger", "every-frame"}});
+  ask(editor, "/api/add-condition", {{"index", "2"}, {"variable", "score"}, {"compare", ">="},
+                                     {"number", "3"}});
+  ask(editor, "/api/add-action", {{"index", "2"}, {"act", "message"}, {"text", "YOU WIN"}});
+  ask(editor, "/api/add-action", {{"index", "2"}, {"act", "end-game"}, {"number", "1"}});
+
+  // The rule list reads back as sentences, which is what the user sees.
+  const std::string rules = ask(editor, "/api/rules");
+  KIMIA_REQUIRE(has(rules, "WHEN start  DO set score 0"));
+  KIMIA_REQUIRE(has(rules, "WHEN key space  DO add score 1"));
+  KIMIA_REQUIRE(has(rules, "IF score >= 3"));
+
+  // Now PLAY it. Nothing below touches the rules: it is the engine
+  // running the game the user built.
+  editor.choose(3);
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("score") == 0.0);  // the start rule ran
+
+  for (i32 press = 0; press < 3; ++press) {
+    editor.setLogicKeys({"space"}, {});
+    editor.update(1.0 / 60.0);
+  }
+  KIMIA_REQUIRE(editor.logic().numberOf("score") == 3.0);
+  KIMIA_REQUIRE(editor.logicFinished());
+  KIMIA_REQUIRE(editor.logicWon());
+  KIMIA_REQUIRE(editor.logicMessage() == "YOU WIN");
+
+  // And the message reaches the HUD, or winning is invisible.
+  bool onScreen = false;
+  for (const std::string& line : editor.hudLines()) {
+    if (line == "YOU WIN") onScreen = true;
+  }
+  KIMIA_REQUIRE(onScreen);
+}
+
+KIMIA_TEST(studio_a_pressed_key_lasts_one_frame_only) {
+  // Held-down keys would otherwise count once per frame and a "press to
+  // score" rule would rack up hundreds of points from one tap.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-rule", {{"rulename", "tap"}, {"trigger", "key"}, {"subject", "space"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "taps"}, {"number", "1"}});
+  editor.choose(3);
+
+  editor.setLogicKeys({"space"}, {});
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("taps") == 1.0);
+  // Ten more frames with nobody telling it about a new press.
+  for (i32 f = 0; f < 10; ++f) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("taps") == 1.0);
+}
+
+KIMIA_TEST(studio_rules_can_be_reordered_disabled_and_dropped) {
+  // Order decides which rule wins when two disagree, so the user has to
+  // be able to control it.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-rule", {{"rulename", "first"}, {"trigger", "start"}});
+  ask(editor, "/api/add-rule", {{"rulename", "second"}, {"trigger", "start"}});
+  KIMIA_REQUIRE(editor.logic().rules[0].name == "first");
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/move-rule", {{"index", "1"}, {"dir", "up"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.logic().rules[0].name == "second");
+  // The top rule cannot move up, and the bottom one cannot move down.
+  KIMIA_REQUIRE(has(ask(editor, "/api/move-rule", {{"index", "0"}, {"dir", "up"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/move-rule", {{"index", "1"}, {"dir", "down"}}), "\"ok\":false"));
+
+  // A disabled rule stays in the list but does nothing.
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "n"}, {"number", "1"}});
+  ask(editor, "/api/toggle-rule", {{"index", "0"}, {"on", "0"}});
+  KIMIA_REQUIRE(!editor.logic().rules[0].enabled);
+  editor.choose(3);
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("n") == 0.0);
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-rule", {{"index", "0"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.logic().rules.size() == 1U);
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-rule", {{"index", "9"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_rules_survive_a_save_and_load) {
+  // A game the user built has to still be there next time.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-rule", {{"rulename", "on goal"}, {"trigger", "event"}, {"subject", "goal"}});
+  ask(editor, "/api/add-condition", {{"index", "0"}, {"variable", "lives"}, {"compare", ">"},
+                                     {"number", "0"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "score"}, {"number", "10"}});
+  ask(editor, "/api/set-var", {{"variable", "lives"}, {"number", "3"}});
+
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  kimia::WorldData reloaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, error));
+
+  KIMIA_REQUIRE(reloaded.logic.rules.size() == 1U);
+  const kimia::Rule& rule = reloaded.logic.rules[0];
+  KIMIA_REQUIRE(rule.name == "on goal");
+  KIMIA_REQUIRE(rule.trigger == kimia::Trigger::Event);
+  KIMIA_REQUIRE(rule.subject == "goal");
+  KIMIA_REQUIRE(rule.conditions.size() == 1U);
+  KIMIA_REQUIRE(rule.conditions[0].variable == "lives");
+  KIMIA_REQUIRE(rule.conditions[0].compare == kimia::Compare::Greater);
+  KIMIA_REQUIRE(rule.actions.size() == 1U);
+  KIMIA_REQUIRE(rule.actions[0].act == kimia::Act::AddVariable);
+  KIMIA_REQUIRE(near(rule.actions[0].number, 10.0));
+  KIMIA_REQUIRE(near(reloaded.logic.numberOf("lives"), 3.0));
+
+  // A world with no rules still saves exactly as it always did.
+  WorldEditor plain;
+  streetWorld(plain);
+  std::string plainText;
+  kimia::WorldIO::save(plain.world(), plainText);
+  KIMIA_REQUIRE(plainText.find("# rule ") == std::string::npos);
+  KIMIA_REQUIRE(plainText.find("# var ") == std::string::npos);
+}
+
+KIMIA_TEST(studio_rule_forms_refuse_nonsense) {
+  WorldEditor editor;
+  streetWorld(editor);
+  // Adding to a rule that does not exist.
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-action", {{"index", "5"}, {"act", "add"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-condition", {{"index", "5"}, {"variable", "x"}}), "\"ok\":false"));
+  // A condition with no variable to test.
+  ask(editor, "/api/add-rule", {{"rulename", "r"}, {"trigger", "start"}});
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-condition", {{"index", "0"}}), "\"ok\":false"));
+  // A variable with no name.
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-var", {{"number", "1"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-var", {{"variable", "ghost"}}), "\"ok\":false"));
+  // An unknown trigger falls back rather than being refused, so a newer
+  // save opened in an older build still loads.
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-rule", {{"rulename", "odd"}, {"trigger", "wat"}}), "\"ok\":true"));
+}

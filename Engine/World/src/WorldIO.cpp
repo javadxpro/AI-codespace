@@ -26,6 +26,62 @@ void fieldFromGround(WorldData& world) {
 
 }  // namespace
 
+namespace {
+
+// Rule lines pack several values onto one line, so a value containing a
+// space has to survive being split apart again. escapeLineText only
+// guards newlines and backslashes, which is right for a whole-line value
+// and wrong here — a rule called "on goal" arrived back as "on".
+std::string escapeWord(const std::string& text) {
+  if (text.empty()) return "-";
+  std::string out = escapeLineText(text);
+  std::string packed;
+  packed.reserve(out.size());
+  for (const char c : out) {
+    if (c == ' ') {
+      packed += "\\s";
+    } else {
+      packed += c;
+    }
+  }
+  return packed;
+}
+
+std::string unescapeWord(const std::string& token) {
+  if (token == "-") return std::string();
+  std::string spaced;
+  spaced.reserve(token.size());
+  for (usize i = 0; i < token.size(); ++i) {
+    if (token[i] == '\\' && i + 1U < token.size() && token[i + 1U] == 's') {
+      spaced += ' ';
+      ++i;
+      continue;
+    }
+    spaced += token[i];
+  }
+  return unescapeLineText(spaced);
+}
+
+// Splits on spaces. Rule text is escaped on the way out, so a name with a
+// space in it survives as one token.
+std::vector<std::string> splitWords(const std::string& line) {
+  std::vector<std::string> parts;
+  std::istringstream stream(line);
+  std::string word;
+  while (stream >> word) parts.push_back(word);
+  return parts;
+}
+
+f64 parseNumber(const std::string& token) {
+  try {
+    return std::stod(token);
+  } catch (...) {
+    return 0.0;  // a corrupt number reads as zero rather than refusing the file
+  }
+}
+
+}  // namespace
+
 bool WorldIO::save(const WorldData& world, std::string& out) {
   std::string sceneText;
   if (!SceneIO::save(world.scene, sceneText)) return false;
@@ -47,6 +103,31 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
   // round has been finished, so files of worlds that were never played stay
   // byte-identical to the ones older versions wrote.
   if (world.bestRound > 0U) stream << "# best " << world.bestRound << '\n';
+
+  // Visual logic. Written only when the world actually has rules, so every
+  // file made before logic existed still saves byte-identically.
+  for (const Variable& variable : world.logic.variables) {
+    stream << "# var " << escapeWord(variable.name) << ' ' << (variable.isText ? "text" : "number") << ' '
+           << (variable.isText ? escapeWord(variable.text) : formatFixed6(variable.number)) << '\n';
+  }
+  for (const Rule& rule : world.logic.rules) {
+    // One line per rule, then one per condition and action belonging to
+    // it. Flat lines survive hand-editing far better than nesting does.
+    stream << "# rule " << escapeWord(rule.name) << ' ' << (rule.enabled ? "on" : "off") << ' '
+           << triggerName(rule.trigger) << ' ' << escapeWord(rule.subject) << ' ' << escapeWord(rule.other)
+           << ' ' << formatFixed6(rule.number) << '\n';
+    for (const Condition& condition : rule.conditions) {
+      stream << "# if " << escapeWord(condition.variable) << ' ' << compareName(condition.compare) << ' '
+             << (condition.useText ? "text" : "number") << ' '
+             << (condition.useText ? escapeWord(condition.text) : formatFixed6(condition.number)) << '\n';
+    }
+    for (const Action& action : rule.actions) {
+      stream << "# do " << actName(action.act) << ' ' << escapeWord(action.target) << ' '
+             << escapeWord(action.text) << ' ' << formatFixed6(action.number)
+             << ' ' << formatFixed6(action.amount.x) << ' ' << formatFixed6(action.amount.y) << ' '
+             << formatFixed6(action.amount.z) << '\n';
+    }
+  }
   // Entity lines: everything after the v1 header line.
   const usize headerEnd = sceneText.find('\n');
   if (headerEnd != std::string::npos) stream << sceneText.substr(headerEnd + 1U);
@@ -134,6 +215,58 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         const unsigned long long value = std::stoull(token, &consumed);
         if (consumed == token.size()) out.bestRound = static_cast<u32>(value);
       } catch (...) {
+      }
+    } else if (line.rfind("# var ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(6U));
+      if (parts.size() >= 3U) {
+        Variable variable;
+        variable.name = unescapeWord(parts[0]);
+        variable.isText = parts[1] == "text";
+        if (variable.isText) {
+          variable.text = unescapeWord(parts[2]);
+        } else {
+          variable.number = parseNumber(parts[2]);
+        }
+        out.logic.variables.push_back(variable);
+      }
+    } else if (line.rfind("# rule ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(7U));
+      if (parts.size() >= 5U) {
+        Rule rule;
+        rule.name = unescapeWord(parts[0]);
+        rule.enabled = parts[1] != "off";
+        if (!triggerFromName(parts[2], rule.trigger)) rule.trigger = Trigger::Start;
+        rule.subject = unescapeWord(parts[3]);
+        rule.other = unescapeWord(parts[4]);
+        if (parts.size() >= 6U) rule.number = parseNumber(parts[5]);
+        out.logic.rules.push_back(rule);
+      }
+    } else if (line.rfind("# if ", 0) == 0) {
+      // Belongs to the rule above it; a stray one with no rule is dropped
+      // rather than inventing a rule to hang it on.
+      const std::vector<std::string> parts = splitWords(line.substr(5U));
+      if (parts.size() >= 4U && !out.logic.rules.empty()) {
+        Condition condition;
+        condition.variable = unescapeWord(parts[0]);
+        if (!compareFromName(parts[1], condition.compare)) condition.compare = Compare::Equal;
+        condition.useText = parts[2] == "text";
+        if (condition.useText) {
+          condition.text = unescapeWord(parts[3]);
+        } else {
+          condition.number = parseNumber(parts[3]);
+        }
+        out.logic.rules.back().conditions.push_back(condition);
+      }
+    } else if (line.rfind("# do ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(5U));
+      if (parts.size() >= 7U && !out.logic.rules.empty()) {
+        Action action;
+        if (!actFromName(parts[0], action.act)) action.act = Act::SetVariable;
+        action.target = unescapeWord(parts[1]);
+        action.text = unescapeWord(parts[2]);
+        action.number = parseNumber(parts[3]);
+        action.amount = Vec3{parseNumber(parts[4]), parseNumber(parts[5]), parseNumber(parts[6])};
+        out.logic.rules.back().actions.push_back(action);
       }
     }
   }

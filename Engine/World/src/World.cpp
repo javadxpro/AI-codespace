@@ -825,6 +825,9 @@ void WorldEditor::update(f64 hostSeconds) {
     // The walk cycle only runs while the game does.
     figureClock_ += hostSeconds;
 
+    // The rules that make this world a game.
+    runLogic(hostSeconds);
+
     // Triggered clips age out (stage 31).
     updateTriggers(hostSeconds);
 
@@ -1234,6 +1237,169 @@ void WorldEditor::updateTrick(f64 seconds) {
   styleScore_ += trickPoints(finished);
   lastTrick_ = finished;
   events_.push_back(GameEvent::Trick);
+}
+
+// --- Visual logic: the rules that make a scene into a game ---
+
+usize WorldEditor::addRule(const Rule& rule) {
+  world_.logic.rules.push_back(rule);
+  return world_.logic.rules.size() - 1U;
+}
+
+bool WorldEditor::replaceRule(usize index, const Rule& rule) {
+  if (index >= world_.logic.rules.size()) return false;
+  world_.logic.rules[index] = rule;
+  return true;
+}
+
+bool WorldEditor::removeRule(usize index) {
+  if (index >= world_.logic.rules.size()) return false;
+  world_.logic.rules.erase(world_.logic.rules.begin() + static_cast<std::ptrdiff_t>(index));
+  return true;
+}
+
+bool WorldEditor::enableRule(usize index, bool enabled) {
+  if (index >= world_.logic.rules.size()) return false;
+  world_.logic.rules[index].enabled = enabled;
+  return true;
+}
+
+bool WorldEditor::moveRule(usize index, bool up) {
+  if (index >= world_.logic.rules.size()) return false;
+  if (up && index == 0U) return false;
+  if (!up && index + 1U >= world_.logic.rules.size()) return false;
+  const usize other = up ? index - 1U : index + 1U;
+  const Rule swapped = world_.logic.rules[index];
+  world_.logic.rules[index] = world_.logic.rules[other];
+  world_.logic.rules[other] = swapped;
+  return true;
+}
+
+void WorldEditor::setVariable(const std::string& name, f64 value) { world_.logic.setNumber(name, value); }
+
+void WorldEditor::setVariableText(const std::string& name, const std::string& text) {
+  world_.logic.setText(name, text);
+}
+
+bool WorldEditor::removeVariable(const std::string& name) {
+  for (usize i = 0; i < world_.logic.variables.size(); ++i) {
+    if (world_.logic.variables[i].name != name) continue;
+    world_.logic.variables.erase(world_.logic.variables.begin() + static_cast<std::ptrdiff_t>(i));
+    return true;
+  }
+  return false;
+}
+
+void WorldEditor::setLogicKeys(const std::vector<std::string>& pressed,
+                               const std::vector<std::string>& held) {
+  logicKeysPressed_ = pressed;
+  logicKeysHeld_ = held;
+}
+
+void WorldEditor::runLogic(f64 seconds) {
+  if (world_.logic.rules.empty()) return;
+
+  LogicInput input;
+  input.seconds = seconds;
+  input.keysPressed = logicKeysPressed_;
+  input.keysHeld = logicKeysHeld_;
+
+  // Built-in game events are logic events too, so a rule can listen for
+  // "goal" without the engine knowing that rule exists.
+  for (const GameEvent event : events_) input.events.push_back(eventTriggerName(event));
+
+  // Which characters are standing inside which entity's area. The radius
+  // is the rule's own `number`, so "near the goal" is the user's call.
+  for (const Rule& rule : world_.logic.rules) {
+    if (rule.trigger != Trigger::AreaEnter && rule.trigger != Trigger::AreaExit) continue;
+    const EntityData* area = entity(rule.other);
+    if (area == nullptr) continue;
+    const f64 radius = rule.number > 0.0 ? rule.number : 1.0;
+    const Vec3 centre = area->transform.position;
+    const EntityData* who = entity(rule.subject);
+    // "Player" means the character the person is driving, not a scene
+    // entity that happens to share the name.
+    const Vec3 at = rule.subject == "Player" ? playerPos_
+                                             : (who != nullptr ? who->transform.position : Vec3{1e9, 1e9, 1e9});
+    const f64 dx = at.x - centre.x;
+    const f64 dz = at.z - centre.z;
+    if (std::sqrt(dx * dx + dz * dz) <= radius) {
+      input.areaPairs.push_back(rule.subject + "|" + rule.other);
+    }
+  }
+
+  std::vector<Effect> effects;
+  logicRuntime_.step(world_.logic, input, effects);
+  // "Pressed" lasts one frame. Held keys persist until the app says
+  // otherwise, so they are left alone.
+  logicKeysPressed_.clear();
+
+  // Carry out what the rules decided. The runtime never touches the world
+  // itself, so everything the engine does is in one place.
+  for (const Effect& effect : effects) {
+    switch (effect.act) {
+      case Act::Move: {
+        EntityData* target = world_.scene.get(world_.scene.find(effect.target));
+        if (target != nullptr) {
+          // A nudge per second, so a rule reads in units a person expects.
+          target->transform.position += effect.amount * seconds;
+        } else if (effect.target == "Player") {
+          setPlayerPosition(playerPos_ + effect.amount * seconds);
+        }
+        break;
+      }
+      case Act::MoveTo: {
+        EntityData* target = world_.scene.get(world_.scene.find(effect.target));
+        if (target != nullptr) {
+          target->transform.position = effect.amount;
+        } else if (effect.target == "Player") {
+          setPlayerPosition(effect.amount);
+        }
+        break;
+      }
+      case Act::Rotate: {
+        EntityData* target = world_.scene.get(world_.scene.find(effect.target));
+        if (target != nullptr) {
+          const f64 radians = effect.number * seconds * 3.14159265358979323846 / 180.0;
+          target->transform.rotation =
+              target->transform.rotation * Quat::fromAxisAngle(Vec3{0.0, 1.0, 0.0}, radians);
+        }
+        break;
+      }
+      case Act::Spawn: {
+        const EntityData* source = entity(effect.target);
+        if (source != nullptr) {
+          EntityData copy = *source;
+          // A unique name, so spawning twice gives two things.
+          u32 index = 1U;
+          std::string name = source->name + "_" + std::to_string(index);
+          while (world_.scene.find(name) != kNullEntity) {
+            ++index;
+            name = source->name + "_" + std::to_string(index);
+          }
+          copy.name = name;
+          copy.transform.position = effect.amount;
+          world_.scene.create(copy);
+          rebuildPhysics();
+        }
+        break;
+      }
+      case Act::Destroy:
+        deleteEntity(effect.target);
+        break;
+      case Act::PlaySound:
+        triggeredSounds_.push_back(effect.text);
+        break;
+      case Act::PlayAnimation:
+        fireTrigger(effect.text);
+        break;
+      case Act::ShowMessage:
+        logicMessage_ = effect.text;
+        break;
+      default:
+        break;  // variables and events are the runtime's own business
+    }
+  }
 }
 
 // --- Components, tags and triggers (stage 31) ---
@@ -2640,6 +2806,10 @@ f64 WorldEditor::kickSpeed() const {
 std::vector<std::string> WorldEditor::hudLines() const {
   std::vector<std::string> lines;
   if (!playing()) return lines;
+  // Whatever the user's rules asked to say goes FIRST, on every kind of
+  // game. Putting it inside one branch meant a win message was invisible
+  // in a match, which is exactly where somebody would use it.
+  if (!logicMessage_.empty()) lines.push_back(logicMessage_);
   if (holeScoring()) {
     const usize cups = holeCount();
     if (screen_ == Screen::RoundEnd) {

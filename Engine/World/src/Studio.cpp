@@ -239,6 +239,141 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return "{\"ok\":true,\"items\":" + stringsJson(editor.entitiesWithTag(param(params, "label"))) + "}";
   }
 
+  // --- Rules: the game's logic, without code ---
+
+  // The rule list, each one as the sentence it reads as.
+  if (path == "/api/rules") {
+    const LogicBook& book = editor.logic();
+    std::string out = "{\"ok\":true,\"rules\":[";
+    for (usize i = 0; i < book.rules.size(); ++i) {
+      const Rule& rule = book.rules[i];
+      if (i > 0U) out += ",";
+      out += "{\"index\":" + std::to_string(i);
+      out += ",\"name\":" + quoted(rule.name);
+      out += ",\"enabled\":" + std::string(rule.enabled ? "true" : "false");
+      out += ",\"trigger\":" + quoted(triggerName(rule.trigger));
+      out += ",\"subject\":" + quoted(rule.subject);
+      out += ",\"other\":" + quoted(rule.other);
+      out += ",\"number\":" + number(rule.number);
+      out += ",\"reads\":" + quoted(describeRule(rule));
+      out += ",\"conditions\":" + std::to_string(rule.conditions.size());
+      out += ",\"actions\":" + std::to_string(rule.actions.size()) + "}";
+    }
+    out += "],\"variables\":[";
+    for (usize i = 0; i < book.variables.size(); ++i) {
+      const Variable& variable = book.variables[i];
+      if (i > 0U) out += ",";
+      out += "{\"name\":" + quoted(variable.name);
+      out += ",\"number\":" + number(variable.number);
+      out += ",\"text\":" + quoted(variable.text);
+      out += ",\"isText\":" + std::string(variable.isText ? "true" : "false") + "}";
+    }
+    out += "]";
+    out += ",\"finished\":" + std::string(editor.logicFinished() ? "true" : "false");
+    out += ",\"won\":" + std::string(editor.logicWon() ? "true" : "false");
+    out += ",\"message\":" + quoted(editor.logicMessage());
+    return out + "}";
+  }
+
+  // Everything the rule editor's dropdowns need, so the page never has to
+  // hard-code a list that could drift from the engine.
+  if (path == "/api/rule-parts") {
+    std::string out = "{\"ok\":true,\"triggers\":[";
+    const char* triggers[] = {"start", "every-frame", "key", "key-held", "collision",
+                              "area-enter", "area-exit", "timer", "variable", "event"};
+    for (usize i = 0; i < sizeof(triggers) / sizeof(triggers[0]); ++i) {
+      if (i > 0U) out += ",";
+      out += quoted(triggers[i]);
+    }
+    out += "],\"compares\":[\"==\",\"!=\",\"<\",\"<=\",\">\",\">=\"],\"actions\":[";
+    const char* acts[] = {"set", "add", "move", "move-to", "rotate", "spawn", "destroy",
+                          "sound", "animate", "message", "raise", "scene", "wait", "end-game"};
+    for (usize i = 0; i < sizeof(acts) / sizeof(acts[0]); ++i) {
+      if (i > 0U) out += ",";
+      out += quoted(acts[i]);
+    }
+    return out + "]}";
+  }
+
+  if (path == "/api/add-rule") {
+    Rule rule;
+    rule.name = param(params, "rulename", "new rule");
+    if (!triggerFromName(param(params, "trigger", "start"), rule.trigger)) rule.trigger = Trigger::Start;
+    rule.subject = param(params, "subject");
+    rule.other = param(params, "other");
+    rule.number = numberParam(params, "number", 0.0);
+    const usize index = editor.addRule(rule);
+    return "{\"ok\":true,\"index\":" + std::to_string(index) + "}";
+  }
+
+  // Conditions and actions are added to an existing rule, so the editor
+  // builds a sentence a piece at a time the way a person says it.
+  if (path == "/api/add-condition") {
+    const usize index = static_cast<usize>(numberParam(params, "index", -1.0));
+    LogicBook& book = editor.logic();
+    if (index >= book.rules.size()) return errorJson("no such rule");
+    Condition condition;
+    condition.variable = param(params, "variable");
+    if (!compareFromName(param(params, "compare", "=="), condition.compare)) condition.compare = Compare::Equal;
+    condition.text = param(params, "text");
+    condition.useText = !condition.text.empty();
+    condition.number = numberParam(params, "number", 0.0);
+    if (condition.variable.empty()) return errorJson("a condition needs a variable");
+    book.rules[index].conditions.push_back(condition);
+    return okJson();
+  }
+
+  if (path == "/api/add-action") {
+    const usize index = static_cast<usize>(numberParam(params, "index", -1.0));
+    LogicBook& book = editor.logic();
+    if (index >= book.rules.size()) return errorJson("no such rule");
+    Action action;
+    if (!actFromName(param(params, "act", "set"), action.act)) action.act = Act::SetVariable;
+    action.target = param(params, "target");
+    action.text = param(params, "text");
+    action.number = numberParam(params, "number", 0.0);
+    action.amount = Vec3{numberParam(params, "ax", 0.0), numberParam(params, "ay", 0.0),
+                         numberParam(params, "az", 0.0)};
+    book.rules[index].actions.push_back(action);
+    return okJson();
+  }
+
+  if (path == "/api/drop-rule") {
+    if (!editor.removeRule(static_cast<usize>(numberParam(params, "index", -1.0)))) {
+      return errorJson("no such rule");
+    }
+    return okJson();
+  }
+  if (path == "/api/toggle-rule") {
+    const usize index = static_cast<usize>(numberParam(params, "index", -1.0));
+    if (!editor.enableRule(index, flagParam(params, "on", true))) return errorJson("no such rule");
+    return okJson();
+  }
+  // Order matters: it decides which rule wins when two disagree.
+  if (path == "/api/move-rule") {
+    if (!editor.moveRule(static_cast<usize>(numberParam(params, "index", -1.0)),
+                         param(params, "dir") == "up")) {
+      return errorJson("cannot move it there");
+    }
+    return okJson();
+  }
+
+  if (path == "/api/set-var") {
+    const std::string name = param(params, "variable");
+    if (name.empty()) return errorJson("a variable needs a name");
+    const std::string text = param(params, "text");
+    if (!text.empty()) {
+      editor.setVariableText(name, text);
+    } else {
+      editor.setVariable(name, numberParam(params, "number", 0.0));
+    }
+    return okJson();
+  }
+  if (path == "/api/drop-var") {
+    if (!editor.removeVariable(param(params, "variable"))) return errorJson("no such variable");
+    return okJson();
+  }
+
   // --- Changing the world ---
 
   if (path == "/api/place") {
@@ -455,6 +590,21 @@ input[type=color]{padding:2px;height:30px}
   padding:5px 7px;margin-bottom:4px;font-size:11px;display:flex;justify-content:space-between}
 .wire span{color:var(--brass)}
 .hint{color:var(--dim);font-size:11px;line-height:1.6}
+#rulesSheet{display:none;position:fixed;inset:0;background:var(--steel);z-index:40;
+  flex-direction:column}
+#rulesSheet.show{display:flex}
+.sheetbar{display:flex;align-items:center;gap:10px;padding:10px 14px;
+  background:var(--steel2);border-bottom:1px solid var(--edge)}
+.sheetbody{flex:1;overflow:auto;display:grid;gap:14px;padding:14px;
+  grid-template-columns:1fr 1fr 1fr}
+@media(max-width:900px){.sheetbody{grid-template-columns:1fr}}
+.col{background:var(--steel2);border:1px solid var(--edge);border-radius:7px;padding:10px}
+.rule{background:#1a2026;border:1px solid var(--edge);border-radius:5px;
+  padding:7px 9px;margin-bottom:5px;font-size:11px;cursor:pointer;line-height:1.5}
+.rule.on{border-color:var(--brass)}
+.rule.off{opacity:.45}
+.rule .tools{display:flex;gap:4px;margin-top:5px}
+.rule .tools button{padding:2px 7px;font-size:10px}
 #flash{position:fixed;bottom:34px;left:50%;transform:translateX(-50%);
   background:#12161a;border:1px solid var(--brass);border-radius:6px;
   padding:7px 14px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
@@ -469,6 +619,7 @@ input[type=color]{padding:2px;height:30px}
     <button onclick="toggleRack()" id="rackBtn" style="display:none">Rack</button>
     <div style="flex:1"></div>
     <span class="hint" id="worldName">-</span>
+    <button id="rulesBtn" onclick="showRules()">Rules</button>
     <button onclick="location.href='/'">Play &rsaquo;</button>
   </div>
 
@@ -572,6 +723,90 @@ input[type=color]{padding:2px;height:30px}
   </div>
 
   <div id="strip">booting&hellip;</div>
+</div>
+<div id="rulesSheet">
+  <div class="sheetbar">
+    <b>Rules &mdash; when this, do that</b>
+    <div style="flex:1"></div>
+    <button onclick="hideRules()">Close</button>
+  </div>
+  <div class="sheetbody">
+    <div class="col">
+      <h2>The rules</h2>
+      <div id="ruleList"></div>
+      <h2>New rule</h2>
+      <div class="row"><input id="rName" placeholder="what it does"></div>
+      <div class="row"><label>when</label>
+        <select id="rTrigger">
+          <option value="start">start (once)</option>
+          <option value="every-frame">every frame</option>
+          <option value="key">key pressed</option>
+          <option value="key-held">key held</option>
+          <option value="collision">collision</option>
+          <option value="area-enter">enters area</option>
+          <option value="area-exit">leaves area</option>
+          <option value="timer">timer</option>
+          <option value="event">event</option>
+        </select></div>
+      <div class="row"><label>who</label><input id="rSubject" placeholder="space / Ball / Player"></div>
+      <div class="row"><label>with</label><input id="rOther" placeholder="Wall / Goal"></div>
+      <div class="row"><label>number</label><input id="rNumber" type="number" step="0.1" value="0"
+        title="timer seconds, or area radius"></div>
+      <button class="go" style="width:100%" onclick="addRule()">Add rule</button>
+    </div>
+
+    <div class="col">
+      <h2>Add to rule <span id="pickedRule" style="color:var(--brass)">&mdash;</span></h2>
+      <div class="hint">Pick a rule on the left, then add an IF or a DO.</div>
+
+      <h2>IF (optional)</h2>
+      <div class="row"><input id="cVar" placeholder="score"></div>
+      <div class="row"><label>is</label>
+        <select id="cCmp">
+          <option>==</option><option>!=</option><option>&lt;</option>
+          <option>&lt;=</option><option>&gt;</option><option>&gt;=</option>
+        </select>
+        <input id="cNum" type="number" step="1" value="0"></div>
+      <button style="width:100%" onclick="addCondition()">Add condition</button>
+
+      <h2>DO</h2>
+      <div class="row"><label>action</label>
+        <select id="aAct">
+          <option value="add">add to variable</option>
+          <option value="set">set variable</option>
+          <option value="move">move</option>
+          <option value="move-to">move to</option>
+          <option value="rotate">rotate</option>
+          <option value="spawn">spawn a copy</option>
+          <option value="destroy">destroy</option>
+          <option value="sound">play sound</option>
+          <option value="animate">play animation</option>
+          <option value="message">show message</option>
+          <option value="raise">raise event</option>
+          <option value="wait">wait</option>
+          <option value="end-game">end the game</option>
+        </select></div>
+      <div class="row"><label>on</label><input id="aTarget" placeholder="Ball / score"></div>
+      <div class="row"><label>name</label><input id="aText" placeholder="sound / clip / message"></div>
+      <div class="row"><label>amount</label><input id="aNum" type="number" step="1" value="1"></div>
+      <div class="grid3">
+        <input id="aax" type="number" step="0.1" value="0" title="x">
+        <input id="aay" type="number" step="0.1" value="0" title="y">
+        <input id="aaz" type="number" step="0.1" value="0" title="z">
+      </div>
+      <button class="go" style="width:100%;margin-top:6px" onclick="addAction()">Add action</button>
+    </div>
+
+    <div class="col">
+      <h2>Variables</h2>
+      <div id="varList"></div>
+      <div class="row"><input id="vName" placeholder="score">
+        <input id="vNum" type="number" step="1" value="0" style="max-width:80px"></div>
+      <button style="width:100%" onclick="setVar()">Set</button>
+      <h2>State</h2>
+      <div class="hint" id="logicState">&mdash;</div>
+    </div>
+  </div>
 </div>
 <div id="flash"></div>
 
@@ -789,6 +1024,115 @@ function clearRig(){
   if (!need()) return;
   api('clear-rig', {name: picked}, function(){ pick(picked); });
 }
+// --- Rules ---
+var pickedRule = -1;
+
+function showRules(){
+  document.getElementById('rulesSheet').classList.add('show');
+  loadRules();
+}
+function hideRules(){ document.getElementById('rulesSheet').classList.remove('show'); }
+
+function loadRules(){
+  api('rules', {}, function(d){
+    if (!d || !d.rules) return;
+    var box = document.getElementById('ruleList');
+    box.innerHTML = '';
+    if (!d.rules.length){
+      box.innerHTML = '<div class="hint">No rules yet. A game is a list of ' +
+        '&ldquo;when this happens, do that&rdquo;.</div>';
+    }
+    d.rules.forEach(function(r){
+      var el = document.createElement('div');
+      el.className = 'rule' + (r.index === pickedRule ? ' on' : '') + (r.enabled ? '' : ' off');
+      var head = document.createElement('div');
+      head.textContent = r.reads;
+      el.appendChild(head);
+      var tools = document.createElement('div');
+      tools.className = 'tools';
+      function tool(label, fn){
+        var b = document.createElement('button');
+        b.textContent = label;
+        b.onclick = function(ev){ ev.stopPropagation(); fn(); };
+        tools.appendChild(b);
+      }
+      tool(r.enabled ? 'off' : 'on', function(){
+        api('toggle-rule', {index: r.index, on: r.enabled ? 0 : 1}, loadRules); });
+      tool('\u2191', function(){ api('move-rule', {index: r.index, dir: 'up'}, loadRules); });
+      tool('\u2193', function(){ api('move-rule', {index: r.index, dir: 'down'}, loadRules); });
+      tool('\u00d7', function(){ api('drop-rule', {index: r.index}, function(){
+        pickedRule = -1; loadRules(); }); });
+      el.appendChild(tools);
+      el.onclick = function(){
+        pickedRule = r.index;
+        document.getElementById('pickedRule').textContent = r.name || ('#' + r.index);
+        loadRules();
+      };
+      box.appendChild(el);
+    });
+
+    var vs = document.getElementById('varList');
+    vs.innerHTML = '';
+    (d.variables || []).forEach(function(v){
+      var el = document.createElement('div');
+      el.className = 'wire';
+      el.innerHTML = '<i>' + v.name + '</i><span>' +
+        (v.isText ? v.text : v.number.toFixed(2)) + '</span>';
+      el.style.cursor = 'pointer';
+      el.onclick = function(){ api('drop-var', {variable: v.name}, loadRules); };
+      vs.appendChild(el);
+    });
+
+    var state = d.finished ? (d.won ? 'game won' : 'game lost') : 'running';
+    if (d.message) state += '  \u2014  "' + d.message + '"';
+    document.getElementById('logicState').textContent = state;
+  });
+}
+
+function addRule(){
+  api('add-rule', {rulename: document.getElementById('rName').value || 'rule',
+    trigger: document.getElementById('rTrigger').value,
+    subject: document.getElementById('rSubject').value,
+    other: document.getElementById('rOther').value,
+    number: document.getElementById('rNumber').value}, function(d){
+      if (d && d.ok){
+        pickedRule = d.index;
+        document.getElementById('rName').value = '';
+        flash('rule added \u2014 now give it a DO');
+        loadRules();
+      }
+    });
+}
+function needRule(){
+  if (pickedRule < 0){ flash('pick a rule first', true); return false; }
+  return true;
+}
+function addCondition(){
+  if (!needRule()) return;
+  api('add-condition', {index: pickedRule, variable: document.getElementById('cVar').value,
+    compare: document.getElementById('cCmp').value,
+    number: document.getElementById('cNum').value}, function(d){
+      if (d && d.ok) { flash('condition added'); loadRules(); }
+    });
+}
+function addAction(){
+  if (!needRule()) return;
+  api('add-action', {index: pickedRule, act: document.getElementById('aAct').value,
+    target: document.getElementById('aTarget').value,
+    text: document.getElementById('aText').value,
+    number: document.getElementById('aNum').value,
+    ax: document.getElementById('aax').value, ay: document.getElementById('aay').value,
+    az: document.getElementById('aaz').value}, function(d){
+      if (d && d.ok) { flash('action added'); loadRules(); }
+    });
+}
+function setVar(){
+  api('set-var', {variable: document.getElementById('vName').value,
+    number: document.getElementById('vNum').value}, function(d){
+      if (d && d.ok) loadRules();
+    });
+}
+
 function pull(){
   api('pull', {wiring: document.getElementById('pullWire').value}, function(d){
     if (!d) return;

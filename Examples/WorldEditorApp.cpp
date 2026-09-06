@@ -587,6 +587,29 @@ int main(int argc, char** argv) {
     if (input.down(Key::E)) curl += 1.0;
     if (curl != 0.0) editor.setCurl(curl);
     if (input.pressed(Key::P)) editor.pass();
+
+    // --- Keys for the rules and the wiring ---
+    // Every letter key is reported to the logic by name, so a rule saying
+    // "when key k" works with no engine change, and a component wired to
+    // "k" fires at the same moment.
+    static const std::pair<Key, const char*> kNamedKeys[] = {
+        {Key::A, "a"}, {Key::B, "b"}, {Key::C, "c"}, {Key::D, "d"}, {Key::E, "e"}, {Key::F, "f"},
+        {Key::G, "g"}, {Key::H, "h"}, {Key::I, "i"}, {Key::J, "j"}, {Key::K, "k"}, {Key::L, "l"},
+        {Key::M, "m"}, {Key::N, "n"}, {Key::O, "o"}, {Key::P, "p"}, {Key::Q, "q"}, {Key::R, "r"},
+        {Key::S, "s"}, {Key::T, "t"}, {Key::U, "u"}, {Key::V, "v"}, {Key::W, "w"}, {Key::X, "x"},
+        {Key::Y, "y"}, {Key::Z, "z"}, {Key::Space, "space"}, {Key::Up, "up"}, {Key::Down, "down"},
+        {Key::Left, "left"}, {Key::Right, "right"}, {Key::Return, "return"},
+    };
+    std::vector<std::string> pressedNames;
+    std::vector<std::string> heldNames;
+    for (const auto& binding : kNamedKeys) {
+      if (input.pressed(binding.first)) {
+        pressedNames.push_back(binding.second);
+        editor.fireTrigger(binding.second);  // components wired to this key
+      }
+      if (input.down(binding.first)) heldNames.push_back(binding.second);
+    }
+    editor.setLogicKeys(pressedNames, heldNames);
     // Skill moves (stage 26): tap N to nutmeg, O to roulette, U to juggle.
     // They are taps because you commit to them — there is no holding back
     // half way through a nutmeg.

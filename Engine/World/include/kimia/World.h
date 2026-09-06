@@ -1,6 +1,7 @@
 #pragma once
 
 #include <kimia/GameProfile.h>
+#include <kimia/Logic.h>
 #include <kimia/Physics.h>
 #include <kimia/Scene.h>
 #include <kimia/Types.h>
@@ -255,6 +256,9 @@ struct EnvironmentColors {
 // through WorldIO.
 struct WorldData {
   std::string name = "MyWorld";
+  // The rules and variables that make this world a GAME rather than a
+  // scene (visual logic). Empty for every world built before it existed.
+  LogicBook logic;
   GameProfile profile;  // the game this world belongs to (copied on create)
   PlayerConfig player;
   BallConfig ball;
@@ -595,6 +599,35 @@ public:
   // component attached in the editor can respond to it with no code.
   static const char* eventTriggerName(GameEvent event);
 
+  // --- Visual logic: the rules that make it a game ---
+  // Everything the Workbench needs to show and edit a rule set, and what
+  // the play loop needs to run it.
+  const LogicBook& logic() const { return world_.logic; }
+  LogicBook& logic() { return world_.logic; }
+  // Adds a rule and returns its index; the editor addresses rules by
+  // position because that is also the order they run in.
+  usize addRule(const Rule& rule);
+  bool replaceRule(usize index, const Rule& rule);
+  bool removeRule(usize index);
+  bool enableRule(usize index, bool enabled);
+  // Moves a rule up or down the list, which is how the user controls
+  // which rule wins when two disagree.
+  bool moveRule(usize index, bool up);
+  void setVariable(const std::string& name, f64 value);
+  void setVariableText(const std::string& name, const std::string& text);
+  bool removeVariable(const std::string& name);
+  // Runs one frame of rules and carries out what they decided. Called by
+  // update() while playing; exposed so a test can drive it directly.
+  // The keys this frame, for rules that listen for one. The app calls
+  // this before update(); without it a "when key pressed" rule can never
+  // fire, which is exactly the bug the first build had.
+  void setLogicKeys(const std::vector<std::string>& pressed, const std::vector<std::string>& held);
+  void runLogic(f64 seconds);
+  bool logicFinished() const { return logicRuntime_.finished(); }
+  bool logicWon() const { return logicRuntime_.won(); }
+  // The message the rules last asked to show, for the HUD.
+  const std::string& logicMessage() const { return logicMessage_; }
+
   // --- Components, tags and triggers (stage 31) ---
   //
   // Everything the editor UI needs to inspect and change a world without
@@ -816,6 +849,12 @@ private:
   };
   std::vector<PlayingClip> playingClips_;
   std::vector<std::string> triggeredSounds_;
+
+  // Visual logic state.
+  LogicRuntime logicRuntime_;
+  std::string logicMessage_;
+  std::vector<std::string> logicKeysPressed_;  // fed in by the app each frame
+  std::vector<std::string> logicKeysHeld_;
 
   // Arena state, kept per character id.
   std::map<u32, u32> arenaHealth_;
