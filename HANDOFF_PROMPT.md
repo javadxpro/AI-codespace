@@ -26,8 +26,8 @@ an option-driven Unity-like editor (section 8).
   `-Wconversion`) and sometimes Ubuntu. I paste terminal output back to you.
   Always give exact, copy-pasteable commands.
 - **The engine is NOT on GitHub `main`** (main = the Core skeleton only). It
-  lives on the `arena/01a07125-ai-codespace` branch. Clone/update commands
-  must say `--branch arena/01a07125-ai-codespace`, or use
+  lives on the `arena/01a07447-ai-codespace` branch. Clone/update commands
+  must say `--branch arena/01a07447-ai-codespace`, or use
   `bash Tools/termux_build.sh` which switches branches by itself. A plain
   clone of main builds only a 2-test `kimia_tests` and no `kimia_world`.
 - **I author game content, never you.** No hardcoded courses/levels/demos

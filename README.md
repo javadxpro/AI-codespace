@@ -43,13 +43,13 @@
 
 > **مهم: موتور روی شاخهٔ `main` گیت‌هاب نیست.** `main` فقط اسکلت اولیه
 > (`Engine/Core` + دو تست) را دارد؛ موتور کامل روی شاخهٔ کاری
-> `arena/01a07125-ai-codespace` است. اگر با `git clone` معمولی بگیری، بیلد
+> `arena/01a07447-ai-codespace` است. اگر با `git clone` معمولی بگیری، بیلد
 > فقط `kimia_tests` کوچک را می‌سازد و `build/bin/kimia_world` وجود نخواهد
 > داشت. همیشه با `--branch` کلون کن:
 
 ```bash
 pkg install -y git clang cmake ninja
-git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
+git clone --branch arena/01a07447-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
 bash Tools/termux_build.sh          # ابزار → cmake → build → 305/305 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
