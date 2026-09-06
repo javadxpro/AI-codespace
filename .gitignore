@@ -3,6 +3,9 @@
 /build-*/
 /cmake-build-*/
 
+# Release packages (Tools/package_release.sh) — built artifacts, never committed
+/release/
+
 # Editor / OS
 .vscode/
 .idea/

@@ -40,7 +40,7 @@
 pkg install -y git clang cmake ninja
 git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
-bash Tools/termux_build.sh          # ابزار → cmake → build → 222/222 → دستور بعدی
+bash Tools/termux_build.sh          # ابزار → cmake → build → 223/223 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
 ```
 
@@ -50,12 +50,25 @@ bash Tools/termux_build.sh          # ابزار → cmake → build → 222/222
 اجرا می‌کند. گزینه‌ها: `--run` (بعد از بیلد اجرا کن)، `--clean`، `--port=N`.
 به‌روزرسانی بعدی: `git pull && bash Tools/termux_build.sh`.
 
+## نسخهٔ آفلاین (بسته‌ای که به بازیکن می‌دهی)
+
+```bash
+bash Tools/package_release.sh --game=golf     # → release/kimia-golf-0.3.0.tar.gz
+```
+
+بستهٔ خودکفا: باینری + پروفایل‌ها + `play.sh` + `worlds/` + `assets/` +
+لایسنس‌ها + `VERSION.txt` (کامیت) + `MANIFEST.txt` (sha256). بازیکن فقط
+باز می‌کند و `sh play.sh` می‌زند — بدون کامپایلر و بدون اینترنت. اسکریپت
+اگر حتی یک اخطار بیلد یا یک تست قرمز ببیند بسته نمی‌سازد، و پیش از آرشیو
+خودِ بسته را روی یک پورت یدکی اجرا و آزمایش می‌کند.
+جزئیات: [Documentation/Release.md](Documentation/Release.md).
+
 ## ساخت و تست
 
 ```bash
 cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
-./build/bin/kimia_tests      # 222/222 tests passed
+./build/bin/kimia_tests      # 223/223 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -74,7 +87,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 222/222 tests passed
+./build-nosdl/bin/kimia_tests    # 223/223 tests passed
 ```
 
 ## هدف: چهار بازی روی یک موتور

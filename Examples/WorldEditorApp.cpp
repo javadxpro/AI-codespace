@@ -258,6 +258,27 @@ void addCurrentCupFlag(RenderScene& scene, const WorldEditor& editor, const Mesh
 
 }  // namespace
 
+namespace {
+
+void printUsage() {
+  std::printf(
+      "%s — the option-driven game maker (everything is menus)\n"
+      "\n"
+      "usage: kimia_world [options]\n"
+      "  --port N          web port to serve the game on (default 8080)\n"
+      "  --world FILE      world file to save/load (default my_world.kimia)\n"
+      "  --assets DIR      OBJ/FBX files you can place in a scene (default assets)\n"
+      "  --profiles DIR    *.kimiaprofile game files (default profiles;\n"
+      "                    the built-in games always work without this)\n"
+      "  --version         print the engine version and exit\n"
+      "  --help            print this text and exit\n"
+      "\n"
+      "then open http://127.0.0.1:<port> in a browser and tap the menus.\n",
+      kimia::kEngineVersionString);
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
   int port = 8080;
   std::string worldPath = "my_world.kimia";
@@ -276,6 +297,15 @@ int main(int argc, char** argv) {
     } else if (arg == "--version") {
       std::printf("%s\n", kimia::kEngineVersionString);
       return 0;
+    } else if (arg == "--help" || arg == "-h") {
+      printUsage();
+      return 0;
+    } else {
+      // Never a silent no-op: a typo like `--porrt 9000` used to be ignored
+      // and the game quietly ran on the wrong port. Say so and stop.
+      std::printf("kimia_world: unknown or incomplete option: %s\n\n", arg.c_str());
+      printUsage();
+      return 2;
     }
   }
 

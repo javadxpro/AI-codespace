@@ -347,3 +347,26 @@ KIMIA_TEST(profile_wind_round_trips_clamps_and_defaults_to_calm) {
   KIMIA_REQUIRE(near(partial.windSpeed, 0.0));      // both lines refused whole
   KIMIA_REQUIRE(near(partial.windDirection, 0.0));
 }
+
+// --- Offline release packaging (stage 21) ---
+
+KIMIA_TEST(profile_shipped_directory_loads_every_game_for_a_release) {
+  // What a release package ships in profiles/ must all load: a profile file
+  // that is silently dropped would ship a game the player cannot pick.
+  const std::vector<GameProfile> fromDir = kimia::loadProfiles(KIMIA_PROFILE_DIR);
+  const std::vector<GameProfile> builtins = kimia::builtinProfiles();
+  // Every shipped file overrides a built-in (it never appends an unknown
+  // game), so the menu keeps exactly the built-in count and order.
+  KIMIA_REQUIRE(fromDir.size() == builtins.size());
+  for (kimia::usize i = 0; i < builtins.size(); ++i) {
+    KIMIA_REQUIRE(fromDir[i].name == builtins[i].name);
+  }
+  // The golf profile carries commented-out documentation (the wind recipe)
+  // after its last real key: trailing comments must not change a value.
+  const GameProfile* golf = findProfile(fromDir, "golf");
+  KIMIA_REQUIRE(golf != nullptr);
+  KIMIA_REQUIRE(golf->mode == kimia::PlayMode::Shot);
+  KIMIA_REQUIRE(golf->scoring == kimia::Scoring::Hole);
+  KIMIA_REQUIRE(near(golf->windSpeed, 0.0));  // the wind line is a comment
+  KIMIA_REQUIRE(ProfileIO::save(*golf) == ProfileIO::save(*findProfile(builtins, "golf")));
+}
