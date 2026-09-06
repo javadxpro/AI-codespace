@@ -1892,9 +1892,10 @@ KIMIA_TEST(world_hud_lines_follow_the_golf_round_and_events_drain_once) {
   KIMIA_REQUIRE(events.size() == 1U);
   KIMIA_REQUIRE(events[0] == Event::RoundOver);
   hud = editor.hudLines();
-  KIMIA_REQUIRE(hud.size() == 2U);
+  KIMIA_REQUIRE(hud.size() == 3U);
   KIMIA_REQUIRE(hud[0] == "ROUND OVER  1 (PAR 3)  2 UNDER");
   KIMIA_REQUIRE(hud[1] == "CARD 1");
+  KIMIA_REQUIRE(hud[2] == "NEW BEST 1");  // the first finished round sets the record
   KIMIA_REQUIRE(!editor.chaseCameraActive());  // the scorecard is a still screen
   // «دور جدید» resets the HUD and leaves nothing queued.
   editor.choose(0);
@@ -1995,4 +1996,199 @@ KIMIA_TEST(world_hud_and_events_in_kick_mode_score_and_goal) {
   KIMIA_REQUIRE(!editor.celebrating());
   KIMIA_REQUIRE(editor.hudLines().size() == 1U);
   KIMIA_REQUIRE(editor.drainEvents().empty());
+}
+
+// --- Stage 20.5-b2: wind and the best round ---
+
+KIMIA_TEST(world_best_round_records_persists_and_only_improves) {
+  // A one-cup course: finish rounds and watch the record behave. The record
+  // must be saved into the world file (a personal record survives quitting).
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addHole(editor, Vec3{0.0, 0.0, -8.0});
+  exitPlace(editor);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.5});
+  exitPlace(editor);
+  KIMIA_REQUIRE(editor.bestRound() == 0U);  // nothing played yet
+  KIMIA_REQUIRE(!editor.bestRoundIsNew());
+
+  // A helper that plays one round of `strokes` shots and drops the ball in.
+  const auto playRound = [&editor](u32 strokes) {
+    editor.choose(3);  // PLAY
+    for (u32 i = 0; i < strokes; ++i) {
+      editor.setAimYaw(0.0);
+      chargeAndShoot(editor, 0.05);  // a tiny tap: never reaches the cup
+      for (i32 s = 0; s < 120 * 5 && !editor.ballAtRest(); ++s) editor.update(1.0 / 120.0);
+    }
+    // Drop it in with a computed arrival speed.
+    const f64 left = editor.ballPosition().z - (-8.0);
+    editor.setBallVelocity(Vec3{0.0, 0.0, -std::sqrt(1.0 + 2.0 * 0.40 * 9.81 * std::abs(left))});
+    for (i32 s = 0; s < 120 * 10 && !editor.celebrating(); ++s) editor.update(1.0 / 120.0);
+    KIMIA_REQUIRE(editor.celebrating());
+    editor.update(2.5);  // celebration -> round over (single cup)
+    KIMIA_REQUIRE(editor.roundOver());
+  };
+
+  playRound(3U);
+  KIMIA_REQUIRE(editor.totalStrokes() == 3U);
+  KIMIA_REQUIRE(editor.bestRound() == 3U);      // first finished round sets it
+  KIMIA_REQUIRE(editor.bestRoundIsNew());
+  std::vector<std::string> hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 3U);
+  KIMIA_REQUIRE(hud[2] == "NEW BEST 3");
+  KIMIA_REQUIRE(editor.statsLine().find("| best 3") != std::string::npos);
+
+  // A WORSE round leaves the record alone and says so quietly.
+  editor.choose(1);  // «منو» -> builder
+  playRound(5U);
+  KIMIA_REQUIRE(editor.totalStrokes() == 5U);
+  KIMIA_REQUIRE(editor.bestRound() == 3U);
+  KIMIA_REQUIRE(!editor.bestRoundIsNew());
+  hud = editor.hudLines();
+  KIMIA_REQUIRE(hud[2] == "BEST 3");
+
+  // A BETTER round takes it.
+  editor.choose(1);
+  playRound(1U);
+  KIMIA_REQUIRE(editor.totalStrokes() == 1U);
+  KIMIA_REQUIRE(editor.bestRound() == 1U);
+  KIMIA_REQUIRE(editor.bestRoundIsNew());
+  KIMIA_REQUIRE(editor.hudLines()[2] == "NEW BEST 1");
+
+  // It rides along in the world file, and reloading brings it back.
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  KIMIA_REQUIRE(text.find("# best 1\n") != std::string::npos);
+  kimia::WorldData reloaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, error));
+  KIMIA_REQUIRE(reloaded.bestRound == 1U);
+  // Byte-identical round trip, record included.
+  std::string again;
+  KIMIA_REQUIRE(kimia::WorldIO::save(reloaded, again));
+  KIMIA_REQUIRE(again == text);
+}
+
+KIMIA_TEST(world_best_round_is_absent_from_worlds_never_finished) {
+  // A world nobody finished must serialize exactly like it always did — no
+  // stray `# best` line, so old and new files stay comparable.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.5});
+  exitPlace(editor);
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  KIMIA_REQUIRE(text.find("# best") == std::string::npos);
+  // And a file that has no record loads as "no record".
+  kimia::WorldData loaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, loaded, error));
+  KIMIA_REQUIRE(loaded.bestRound == 0U);
+}
+
+KIMIA_TEST(world_wind_comes_from_the_profile_and_bends_a_shot) {
+  // The same shot, calm and in a crosswind: the windy one must land clearly
+  // to the side, and the calm one must be dead straight.
+  const auto shotLanding = [](f64 windSpeed, f64 windDirection) {
+    WorldEditor editor;
+    createWorldFor(editor, "golf");
+    // Retune the world's own profile copy: this is exactly what an edited
+    // Profiles/golf.kimiaprofile does.
+    kimia::GameProfile windy = editor.profile();
+    windy.windSpeed = windSpeed;
+    windy.windDirection = windDirection;
+    editor.createWorld(windy);
+    addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+    exitPlace(editor);
+    editor.choose(3);  // PLAY
+    editor.setAimYaw(0.0);
+    // A medium shot: long enough for the breeze to work on, short enough to
+    // stop well inside the 24 m field (a tailwind must have room to run).
+    chargeAndShoot(editor, 0.35);
+    for (i32 i = 0; i < 120 * 20 && !editor.ballAtRest(); ++i) editor.update(1.0 / 120.0);
+    return editor.ballPosition();
+  };
+  const Vec3 calm = shotLanding(0.0, 0.0);
+  KIMIA_REQUIRE(near(calm.x, 0.0, 1e-9));  // no wind: perfectly straight
+  const Vec3 blown = shotLanding(6.0, kimia::kPi * 0.5);  // 6 m/s^2 toward -X
+  KIMIA_REQUIRE(blown.x < -0.05);                          // pushed to -X
+  KIMIA_REQUIRE(near(blown.z, calm.z, 0.6));               // mostly a sideways effect
+  // A tailwind carries the ball FARTHER than calm (aim 0 = -Z, wind 0 = -Z).
+  const Vec3 tail = shotLanding(6.0, 0.0);
+  KIMIA_REQUIRE(tail.z < calm.z - 0.02);
+}
+
+KIMIA_TEST(world_wind_hud_and_stats_read_relative_to_the_aim) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  kimia::GameProfile windy = editor.profile();
+  windy.windSpeed = 3.0;
+  windy.windDirection = kimia::kPi * 0.5;  // blowing toward -X
+  editor.createWorld(windy);
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  KIMIA_REQUIRE(editor.windActive());
+  KIMIA_REQUIRE(near(editor.windSpeed(), 3.0));
+  KIMIA_REQUIRE(near3(editor.windVector(), Vec3{-1.0, 0.0, 0.0}, 1e-12));
+  editor.choose(3);  // PLAY
+  // Aiming down -Z, a wind toward -X blows across from the right: "<-".
+  editor.setAimYaw(0.0);
+  KIMIA_REQUIRE(editor.windHudText() == "WIND 3 <-");
+  // Turn to face the wind: it becomes a headwind.
+  editor.setAimYaw(kimia::kPi * 0.5);
+  KIMIA_REQUIRE(editor.windHudText() == "WIND 3 ^");   // blowing exactly where I aim = tail
+  editor.setAimYaw(-kimia::kPi * 0.5);
+  KIMIA_REQUIRE(editor.windHudText() == "WIND 3 v");   // straight into my face
+  editor.setAimYaw(kimia::kPi);
+  KIMIA_REQUIRE(editor.windHudText() == "WIND 3 ->");
+  // It shows up on the HUD and in the stats line while playing.
+  editor.setAimYaw(0.0);
+  const std::vector<std::string> hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() == 3U);
+  KIMIA_REQUIRE(hud[2] == "WIND 3 <-");
+  KIMIA_REQUIRE(editor.statsLine().find("| wind 3") != std::string::npos);
+}
+
+KIMIA_TEST(world_calm_games_show_no_wind_anywhere) {
+  // Every shipped game is calm, so nothing about the HUD or the stats line
+  // changed for them.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  editor.choose(3);
+  KIMIA_REQUIRE(!editor.windActive());
+  KIMIA_REQUIRE(editor.windHudText().empty());
+  KIMIA_REQUIRE(near3(editor.windVector(), Vec3{0.0, 0.0, 0.0}, 0.0));
+  KIMIA_REQUIRE(editor.hudLines().size() == 2U);
+  KIMIA_REQUIRE(editor.statsLine().find("| wind") == std::string::npos);
+}
+
+KIMIA_TEST(world_wind_rides_along_in_the_world_file) {
+  // A world saved in a gale plays in the same gale even if the profile file
+  // is edited or deleted later (the world carries its profile).
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  kimia::GameProfile windy = editor.profile();
+  windy.windSpeed = 4.5;
+  windy.windDirection = 1.25;
+  editor.createWorld(windy);
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  KIMIA_REQUIRE(text.find("# profile wind 4.500000 1.250000\n") != std::string::npos);
+  kimia::WorldData loaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, loaded, error));
+  KIMIA_REQUIRE(near(loaded.profile.windSpeed, 4.5));
+  KIMIA_REQUIRE(near(loaded.profile.windDirection, 1.25));
+  std::string again;
+  KIMIA_REQUIRE(kimia::WorldIO::save(loaded, again));
+  KIMIA_REQUIRE(again == text);
+  // An old file with no wind line is calm.
+  kimia::WorldData old;
+  KIMIA_REQUIRE(kimia::WorldIO::load("# KIMIA scene v1\ne \"Ground\" mesh plane pos 0 0 0 scale 20 1 20 color 0.2 0.4 0.2 rough 0.9\n",
+                                     old, error));
+  KIMIA_REQUIRE(near(old.profile.windSpeed, 0.0));
 }

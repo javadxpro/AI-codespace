@@ -363,6 +363,27 @@ void PhysicsWorld::applyPairFriction(const Contact& contact) {
   }
 }
 
+// --- Wind ---
+
+f64 Wind::speed() const { return std::sqrt(acceleration.x * acceleration.x + acceleration.z * acceleration.z); }
+
+f64 Wind::direction() const {
+  // Mirror of WorldEditor::aimDirection: yaw 0 points toward -Z, and yaw
+  // grows toward -X, so (x, z) = (-sin, -cos) * speed.
+  if (!active()) return 0.0;
+  return std::atan2(-acceleration.x, -acceleration.z);
+}
+
+Wind makeWind(f64 speed, f64 direction) {
+  const f64 clamped = std::max(0.0, std::min(speed, kMaxWindAcceleration));
+  Wind wind;
+  wind.acceleration = Vec3{-std::sin(direction) * clamped, 0.0, -std::cos(direction) * clamped};
+  // Kill the denormal residue of sin/cos at the cardinal angles so an
+  // "off" wind (speed 0) is exactly inactive and byte-stable.
+  if (clamped == 0.0) wind.acceleration = Vec3{0.0, 0.0, 0.0};
+  return wind;
+}
+
 f64 PhysicsWorld::resolveSpawnHeight(const Vec3& center, f64 radius, f64 maxHeight) const {
   f64 y = center.y;
   for (int iteration = 0; iteration < 8; ++iteration) {
@@ -397,8 +418,44 @@ f64 PhysicsWorld::resolveSpawnHeight(const Vec3& center, f64 radius, f64 maxHeig
 void PhysicsWorld::step() {
   for (auto& spherePair : spheres_) {
     SphereBody& body = spherePair.second;
+    // Wind pushes a MOVING ball, never a resting one (see Wind). The
+    // collisionCount still holds the PREVIOUS step's contact count here (it
+    // is cleared just below), which is how we know we were on the ground.
+    const bool grounded = body.collisionCount != 0U;
     body.collisionCount = 0U;
+    // The speed the body ARRIVED with, before this step's gravity: a ball
+    // parked on the ground reads exactly zero here (the contact solver
+    // zeroed it last step), which is what makes "at rest" detectable.
+    const f64 arrivedHorizontal = std::sqrt(body.velocity.x * body.velocity.x + body.velocity.z * body.velocity.z);
     body.velocity.y -= kGravity * fixedDt_;
+    if (body.windFactor != 0.0 && wind_.active()) {
+      // A ball at rest is held by friction: the breeze can never start it
+      // moving, which is what stops a still ball creeping across the course
+      // forever. On the ground only the HORIZONTAL speed counts (a ball
+      // settling under gravity is not "rolling").
+      // Only the ground can hold a ball still — in the air there is nothing
+      // to grip it, so anything airborne always catches the breeze.
+      const bool resting = grounded && arrivedHorizontal <= kWindRestSpeed;
+      if (!resting) {
+        f64 accel = wind_.speed() * body.windFactor;
+        if (grounded) {
+          // The turf takes most of the breeze, and it can never supply more
+          // push than the friction it is fighting — otherwise a strong
+          // enough gale would accelerate a rolling ball for ever.
+          // ... and never more than kWindGroundGrip of the friction the turf
+          // is already supplying, so a rolling ball always still slows down
+          // and stops: wind bends a putt, it never drives it for ever.
+          const f64 frictionBudget = (body.friction + body.rollingFriction) * kGravity;
+          accel = std::min(accel * kWindGroundFactor, frictionBudget * kWindGroundGrip);
+        }
+        const f64 windSpeed = wind_.speed();
+        if (windSpeed > kEpsilon) {
+          const f64 scale = accel * fixedDt_ / windSpeed;
+          body.velocity.x += wind_.acceleration.x * scale;
+          body.velocity.z += wind_.acceleration.z * scale;
+        }
+      }
+    }
     body.position += body.velocity * fixedDt_;
   }
   for (auto& boxPair : dynamicBoxes_) {

@@ -54,6 +54,12 @@ inline constexpr f64 kWorldFantasyFriction = 0.05;
 inline constexpr f64 kWorldFantasyRollingFriction = 0.0;
 inline constexpr f64 kWorldFantasyRadius = 0.15;
 
+// Wind (stage 20.5-b2): a constant horizontal breeze on the airborne ball.
+// `windSpeed` is an acceleration in m/s^2 (0 = calm, the default for every
+// game so far) and `windDirection` is radians, 0 = blowing toward -Z, the
+// same convention as the aim yaw.
+inline constexpr f64 kProfileWindMax = 20.0;  // matches kMaxWindAcceleration
+
 // Field size limits (meters). Small enough to stay inside the 20-unit
 // inspector clamp era, large enough for a 40 x 40 battleground map.
 inline constexpr f64 kProfileFieldMin = 4.0;
@@ -81,6 +87,8 @@ struct GameProfile {
   PlayMode mode = PlayMode::Kick;    // kick = football runner, shot = golf aim/charge
   Scoring scoring = Scoring::Gate;   // gate = goal line, hole = cup
   u32 par = 3U;                      // hole scoring: strokes each cup is rated at (scorecard)
+  f64 windSpeed = 0.0;               // m/s^2 on the airborne ball (0 = calm)
+  f64 windDirection = 0.0;           // radians, 0 = toward -Z (like the aim yaw)
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -118,6 +126,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   mode kick
 //   scoring gate
 //   par 3                        (hole scoring: rated strokes per cup, 1..20)
+//   wind 0.000000 0.000000       (speed m/s^2 0..20, direction radians)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

@@ -249,6 +249,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back(std::string("mode ") + playModeName(profile.mode));
   out.push_back(std::string("scoring ") + scoringName(profile.scoring));
   out.push_back("par " + std::to_string(profile.par));
+  out.push_back("wind " + formatFixed6(profile.windSpeed) + ' ' + formatFixed6(profile.windDirection));
   return out;
 }
 
@@ -350,6 +351,21 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 par = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, par)) return false;
     out.par = static_cast<u32>(clampF64(std::floor(par), kParMin, kParMax));
+    return true;
+  }
+  if (key == "wind") {
+    // `wind <speed> <direction>` — a line missing either value is ignored
+    // as a whole (never half-applied), like every other key here.
+    std::string speedToken;
+    std::string directionToken;
+    f64 speed = 0.0;
+    f64 direction = 0.0;
+    if (!(tokens >> speedToken >> directionToken) || !parseF64Token(speedToken, speed) ||
+        !parseF64Token(directionToken, direction)) {
+      return false;
+    }
+    out.windSpeed = clampF64(speed, 0.0, kProfileWindMax);
+    out.windDirection = direction;
     return true;
   }
   return false;

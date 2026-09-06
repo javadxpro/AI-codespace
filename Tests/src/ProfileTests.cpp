@@ -166,7 +166,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "kick 3.000000 0.600000 2.000000\n"
                 "mode kick\n"
                 "scoring gate\n"
-                "par 3\n");
+                "par 3\n"
+                "wind 0.000000 0.000000\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -180,7 +181,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "kick 2.500000 13.500000 0.000000\n"
                 "mode shot\n"
                 "scoring hole\n"
-                "par 3\n");
+                "par 3\n"
+                "wind 0.000000 0.000000\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {
@@ -312,4 +314,36 @@ KIMIA_TEST(profile_enum_names_round_trip) {
   KIMIA_REQUIRE(kimia::scoringFromName("gate", scoring) && scoring == kimia::Scoring::Gate);
   KIMIA_REQUIRE(!kimia::scoringFromName("points", scoring));
   KIMIA_REQUIRE(std::string(kimia::scoringName(kimia::Scoring::Hole)) == "hole");
+}
+
+// --- Wind (stage 20.5-b2) ---
+
+KIMIA_TEST(profile_wind_round_trips_clamps_and_defaults_to_calm) {
+  // Every shipped game is calm: wind is opt-in, so no existing game changed.
+  for (const GameProfile& profile : kimia::builtinProfiles()) {
+    KIMIA_REQUIRE(near(profile.windSpeed, 0.0));
+    KIMIA_REQUIRE(near(profile.windDirection, 0.0));
+  }
+  // A windy retune loads exactly and survives save -> load -> save.
+  GameProfile windy;
+  std::string error;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname windy\nwind 3.500000 1.570796\n", windy, error));
+  KIMIA_REQUIRE(near(windy.windSpeed, 3.5));
+  KIMIA_REQUIRE(near(windy.windDirection, 1.570796));
+  const std::string once = ProfileIO::save(windy);
+  GameProfile again;
+  KIMIA_REQUIRE(ProfileIO::load(once, again, error));
+  KIMIA_REQUIRE(ProfileIO::save(again) == once);
+  // Tolerant like every other key: out of range clamps, a half line is
+  // ignored as a whole, an unparsable value changes nothing.
+  GameProfile clamped;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname w\nwind 999 0\n", clamped, error));
+  KIMIA_REQUIRE(near(clamped.windSpeed, kimia::kProfileWindMax));
+  GameProfile negative;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname w\nwind -4 0\n", negative, error));
+  KIMIA_REQUIRE(near(negative.windSpeed, 0.0));
+  GameProfile partial;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname w\nwind 5\nwind x y\n", partial, error));
+  KIMIA_REQUIRE(near(partial.windSpeed, 0.0));      // both lines refused whole
+  KIMIA_REQUIRE(near(partial.windDirection, 0.0));
 }

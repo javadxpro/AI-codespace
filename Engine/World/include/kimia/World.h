@@ -108,6 +108,10 @@ struct WorldData {
   EnvironmentKind environment = EnvironmentKind::Grass;
   Scene scene;
   u32 score = 0U;
+  // Hole scoring: the best (lowest) completed round on this course, kept in
+  // the world file so a personal record survives closing the game. 0 = no
+  // round finished yet. A round only counts when every cup was holed.
+  u32 bestRound = 0U;
 
   f64 halfLength() const { return profile.halfLength(); }  // Z
   f64 halfWidth() const { return profile.halfWidth(); }    // X
@@ -255,6 +259,27 @@ public:
   bool roundOver() const { return screen_ == Screen::RoundEnd; }
   std::string scorecardText() const;  // «۳ ۲ ۴ | جمع ۹ | پار ۹ | برابر پار»
 
+  // The personal record on this course: the lowest total of a round in which
+  // every cup was holed. 0 = no completed round yet. It is written into the
+  // world file, so it survives quitting; `bestRoundIsNew()` is true while the
+  // round-over screen is showing a round that just beat (or set) the record.
+  u32 bestRound() const { return world_.bestRound; }
+  bool bestRoundIsNew() const { return bestIsNew_; }
+
+  // --- Wind (profile `wind <speed> <direction>`) ---
+  // A constant horizontal breeze on the airborne ball, straight from the
+  // world's profile. Calm (speed 0) unless the profile asks for it.
+  f64 windSpeed() const { return world_.profile.windSpeed; }
+  f64 windDirection() const { return world_.profile.windDirection; }
+  bool windActive() const { return world_.profile.windSpeed > 0.0; }
+  // Where the wind blows, as a unit vector on the ground plane ({0,0,0} when
+  // calm) — the same convention as aimDirection().
+  Vec3 windVector() const;
+  // "WIND 3 <-" / "WIND 3 ->" / "WIND 3 ^" / "WIND 3 v": the compass arrow is
+  // relative to the CAMERA behind the ball (i.e. relative to the aim), so the
+  // player reads "the wind pushes my shot left". Empty when calm.
+  std::string windHudText() const;
+
   // Debug/test hooks.
   void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
   void setPlayerPosition(const Vec3& position) {
@@ -342,6 +367,7 @@ private:
   u32 strokes_ = 0U;
   usize currentHole_ = 0U;
   std::vector<u32> scorecard_;
+  bool bestIsNew_ = false;  // the round on screen just set the record
   std::vector<GameEvent> events_;
 
   // Pending object (place flow).

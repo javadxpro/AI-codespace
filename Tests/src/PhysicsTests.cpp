@@ -1,4 +1,5 @@
 #include <kimia/Physics.h>
+#include <kimia/MathUtils.h>
 #include <kimia/Vec.h>
 #include <kimia_test.h>
 
@@ -574,4 +575,160 @@ KIMIA_TEST(physics_character_high_fall_never_tunnels) {
   KIMIA_REQUIRE(minFeet >= -1e-9);  // never below the floor surface
   KIMIA_REQUIRE(near(world.character()->position.y, 1.0));  // resting on the slab (top 0.5)
   KIMIA_REQUIRE(world.character()->onGround);
+}
+
+// --- Wind (stage 20.5-b2) ---
+
+KIMIA_TEST(physics_wind_vector_matches_speed_and_direction) {
+  using kimia::makeWind;
+  using kimia::Wind;
+  // Direction 0 blows toward -Z (the aim-yaw convention), +pi/2 toward -X.
+  const Wind north = makeWind(3.0, 0.0);
+  KIMIA_REQUIRE(near(north.acceleration.x, 0.0));
+  KIMIA_REQUIRE(near(north.acceleration.z, -3.0));
+  KIMIA_REQUIRE(near(north.speed(), 3.0));
+  KIMIA_REQUIRE(near(north.direction(), 0.0));
+  const Wind left = makeWind(2.0, kimia::kPi * 0.5);
+  KIMIA_REQUIRE(near(left.acceleration.x, -2.0, 1e-12));
+  KIMIA_REQUIRE(near(left.acceleration.z, 0.0, 1e-12));
+  KIMIA_REQUIRE(near(left.direction(), kimia::kPi * 0.5, 1e-12));
+  // Calm is exactly inactive; over-strong wind is clamped, never refused.
+  KIMIA_REQUIRE(!makeWind(0.0, 1.234).active());
+  KIMIA_REQUIRE(near(makeWind(0.0, 1.234).speed(), 0.0));
+  KIMIA_REQUIRE(near(makeWind(999.0, 0.0).speed(), kimia::kMaxWindAcceleration));
+  KIMIA_REQUIRE(near(makeWind(-5.0, 0.0).speed(), 0.0));
+}
+
+KIMIA_TEST(physics_wind_deflects_an_airborne_ball_by_the_closed_form) {
+  // A ball thrown straight up in a sideways wind drifts exactly like a body
+  // under constant acceleration: x_N = a * dt^2 * N(N+1)/2 — the same closed
+  // form the free-fall test uses, because wind IS gravity turned sideways.
+  PhysicsWorld world;
+  world.setWind(kimia::makeWind(4.0, kimia::kPi * 0.5));  // 4 m/s^2 toward -X
+  SphereBody ball;
+  ball.position = Vec3{0.0, 5.0, 0.0};
+  ball.radius = 0.12;
+  const u32 id = world.addSphere(ball);
+  const u32 steps = 60U;  // 0.5 s of pure flight (it starts 5 m up)
+  for (u32 i = 0; i < steps; ++i) world.step();
+  const f64 n = static_cast<f64>(steps);
+  const f64 expected = -4.0 * kDt * kDt * n * (n + 1.0) * 0.5;
+  KIMIA_REQUIRE(near(world.sphere(id)->position.x, expected, 1e-9));
+  KIMIA_REQUIRE(near(world.sphere(id)->position.z, 0.0, 1e-12));  // no cross-axis leak
+  // Gravity is untouched by the wind.
+  KIMIA_REQUIRE(near(world.sphere(id)->position.y, 5.0 - kG * kDt * kDt * n * (n + 1.0) * 0.5, 1e-9));
+}
+
+KIMIA_TEST(physics_wind_bends_a_rolling_putt_within_the_friction_budget) {
+  // On the ground the breeze bends a rolling ball, but the push is capped by
+  // the friction the turf supplies, so it can never out-run the surface.
+  const auto driftOf = [](f64 windAccel, bool onGround) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    world.setWind(kimia::makeWind(windAccel, kimia::kPi * 0.5));  // toward -X
+    SphereBody ball;  // default golf tuning: friction 0.40, rolling 0.22
+    ball.radius = 0.12;
+    ball.position = Vec3{0.0, onGround ? 0.12 : 6.0, 0.0};
+    ball.velocity = Vec3{0.0, 0.0, -4.0};
+    const u32 id = world.addSphere(ball);
+    for (u32 i = 0; i < 60U; ++i) world.step();  // 0.5 s
+    return world.sphere(id)->position.x;
+  };
+  // A gentle 2 m/s^2 breeze: below the friction cap, so the ground push is
+  // exactly kWindGroundFactor of the airborne one.
+  const f64 rolling = driftOf(2.0, true);
+  const f64 flying = driftOf(2.0, false);
+  KIMIA_REQUIRE(rolling < -0.001);   // the putt really does bend
+  KIMIA_REQUIRE(rolling > flying);   // less than the same shot in the air
+  // The ground ball keeps kWindGroundFactor of the push and then loses part
+  // of the sideways speed it gained to friction, so the measured ratio sits
+  // just under the factor (0.252 with the golf tuning).
+  KIMIA_REQUIRE(rolling / flying < kimia::kWindGroundFactor);
+  KIMIA_REQUIRE(near(rolling / flying, 0.2522, 0.005));
+  // The friction cap: the strongest legal gale cannot push the ball on the
+  // ground harder than the surface friction it is fighting.
+  const f64 gale = driftOf(kimia::kMaxWindAcceleration, true);
+  const f64 cap = (0.40 + 0.22) * kG;  // the golf ball's friction budget
+  const f64 n = 60.0;
+  const f64 maxDrift = cap * kDt * kDt * n * (n + 1.0) * 0.5;
+  KIMIA_REQUIRE(std::abs(gale) <= maxDrift + 1e-9);
+}
+
+KIMIA_TEST(physics_wind_never_creeps_a_resting_ball) {
+  // The whole point of the airborne rule: a ball sitting on the ground must
+  // not be blown across the course for ten minutes.
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.setWind(kimia::makeWind(kimia::kMaxWindAcceleration, kimia::kPi * 0.5));  // the strongest legal gale
+  SphereBody ball;
+  ball.position = Vec3{0.0, 0.12, 0.0};
+  ball.radius = 0.12;
+  const u32 id = world.addSphere(ball);
+  for (u32 i = 0; i < 1200U; ++i) world.step();  // 10 seconds
+  KIMIA_REQUIRE(std::abs(world.sphere(id)->position.x) < 0.02);
+  KIMIA_REQUIRE(near(world.sphere(id)->position.y, 0.12, 1e-6));
+}
+
+KIMIA_TEST(physics_wind_respects_the_body_wind_factor) {
+  // windFactor 0 = immune (a heavy ball), 0.5 = half the drift.
+  PhysicsWorld world;
+  world.setWind(kimia::makeWind(4.0, kimia::kPi * 0.5));
+  SphereBody immune;
+  immune.position = Vec3{0.0, 5.0, 0.0};
+  immune.windFactor = 0.0;
+  SphereBody half;
+  half.position = Vec3{0.0, 5.0, 10.0};  // far apart: they must not touch each other
+  half.windFactor = 0.5;
+  const u32 immuneId = world.addSphere(immune);
+  const u32 halfId = world.addSphere(half);
+  for (u32 i = 0; i < 60U; ++i) world.step();
+  const f64 n = 60.0;
+  const f64 full = -4.0 * kDt * kDt * n * (n + 1.0) * 0.5;
+  KIMIA_REQUIRE(near(world.sphere(immuneId)->position.x, 0.0, 1e-12));
+  KIMIA_REQUIRE(near(world.sphere(halfId)->position.x, full * 0.5, 1e-9));
+  KIMIA_REQUIRE(near(world.sphere(halfId)->position.z, 10.0, 1e-12));
+}
+
+KIMIA_TEST(physics_wind_is_deterministic_across_host_rates) {
+  // The same shot in the same wind must land on the same spot whether the
+  // host runs at 60 or 120 fps — otherwise a record would be meaningless.
+  const auto fly = [](f64 hostDt, u32 frames) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    world.setWind(kimia::makeWind(3.5, 0.7));
+    SphereBody ball;
+    ball.position = Vec3{0.0, 0.12, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{2.0, 6.0, -1.0};
+    const u32 id = world.addSphere(ball);
+    for (u32 i = 0; i < frames; ++i) world.advance(hostDt);
+    return world.sphere(id)->position;
+  };
+  const Vec3 at120 = fly(1.0 / 120.0, 240U);  // 2 s
+  const Vec3 at60 = fly(1.0 / 60.0, 120U);    // 2 s
+  KIMIA_REQUIRE(near(at120.x, at60.x, 1e-12));
+  KIMIA_REQUIRE(near(at120.y, at60.y, 1e-12));
+  KIMIA_REQUIRE(near(at120.z, at60.z, 1e-12));
+}
+
+KIMIA_TEST(physics_calm_world_is_bit_identical_to_no_wind_at_all) {
+  // Regression guard: adding wind must not have changed a single number in
+  // any existing world (every profile ships calm).
+  const auto fly = [](bool setCalmWind) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    if (setCalmWind) world.setWind(kimia::makeWind(0.0, 1.1));
+    SphereBody ball;
+    ball.position = Vec3{0.0, 3.0, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{5.0, 0.0, -2.0};
+    const u32 id = world.addSphere(ball);
+    for (u32 i = 0; i < 600U; ++i) world.step();
+    return world.sphere(id)->position;
+  };
+  const Vec3 untouched = fly(false);
+  const Vec3 calm = fly(true);
+  KIMIA_REQUIRE(untouched.x == calm.x);
+  KIMIA_REQUIRE(untouched.y == calm.y);
+  KIMIA_REQUIRE(untouched.z == calm.z);
 }

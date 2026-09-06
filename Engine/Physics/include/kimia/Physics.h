@@ -25,6 +25,9 @@ struct SphereBody {
   f64 restitution = 0.40;
   f64 friction = 0.40;
   f64 rollingFriction = 0.22;
+  // How strongly the world wind pushes this body while it is airborne
+  // (0 = immune, 1 = full). A heavy accurate ball can be tuned below 1.
+  f64 windFactor = 1.0;
   u32 collisionCount = 0U;  // contacts resolved during the last step
 };
 
@@ -72,6 +75,49 @@ struct CharacterBody {
 // a one-unit obstacle (6 m/s * 0.1 s = 0.6 m per host frame).
 inline constexpr f64 kMaxCharacterFallSpeed = 6.0;
 
+// --- Wind (stage 20.5-b2) ---
+//
+// A constant horizontal breeze blowing over the whole world. It is an
+// ACCELERATION (m/s^2) applied to a dynamic sphere on every fixed step,
+// exactly like gravity but sideways, scaled by the body's windFactor.
+//
+// Wind pushes a ball that is MOVING — in the air (a lofted football) or
+// rolling along the ground (a putt drifting off line). A ball that has come
+// to REST is immune: friction holds it, so a breeze can never creep a still
+// ball across the course forever. On the ground the push is scaled by
+// kWindGroundFactor, because the turf takes most of it.
+//
+// Wind is deterministic: the same wind and the same shot always land on the
+// same spot, at any host frame rate.
+//
+// The vertical component is ignored: wind is horizontal by definition.
+struct Wind {
+  Vec3 acceleration{0.0, 0.0, 0.0};  // m/s^2, horizontal (y is ignored)
+
+  bool active() const { return acceleration.x != 0.0 || acceleration.z != 0.0; }
+  f64 speed() const;      // magnitude of the horizontal acceleration
+  f64 direction() const;  // radians, 0 = blowing toward -Z, like the aim yaw
+};
+
+// A wind stronger than this is refused (clamped): beyond it a shot can no
+// longer be aimed and the game stops being a game.
+inline constexpr f64 kMaxWindAcceleration = 20.0;
+
+// A ball slower than this (m/s) counts as at rest and ignores the wind.
+inline constexpr f64 kWindRestSpeed = 0.05;
+// How much of the wind reaches a ball that is touching the ground. The
+// ground push is additionally capped at the friction deceleration the turf
+// is already supplying, so no gale can accelerate a rolling ball for ever.
+inline constexpr f64 kWindGroundFactor = 0.35;
+// The hard ceiling on the ground push, as a fraction of the friction the
+// surface supplies. Strictly below 1 so friction always wins in the end and
+// a wind-blown ball comes to a stop instead of drifting for ever.
+inline constexpr f64 kWindGroundGrip = 0.5;
+
+// Builds a wind from a speed (m/s^2) and a direction (radians, 0 = toward -Z,
+// matching WorldEditor::aimYaw). The speed is clamped to [0, kMaxWind...].
+Wind makeWind(f64 speed, f64 direction);
+
 // Fixed-timestep physics world: dynamic spheres and dynamic boxes vs static
 // planes and AABBs, plus dynamic-vs-dynamic pairs (sphere-sphere, sphere-box,
 // box-box). Fixed dt = 1/120 s; host-rate advance() uses an accumulator with
@@ -97,6 +143,11 @@ public:
   // The single kinematic character the caller drives (see CharacterBody).
   CharacterBody* character() { return &character_; }
   const CharacterBody* character() const { return &character_; }
+
+  // The world wind (see Wind). Off by default, so every existing world and
+  // every existing test behaves exactly as before.
+  void setWind(const Wind& wind) { wind_ = wind; }
+  const Wind& wind() const { return wind_; }
 
   // Teleports the character to `position`, zeroing velocity and ground state.
   void resetCharacter(const Vec3& position);
@@ -157,6 +208,7 @@ private:
   std::map<u32, StaticPlane> planes_;
   std::map<u32, StaticBox> boxes_;
   CharacterBody character_;
+  Wind wind_;
   u32 nextId_ = 1U;
   f64 time_ = 0.0;
   u64 steps_ = 0U;

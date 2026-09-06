@@ -38,6 +38,10 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
   stream << "# ball type " << ballTypeName(world.ball.type) << '\n';
   stream << "# env " << environmentName(world.environment) << '\n';
   stream << "# score " << world.score << '\n';
+  // The personal record on this course (hole scoring). Written only once a
+  // round has been finished, so files of worlds that were never played stay
+  // byte-identical to the ones older versions wrote.
+  if (world.bestRound > 0U) stream << "# best " << world.bestRound << '\n';
   // Entity lines: everything after the v1 header line.
   const usize headerEnd = sceneText.find('\n');
   if (headerEnd != std::string::npos) stream << sceneText.substr(headerEnd + 1U);
@@ -108,6 +112,14 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         usize consumed = 0;
         const unsigned long long value = std::stoull(token, &consumed);
         if (consumed == token.size()) out.score = static_cast<u32>(value);
+      } catch (...) {
+      }
+    } else if (line.rfind("# best ", 0) == 0) {
+      const std::string token = line.substr(7U);
+      try {
+        usize consumed = 0;
+        const unsigned long long value = std::stoull(token, &consumed);
+        if (consumed == token.size()) out.bestRound = static_cast<u32>(value);
       } catch (...) {
       }
     }

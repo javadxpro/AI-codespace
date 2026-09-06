@@ -2,7 +2,7 @@
 
 موتور بازی C++17 و ویرایشگر گزینه‌محور KIMIA World — ساخته‌شده از صفر، بدون وابستگی غیرآزاد.
 
-**نسخهٔ موتور: `0.2.1`** (`kimia_world --version`؛ شماره با اندازهٔ تغییر جلو می‌رود: باگ/کوچک `+0.0.1`، مرحله/بزرگ `+0.1.0`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
+**نسخهٔ موتور: `0.3.0`** (`kimia_world --version`؛ شماره با اندازهٔ تغییر جلو می‌رود: باگ/کوچک `+0.0.1`، مرحله/بزرگ `+0.1.0`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
 
 ## وضعیت
 
@@ -25,6 +25,7 @@
 - [x] **HUD روی فریم، صدا و دوربین پشت توپ** — فونت بیت‌مپ ۵×۷ داخل موتور (`kimia::font`) که ضربه/جمع/پار/سوراخ و نوار قدرت را روی خودِ فریم می‌کشد (GL و نرم‌افزاری یکسان)؛ رویدادهای بازی (`Shot/Kick/Holed/Goal/RoundOver`) → صدای رویه‌ای (`AudioBuffer::tone/thock`) که مرورگر از `/sfx/<name>` پخش می‌کند؛ در حالت شوت دوربین نرم پشت توپ و در جهت نشانه می‌چرخد
 - [x] **زمین گلف چندسوراخه** — سوراخ‌ها به ترتیب نام (`Hole_1..N`) بازی می‌شوند، فقط سوراخِ نوبت توپ را می‌گیرد، پرچم روی سوراخ بعدی، جدول ضربه‌ها با `par` از پروفایل («۱ ۰ ۲ | جمع ۳ | پار ۹ | ۶ زیر پار»)، صفحهٔ «پایان دور» با «دور جدید/منو»
 - [x] **گلف روی KIMIA World** — حالت شوت (نشانه ← →، «شوت» را نگه دار، رها کن؛ شوت بعدی از جای توقف؛ ضربه‌شمار) + جسم «سوراخ» با قانون کاپ گلف مرجع؛ همه از پروفایل (`mode shot`، `scoring hole`) — فوتبال‌ها همان موتور را با `mode kick` می‌رانند
+- [x] **باد و رکورد بهترین دور** — باد یک شتاب افقی روی توپِ در حرکت است (در هوا کامل، روی چمن کمتر و محدود به اصطکاک، هرگز روی توپ ایستاده)، از کلید `wind` پروفایل می‌آید و جهتش نسبت به نشانه روی HUD نوشته می‌شود (`WIND 3 <-`)؛ بهترین دور هر زمین در فایل دنیا ذخیره می‌شود و فقط با دور بهتر شکسته می‌شود
 - [x] **پروفایل بازی** — یک موتور، چند بازی: «دنیای جدید → کدام بازی؟» → فوتبال خیابونی ایران: کوی ابوذر (۵×۱۶ آسفالت، توپ فانتزی، پرش بلند) / زمین چمن: کوی ابوذر (۲۵×۴۰، توپ دقیق) / مسابقه واقعی: بتل گراند (۴۰×۴۰) / زمین آزاد؛ هر بازی یک فایل متنی `Profiles/*.kimiaprofile` است که بدون کد قابل ویرایش/افزودن است
 
 ## نصب روی گوشی (Termux) — یک دستور
@@ -39,7 +40,7 @@
 pkg install -y git clang cmake ninja
 git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
-bash Tools/termux_build.sh          # ابزار → cmake → build → 208/208 → دستور بعدی
+bash Tools/termux_build.sh          # ابزار → cmake → build → 222/222 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
 ```
 
@@ -54,7 +55,7 @@ bash Tools/termux_build.sh          # ابزار → cmake → build → 208/208
 ```bash
 cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
-./build/bin/kimia_tests      # 208/208 tests passed
+./build/bin/kimia_tests      # 222/222 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -73,7 +74,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 208/208 tests passed
+./build-nosdl/bin/kimia_tests    # 222/222 tests passed
 ```
 
 ## هدف: چهار بازی روی یک موتور

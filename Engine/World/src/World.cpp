@@ -198,6 +198,9 @@ WorldEditor::WorldEditor() {
 void WorldEditor::rebuildPhysics() {
   physics_.clear();
   physics_.addPlane(0.0);
+  // The breeze comes from the world's profile, so a world plays in the same
+  // wind it was saved with (calm by default: windSpeed 0).
+  physics_.setWind(makeWind(world_.profile.windSpeed, world_.profile.windDirection));
   crateIds_.clear();
   crateBodyIds_.clear();
   std::map<std::string, GoalGroup> goals;
@@ -654,6 +657,12 @@ void WorldEditor::update(f64 hostSeconds) {
         strokes_ = 0U;
         ++currentHole_;
         if (currentHole_ >= holeCount()) {
+          // A complete round: every cup was holed, so the total counts as a
+          // record attempt. Lower is better; the first finished round always
+          // sets the record.
+          const u32 total = totalStrokes();
+          bestIsNew_ = total > 0U && (world_.bestRound == 0U || total < world_.bestRound);
+          if (bestIsNew_) world_.bestRound = total;
           screen_ = Screen::RoundEnd;
           events_.push_back(GameEvent::RoundOver);
           return;
@@ -770,6 +779,34 @@ std::string WorldEditor::currentHoleName() const {
 void WorldEditor::startRound() {
   currentHole_ = 0U;
   scorecard_.clear();
+  bestIsNew_ = false;  // the new round has not beaten anything yet
+}
+
+// --- Wind ---
+
+Vec3 WorldEditor::windVector() const {
+  if (!windActive()) return Vec3{0.0, 0.0, 0.0};
+  return Vec3{-std::sin(world_.profile.windDirection), 0.0, -std::cos(world_.profile.windDirection)};
+}
+
+std::string WorldEditor::windHudText() const {
+  if (!windActive()) return std::string{};
+  // Turn the wind into the player's frame: the camera looks along the aim,
+  // so a wind blowing across the aim reads as left/right and one blowing
+  // along it reads as head/tail.
+  const f64 relative = world_.profile.windDirection - aimYaw_;
+  const f64 forward = std::cos(relative);   // +1 = blowing where I aim (tail)
+  const f64 side = std::sin(relative);      // +1 = blowing to my left
+  const char* arrow = "^";                  // tailwind: pushes the ball on
+  if (std::abs(side) > std::abs(forward)) {
+    arrow = side > 0.0 ? "<-" : "->";
+  } else if (forward < 0.0) {
+    arrow = "v";  // headwind: holds the ball back
+  }
+  // The strength is shown rounded to the nearest whole m/s^2 — the player
+  // needs "how much", not six decimals.
+  const i64 strength = static_cast<i64>(std::llround(world_.profile.windSpeed));
+  return "WIND " + std::to_string(strength) + " " + arrow;
 }
 
 u32 WorldEditor::totalStrokes() const {
@@ -838,6 +875,13 @@ std::vector<std::string> WorldEditor::hudLines() const {
       std::string card = "CARD";
       for (const u32 strokes : scorecard_) card += " " + std::to_string(strokes);
       lines.push_back(card);
+      // The personal record: shouted when this round just set it, quiet
+      // otherwise. Nothing at all until a round has ever been finished.
+      if (bestIsNew_) {
+        lines.push_back("NEW BEST " + std::to_string(world_.bestRound));
+      } else if (world_.bestRound > 0U) {
+        lines.push_back("BEST " + std::to_string(world_.bestRound));
+      }
       return lines;
     }
     lines.push_back("HOLE " + std::to_string(std::min(currentHole_ + 1U, cups)) + "/" + std::to_string(cups) +
@@ -847,10 +891,14 @@ std::vector<std::string> WorldEditor::hudLines() const {
     } else {
       lines.push_back("STROKE " + std::to_string(strokes_) + "  TOTAL " + std::to_string(totalStrokes() + strokes_));
     }
+    const std::string wind = windHudText();
+    if (!wind.empty()) lines.push_back(wind);
     return lines;
   }
   lines.push_back("SCORE " + std::to_string(world_.score));
   if (screen_ == Screen::Goal) lines.push_back("GOAL!");
+  const std::string wind = windHudText();
+  if (!wind.empty()) lines.push_back(wind);
   return lines;
 }
 
@@ -872,7 +920,10 @@ std::string WorldEditor::statsLine() const {
   if (holeScoring()) {
     const usize cups = holeCount();
     line << " | hole " << std::min(currentHole_ + 1U, cups) << "/" << cups << " | total " << totalStrokes()
-         << " | par " << par();
+         << " | par " << par() << " | best " << world_.bestRound;
+  }
+  if (windActive()) {
+    line << " | wind " << static_cast<i32>(std::llround(world_.profile.windSpeed));
   }
   if (!lastError_.empty()) line << " | note " << lastError_;
   return line.str();
