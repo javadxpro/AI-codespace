@@ -110,6 +110,19 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
     stream << "# var " << escapeWord(variable.name) << ' ' << (variable.isText ? "text" : "number") << ' '
            << (variable.isText ? escapeWord(variable.text) : formatFixed6(variable.number)) << '\n';
   }
+  // The user's own interface. Written only when there is one, so a world
+  // made before panels existed still saves byte-identically.
+  for (const Panel& panel : world.hud.panels) {
+    stream << "# panel " << escapeWord(panel.name) << ' ' << panelKindName(panel.kind) << ' '
+           << (panel.visible ? "on" : "off") << ' ' << formatFixed6(panel.x) << ' ' << formatFixed6(panel.y)
+           << ' ' << formatFixed6(panel.width) << ' ' << formatFixed6(panel.height) << ' '
+           << escapeWord(panel.text) << ' ' << escapeWord(panel.variable) << ' '
+           << formatFixed6(panel.maximum) << ' ' << escapeWord(panel.event) << ' '
+           << formatFixed6(panel.color.x) << ' ' << formatFixed6(panel.color.y) << ' '
+           << formatFixed6(panel.color.z) << ' ' << formatFixed6(panel.background.x) << ' '
+           << formatFixed6(panel.background.y) << ' ' << formatFixed6(panel.background.z) << ' '
+           << formatFixed6(panel.opacity) << ' ' << panel.scale << '\n';
+  }
   for (const Rule& rule : world.logic.rules) {
     // One line per rule, then one per condition and action belonging to
     // it. Flat lines survive hand-editing far better than nesting does.
@@ -228,6 +241,27 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
           variable.number = parseNumber(parts[2]);
         }
         out.logic.variables.push_back(variable);
+      }
+    } else if (line.rfind("# panel ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(8U));
+      if (parts.size() >= 18U) {
+        Panel panel;
+        panel.name = unescapeWord(parts[0]);
+        if (!panelKindFromName(parts[1], panel.kind)) panel.kind = PanelKind::Label;
+        panel.visible = parts[2] != "off";
+        panel.x = parseNumber(parts[3]);
+        panel.y = parseNumber(parts[4]);
+        panel.width = parseNumber(parts[5]);
+        panel.height = parseNumber(parts[6]);
+        panel.text = unescapeWord(parts[7]);
+        panel.variable = unescapeWord(parts[8]);
+        panel.maximum = parseNumber(parts[9]);
+        panel.event = unescapeWord(parts[10]);
+        panel.color = Vec3{parseNumber(parts[11]), parseNumber(parts[12]), parseNumber(parts[13])};
+        panel.background = Vec3{parseNumber(parts[14]), parseNumber(parts[15]), parseNumber(parts[16])};
+        panel.opacity = parseNumber(parts[17]);
+        if (parts.size() >= 19U) panel.scale = static_cast<i32>(parseNumber(parts[18]));
+        out.hud.panels.push_back(panel);
       }
     } else if (line.rfind("# rule ", 0) == 0) {
       const std::vector<std::string> parts = splitWords(line.substr(7U));

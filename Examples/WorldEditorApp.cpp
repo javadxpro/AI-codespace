@@ -16,6 +16,7 @@
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
+#include <kimia/Hud.h>
 #include <kimia/Picking.h>
 #include <kimia/Skeleton.h>
 #include <kimia/Studio.h>
@@ -798,6 +799,9 @@ int main(int argc, char** argv) {
     }
     if (image.isEmpty()) kimia::renderSoftware(scene, width, height, colors.clear, image);
     drawHud(image, editor);
+    // The interface the USER laid out, over the engine's own corner text.
+    // Drawn second so a panel can deliberately sit on top of it.
+    kimia::drawHud(image, editor.hud(), editor.logic());
     std::vector<u8> png = image.encodePNG();
 
     // --- Menu (buttons the user sees) ---

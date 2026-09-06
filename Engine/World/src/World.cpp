@@ -1239,6 +1239,32 @@ void WorldEditor::updateTrick(f64 seconds) {
   events_.push_back(GameEvent::Trick);
 }
 
+// --- The game's own interface ---
+
+bool WorldEditor::setPanel(const Panel& panel) {
+  if (panel.name.empty()) return false;
+  world_.hud.set(panel);
+  return true;
+}
+
+bool WorldEditor::removePanel(const std::string& name) { return world_.hud.remove(name); }
+
+std::string WorldEditor::pressHudAt(i32 imageWidth, i32 imageHeight, f64 pixelX, f64 pixelY) {
+  const std::string name = buttonAt(world_.hud, imageWidth, imageHeight, pixelX, pixelY);
+  if (name.empty()) return name;
+  const Panel* panel = world_.hud.find(name);
+  // A button with no event still counts as pressed — it swallows the tap
+  // rather than letting it fall through and select whatever is behind it.
+  if (panel != nullptr && !panel->event.empty()) hudEvents_.push_back(panel->event);
+  return name;
+}
+
+std::vector<std::string> WorldEditor::drainHudEvents() {
+  std::vector<std::string> drained;
+  drained.swap(hudEvents_);
+  return drained;
+}
+
 // --- Blueprints and stages ---
 
 bool WorldEditor::keepBlueprint(const std::string& entityName, const std::string& blueprintName) {
@@ -1421,6 +1447,10 @@ void WorldEditor::runLogic(f64 seconds) {
   // Built-in game events are logic events too, so a rule can listen for
   // "goal" without the engine knowing that rule exists.
   for (const GameEvent event : events_) input.events.push_back(eventTriggerName(event));
+  // So are HUD button presses: tapping a button the user drew is exactly
+  // as good a trigger as pressing a key.
+  for (const std::string& pressed : hudEvents_) input.events.push_back(pressed);
+  hudEvents_.clear();
 
   // Which characters are standing inside which entity's area. The radius
   // is the rule's own `number`, so "near the goal" is the user's call.

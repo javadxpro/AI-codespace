@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # literal lives in Engine/Core/include/kimia/Version.h; the configure step
 # below and a unit test keep the two identical. Bump both + add the entry at
 # the top of CHANGELOG.md per release.
-project(KIMIA VERSION 0.22.0 LANGUAGES C CXX)
+project(KIMIA VERSION 0.23.0 LANGUAGES C CXX)
 file(STRINGS Engine/Core/include/kimia/Version.h KIMIA_VERSION_LINE REGEX "#define KIMIA_ENGINE_VERSION \"")
 string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" KIMIA_HEADER_VERSION "${KIMIA_VERSION_LINE}")
 if(NOT KIMIA_HEADER_VERSION STREQUAL PROJECT_VERSION)
@@ -169,6 +169,7 @@ add_executable(kimia_tests
     Tests/src/StudioTests.cpp
     Tests/src/LogicTests.cpp
     Tests/src/PickingTests.cpp
+    Tests/src/HudTests.cpp
     Tests/src/ProfileTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
@@ -307,6 +308,7 @@ add_library(kimia_world STATIC
     Engine/World/src/Logic.cpp
     Engine/World/src/Picking.cpp
     Engine/World/src/Library.cpp
+    Engine/World/src/Hud.cpp
     Engine/World/src/WorldIO.cpp
 )
 target_include_directories(kimia_world PUBLIC Engine/World/include)

@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/Hud.h>
 #include <kimia/Library.h>
 #include <kimia/Studio.h>
 #include <kimia/WorldIO.h>
@@ -667,4 +668,102 @@ KIMIA_TEST(studio_a_rule_can_send_the_player_to_another_stage) {
   editor.setLogicKeys({"n"}, {});
   editor.update(1.0 / 60.0);
   KIMIA_REQUIRE(editor.currentStage() == "Level 2");
+}
+
+// --- The game's own interface ---
+
+KIMIA_TEST(studio_lays_out_a_hud_that_shows_the_game) {
+  WorldEditor editor;
+  streetWorld(editor);
+  // A score label and a health bar, placed by fractions of the screen.
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-panel", {{"panel", "score"}, {"kind", "label"},
+                                                   {"text", "Score: {score}"}, {"x", "0.02"},
+                                                   {"y", "0.02"}}),
+                    "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-panel", {{"panel", "health"}, {"kind", "bar"},
+                                                   {"variable", "lives"}, {"maximum", "3"}}),
+                    "\"ok\":true"));
+
+  const std::string panels = ask(editor, "/api/panels");
+  KIMIA_REQUIRE(has(panels, "\"name\":\"score\""));
+  KIMIA_REQUIRE(has(panels, "Score: {score}"));
+  KIMIA_REQUIRE(has(panels, "\"kind\":\"bar\""));
+  KIMIA_REQUIRE(has(panels, "\"variable\":\"lives\""));
+
+  // Moving a panel is a repeat call, not a second panel.
+  ask(editor, "/api/set-panel", {{"panel", "score"}, {"kind", "label"}, {"x", "0.5"}});
+  KIMIA_REQUIRE(editor.hud().panels.size() == 2U);
+  KIMIA_REQUIRE(near(editor.hud().find("score")->x, 0.5));
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-panel", {{"kind", "label"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-panel", {{"panel", "score"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-panel", {{"panel", "score"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_a_hud_button_drives_the_rules) {
+  // The whole chain with no code: draw a button, wire a rule to its
+  // event, press it, and watch the game change.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/set-panel", {{"panel", "give"}, {"kind", "button"}, {"text", "+10"},
+                                 {"event", "bonus"}, {"x", "0.3"}, {"y", "0.4"},
+                                 {"w", "0.4"}, {"h", "0.2"}});
+  ask(editor, "/api/add-rule", {{"rulename", "bonus"}, {"trigger", "event"}, {"subject", "bonus"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "score"}, {"number", "10"}});
+
+  editor.choose(3);  // PLAY
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("score") == 0.0);
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/press", {{"panel", "give"}}), "\"ok\":true"));
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("score") == 10.0);
+
+  // Pressing again adds again — the event is not a one-off.
+  ask(editor, "/api/press", {{"panel", "give"}});
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("score") == 20.0);
+
+  // A label is not a button, however much it looks like one.
+  ask(editor, "/api/set-panel", {{"panel", "title"}, {"kind", "label"}, {"text", "hi"}});
+  KIMIA_REQUIRE(has(ask(editor, "/api/press", {{"panel", "title"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/press", {{"panel", "ghost"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_the_hud_layout_survives_a_save_and_load) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/set-panel", {{"panel", "score"}, {"kind", "label"}, {"text", "Score: {score}"},
+                                 {"x", "0.1"}, {"y", "0.2"}, {"w", "0.4"}, {"h", "0.09"},
+                                 {"r", "1"}, {"g", "0.5"}, {"b", "0"}, {"scale", "3"}});
+  ask(editor, "/api/set-panel", {{"panel", "go"}, {"kind", "button"}, {"event", "start"},
+                                 {"text", "PLAY"}});
+
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  kimia::WorldData reloaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, error));
+
+  KIMIA_REQUIRE(reloaded.hud.panels.size() == 2U);
+  const kimia::Panel* score = reloaded.hud.find("score");
+  KIMIA_REQUIRE(score != nullptr);
+  KIMIA_REQUIRE(score->kind == kimia::PanelKind::Label);
+  // Text with a space AND braces has to survive intact.
+  KIMIA_REQUIRE(score->text == "Score: {score}");
+  KIMIA_REQUIRE(near(score->x, 0.1));
+  KIMIA_REQUIRE(near(score->height, 0.09));
+  KIMIA_REQUIRE(near(score->color.x, 1.0));
+  KIMIA_REQUIRE(score->scale == 3);
+  const kimia::Panel* go = reloaded.hud.find("go");
+  KIMIA_REQUIRE(go != nullptr);
+  KIMIA_REQUIRE(go->kind == kimia::PanelKind::Button);
+  KIMIA_REQUIRE(go->event == "start");
+
+  // A world with no panels still saves exactly as it always did.
+  WorldEditor plain;
+  streetWorld(plain);
+  std::string plainText;
+  kimia::WorldIO::save(plain.world(), plainText);
+  KIMIA_REQUIRE(plainText.find("# panel ") == std::string::npos);
 }

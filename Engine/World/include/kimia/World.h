@@ -1,6 +1,7 @@
 #pragma once
 
 #include <kimia/GameProfile.h>
+#include <kimia/Hud.h>
 #include <kimia/Library.h>
 #include <kimia/Logic.h>
 #include <kimia/Picking.h>
@@ -261,6 +262,9 @@ struct WorldData {
   // The rules and variables that make this world a GAME rather than a
   // scene (visual logic). Empty for every world built before it existed.
   LogicBook logic;
+  // The interface the user laid out for their own game. Empty means the
+  // engine's built-in HUD, exactly as before.
+  HudLayout hud;
   GameProfile profile;  // the game this world belongs to (copied on create)
   PlayerConfig player;
   BallConfig ball;
@@ -601,6 +605,20 @@ public:
   // component attached in the editor can respond to it with no code.
   static const char* eventTriggerName(GameEvent event);
 
+  // --- The game's own interface ---
+  // A HUD the user laid out, rather than the fixed corner text the engine
+  // writes for its own football match.
+  const HudLayout& hud() const { return world_.hud; }
+  HudLayout& hud() { return world_.hud; }
+  bool setPanel(const Panel& panel);
+  bool removePanel(const std::string& name);
+  // A tap on the picture: if it landed on a button, raise that button's
+  // event and report it. Empty when no button was hit, so the caller can
+  // fall through to selecting an object.
+  std::string pressHudAt(i32 imageWidth, i32 imageHeight, f64 pixelX, f64 pixelY);
+  // Events raised by button presses, drained by the logic each frame.
+  std::vector<std::string> drainHudEvents();
+
   // --- Blueprints and stages ---
   // A blueprint is a saved object with everything already set up; a stage
   // is a whole scene. Together they are what turns "a room" into "a game".
@@ -889,6 +907,7 @@ private:
 
   // Visual logic state.
   Library library_;
+  std::vector<std::string> hudEvents_;
   std::string currentStage_ = "Main";
 
   pick::Viewport viewport_;

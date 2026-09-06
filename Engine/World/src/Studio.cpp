@@ -239,6 +239,73 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return "{\"ok\":true,\"items\":" + stringsJson(editor.entitiesWithTag(param(params, "label"))) + "}";
   }
 
+  // --- The game's own interface ---
+
+  if (path == "/api/panels") {
+    std::string out = "{\"ok\":true,\"panels\":[";
+    const HudLayout& hud = editor.hud();
+    for (usize i = 0; i < hud.panels.size(); ++i) {
+      const Panel& panel = hud.panels[i];
+      if (i > 0U) out += ",";
+      out += "{\"name\":" + quoted(panel.name);
+      out += ",\"kind\":" + quoted(panelKindName(panel.kind));
+      out += ",\"visible\":" + std::string(panel.visible ? "true" : "false");
+      out += ",\"x\":" + number(panel.x) + ",\"y\":" + number(panel.y);
+      out += ",\"w\":" + number(panel.width) + ",\"h\":" + number(panel.height);
+      out += ",\"text\":" + quoted(panel.text);
+      out += ",\"variable\":" + quoted(panel.variable);
+      out += ",\"maximum\":" + number(panel.maximum);
+      out += ",\"event\":" + quoted(panel.event);
+      out += ",\"color\":" + vec3Json(panel.color);
+      out += ",\"background\":" + vec3Json(panel.background);
+      out += ",\"opacity\":" + number(panel.opacity);
+      out += ",\"scale\":" + std::to_string(panel.scale) + "}";
+    }
+    return out + "]}";
+  }
+
+  // Add or move a panel. "Set" rather than "add" because dragging one in
+  // the editor calls this over and over with the same name.
+  if (path == "/api/set-panel") {
+    Panel panel;
+    panel.name = param(params, "panel");
+    if (panel.name.empty()) return errorJson("a panel needs a name");
+    if (!panelKindFromName(param(params, "kind", "label"), panel.kind)) panel.kind = PanelKind::Label;
+    panel.visible = flagParam(params, "visible", true);
+    panel.x = numberParam(params, "x", 0.02);
+    panel.y = numberParam(params, "y", 0.02);
+    panel.width = numberParam(params, "w", 0.3);
+    panel.height = numberParam(params, "h", 0.06);
+    panel.text = param(params, "text");
+    panel.variable = param(params, "variable");
+    panel.maximum = numberParam(params, "maximum", 100.0);
+    panel.event = param(params, "event");
+    panel.color = Vec3{numberParam(params, "r", 0.9), numberParam(params, "g", 0.9),
+                       numberParam(params, "b", 0.95)};
+    panel.background = Vec3{numberParam(params, "br", 0.1), numberParam(params, "bg", 0.12),
+                            numberParam(params, "bb", 0.15)};
+    panel.opacity = numberParam(params, "opacity", 0.75);
+    panel.scale = static_cast<i32>(numberParam(params, "scale", 2.0));
+    if (!editor.setPanel(panel)) return errorJson("could not set that panel");
+    return okJson();
+  }
+
+  if (path == "/api/drop-panel") {
+    if (!editor.removePanel(param(params, "panel"))) return errorJson("no such panel");
+    return okJson();
+  }
+
+  // Press a button by name, to check the wiring without playing.
+  if (path == "/api/press") {
+    const Panel* panel = editor.hud().find(param(params, "panel"));
+    if (panel == nullptr) return errorJson("no such panel");
+    if (panel->kind != PanelKind::Button) return errorJson("that panel is not a button");
+    const std::string hit = editor.pressHudAt(1000, 1000, (panel->x + panel->width * 0.5) * 1000.0,
+                                              (panel->y + panel->height * 0.5) * 1000.0);
+    if (hit.empty()) return errorJson("the press missed");
+    return okJson("pressed", hit);
+  }
+
   // --- Blueprints and stages ---
 
   if (path == "/api/library") {
@@ -668,7 +735,8 @@ input[type=color]{padding:2px;height:30px}
 .sheetbar{display:flex;align-items:center;gap:10px;padding:10px 14px;
   background:var(--steel2);border-bottom:1px solid var(--edge)}
 .sheetbody{flex:1;overflow:auto;display:grid;gap:14px;padding:14px;
-  grid-template-columns:1fr 1fr 1fr}
+  grid-template-columns:1fr 1fr 1fr 1fr}
+@media(max-width:1200px){.sheetbody{grid-template-columns:1fr 1fr}}
 @media(max-width:900px){.sheetbody{grid-template-columns:1fr}}
 .col{background:var(--steel2);border:1px solid var(--edge);border-radius:7px;padding:10px}
 .rule{background:#1a2026;border:1px solid var(--edge);border-radius:5px;
@@ -890,6 +958,28 @@ input[type=color]{padding:2px;height:30px}
     </div>
 
     <div class="col">
+      <h2>Screen &mdash; panels</h2>
+      <div id="panelList"></div>
+      <div class="row"><input id="pName" placeholder="scoreLabel">
+        <select id="pKind">
+          <option value="label">label</option><option value="bar">bar</option>
+          <option value="box">box</option><option value="button">button</option>
+        </select></div>
+      <div class="row"><label>text</label><input id="pText" placeholder="Score: {score}"></div>
+      <div class="hint">{score} shows a variable's value</div>
+      <div class="row"><label>bar of</label><input id="pVar" placeholder="lives">
+        <input id="pMax" type="number" step="1" value="100" style="max-width:70px"></div>
+      <div class="row"><label>on press</label><input id="pEvent" placeholder="restart"></div>
+      <div class="row"><label>at</label>
+        <input id="pX" type="number" step="0.01" value="0.02" title="left 0..1">
+        <input id="pY" type="number" step="0.01" value="0.02" title="top 0..1"></div>
+      <div class="row"><label>size</label>
+        <input id="pW" type="number" step="0.01" value="0.3" title="width 0..1">
+        <input id="pH" type="number" step="0.01" value="0.08" title="height 0..1"></div>
+      <div class="row"><input id="pColor" type="color" value="#e6e6f2">
+        <input id="pBack" type="color" value="#1a1f26"></div>
+      <button class="go" style="width:100%" onclick="setPanel()">Place panel</button>
+
       <h2>Variables</h2>
       <div id="varList"></div>
       <div class="row"><input id="vName" placeholder="score">
@@ -1199,6 +1289,7 @@ var pickedRule = -1;
 function showRules(){
   document.getElementById('rulesSheet').classList.add('show');
   loadRules();
+  loadPanels();
 }
 function hideRules(){ document.getElementById('rulesSheet').classList.remove('show'); }
 
@@ -1295,6 +1386,64 @@ function addAction(){
       if (d && d.ok) { flash('action added'); loadRules(); }
     });
 }
+function loadPanels(){
+  api('panels', {}, function(d){
+    if (!d) return;
+    var box = document.getElementById('panelList');
+    box.innerHTML = '';
+    if (!(d.panels || []).length){
+      box.innerHTML = '<div class="hint">Nothing on screen yet. A label ' +
+        'showing {score}, or a health bar, is a good start.</div>';
+    }
+    (d.panels || []).forEach(function(p){
+      var el = document.createElement('div');
+      el.className = 'wire';
+      el.style.cursor = 'pointer';
+      var what = p.kind === 'bar' ? ('bar of ' + p.variable) : (p.text || p.kind);
+      el.innerHTML = '<i>' + p.name + '</i><span>' + what + '</span>';
+      el.onclick = function(){
+        // Load it back into the fields so editing is a tweak.
+        document.getElementById('pName').value = p.name;
+        document.getElementById('pKind').value = p.kind;
+        document.getElementById('pText').value = p.text;
+        document.getElementById('pVar').value = p.variable;
+        document.getElementById('pMax').value = p.maximum;
+        document.getElementById('pEvent').value = p.event;
+        document.getElementById('pX').value = p.x.toFixed(3);
+        document.getElementById('pY').value = p.y.toFixed(3);
+        document.getElementById('pW').value = p.w.toFixed(3);
+        document.getElementById('pH').value = p.h.toFixed(3);
+      };
+      var x = document.createElement('b');
+      x.textContent = '\u00d7';
+      x.style.cssText = 'cursor:pointer;margin-right:8px;color:#8b97a5';
+      x.onclick = function(ev){
+        ev.stopPropagation();
+        api('drop-panel', {panel: p.name}, loadPanels);
+      };
+      el.appendChild(x);
+      box.appendChild(el);
+    });
+  });
+}
+function setPanel(){
+  var c = document.getElementById('pColor').value;
+  var b = document.getElementById('pBack').value;
+  var hexPart = function(v, at){ return parseInt(v.substr(at, 2), 16) / 255; };
+  api('set-panel', {panel: document.getElementById('pName').value,
+    kind: document.getElementById('pKind').value,
+    text: document.getElementById('pText').value,
+    variable: document.getElementById('pVar').value,
+    maximum: document.getElementById('pMax').value,
+    event: document.getElementById('pEvent').value,
+    x: document.getElementById('pX').value, y: document.getElementById('pY').value,
+    w: document.getElementById('pW').value, h: document.getElementById('pH').value,
+    r: hexPart(c,1), g: hexPart(c,3), b: hexPart(c,5),
+    br: hexPart(b,1), bg: hexPart(b,3), bb: hexPart(b,5)}, function(d){
+      if (d && d.ok){ flash('panel placed'); loadPanels(); }
+    });
+}
+
 function setVar(){
   api('set-var', {variable: document.getElementById('vName').value,
     number: document.getElementById('vNum').value}, function(d){
