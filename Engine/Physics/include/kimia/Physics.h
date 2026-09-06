@@ -43,6 +43,9 @@ struct SphereBody {
 // 10 m flight — a visible curl, not a boomerang.
 inline constexpr f64 kMagnusCoefficient = 0.06;
 
+// A soaked surface keeps this share of its grip (see setWetness).
+inline constexpr f64 kWetMinGrip = 0.35;
+
 // Spin bleeds away in flight with this time constant (per second), and a
 // ball that touches down loses most of it at once: grass kills spin.
 inline constexpr f64 kSpinAirDecay = 0.35;
@@ -190,6 +193,15 @@ public:
   void setWind(const Wind& wind) { wind_ = wind; }
   const Wind& wind() const { return wind_; }
 
+  // Wetness (stage 24): 0 = dry, 1 = as slick as this engine ever gets. A
+  // wet surface keeps kWetMinGrip of its friction, so the ball runs on
+  // further but never slides for ever. Dry (the default) is bit-identical
+  // to the engine before this existed.
+  void setWetness(f64 wetness);
+  f64 wetness() const { return wetness_; }
+  // The multiplier wetness applies to contact friction: 1 when dry.
+  f64 gripFactor() const;
+
   // Teleports the character to `position`, zeroing velocity and ground state.
   void resetCharacter(const Vec3& position);
   void resetCharacter(u32 id, const Vec3& position);
@@ -256,6 +268,7 @@ private:
   std::map<u32, CharacterBody> characters_;
   u32 nextCharacterId_ = kPrimaryCharacter;
   Wind wind_;
+  f64 wetness_ = 0.0;
   u32 nextId_ = 1U;
   f64 time_ = 0.0;
   u64 steps_ = 0U;

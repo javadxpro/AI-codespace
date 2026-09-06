@@ -902,3 +902,73 @@ KIMIA_TEST(physics_a_ball_immune_to_magnus_never_curls) {
   KIMIA_REQUIRE(immune.y == spinless.y);
   KIMIA_REQUIRE(immune.z == spinless.z);
 }
+
+// --- Stage 24: a wet surface ---
+
+KIMIA_TEST(physics_a_wet_pitch_lets_the_ball_run_further) {
+  const auto roll = [](f64 wetness) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    world.setWetness(wetness);
+    SphereBody ball;
+    ball.position = Vec3{0.0, 0.12, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{4.0, 0.0, 0.0};
+    const kimia::u32 id = world.addSphere(ball);
+    for (kimia::u32 i = 0; i < 600U; ++i) world.step();
+    return world.sphere(id)->position.x;
+  };
+  const f64 dry = roll(0.0);
+  const f64 damp = roll(0.5);
+  const f64 soaked = roll(1.0);
+  // Wetter always means further, and it is a real difference, not noise.
+  KIMIA_REQUIRE(damp > dry + 0.05);
+  KIMIA_REQUIRE(soaked > damp + 0.05);
+  // But never frictionless: even soaked, the ball stops inside the range a
+  // 4 m/s roll should manage. (kWetMinGrip keeps a third of the grip.)
+  KIMIA_REQUIRE(soaked < dry * 4.0);
+}
+
+KIMIA_TEST(physics_grip_factor_is_exact_and_dry_is_untouched) {
+  PhysicsWorld world;
+  // Dry must be EXACTLY 1.0: this is the guard that a dry world behaves
+  // bit-identically to the engine before weather existed.
+  KIMIA_REQUIRE(world.wetness() == 0.0);
+  KIMIA_REQUIRE(world.gripFactor() == 1.0);
+  // Soaked keeps exactly kWetMinGrip.
+  world.setWetness(1.0);
+  KIMIA_REQUIRE(near(world.gripFactor(), kimia::kWetMinGrip, 1e-12));
+  KIMIA_REQUIRE(near(world.gripFactor(), 0.35, 1e-12));
+  // Half wet is exactly half way between.
+  world.setWetness(0.5);
+  KIMIA_REQUIRE(near(world.gripFactor(), 1.0 - 0.65 * 0.5, 1e-12));
+  KIMIA_REQUIRE(near(world.gripFactor(), 0.675, 1e-12));
+  // And it clamps.
+  world.setWetness(5.0);
+  KIMIA_REQUIRE(world.wetness() == 1.0);
+  world.setWetness(-5.0);
+  KIMIA_REQUIRE(world.wetness() == 0.0);
+  KIMIA_REQUIRE(world.gripFactor() == 1.0);
+}
+
+KIMIA_TEST(physics_dry_weather_changes_nothing_at_all) {
+  // Two identical rolls, one on a world that never heard of wetness and one
+  // explicitly set dry: the positions must match to the last bit.
+  const auto roll = [](bool touchWetness) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    if (touchWetness) world.setWetness(0.0);
+    SphereBody ball;
+    ball.position = Vec3{0.0, 0.5, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{3.0, 0.0, -2.0};
+    const kimia::u32 id = world.addSphere(ball);
+    for (kimia::u32 i = 0; i < 300U; ++i) world.step();
+    return world.sphere(id)->position;
+  };
+  const Vec3 untouched = roll(false);
+  const Vec3 explicitDry = roll(true);
+  KIMIA_REQUIRE(untouched.x == explicitDry.x);
+  KIMIA_REQUIRE(untouched.y == explicitDry.y);
+  KIMIA_REQUIRE(untouched.z == explicitDry.z);
+}

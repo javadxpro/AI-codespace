@@ -2642,3 +2642,127 @@ KIMIA_TEST(world_ball_control_pads_appear_only_where_they_make_sense) {
   KIMIA_REQUIRE(golf.holdPad()[4].second == "e");
   for (const auto& pad : golf.tapPad()) KIMIA_REQUIRE(pad.second != "p");
 }
+
+// --- Stage 24: weather and day/night in the world ---
+
+KIMIA_TEST(world_night_and_daylight_follow_the_hour) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");  // 09:00, dry
+  KIMIA_REQUIRE(!editor.night());
+  KIMIA_REQUIRE(!editor.raining());
+  KIMIA_REQUIRE(editor.pitchWetness() == 0.0);
+  // Nine in the morning: the sun is up but not at its peak.
+  KIMIA_REQUIRE(editor.sunHeight() > 0.0);
+  KIMIA_REQUIRE(editor.sunHeight() < 1.0);
+
+  kimia::GameProfile profile = editor.profile();
+  // Midday is exactly the top of the arc.
+  profile.hour = 12.0;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(near(editor.sunHeight(), 1.0, 1e-12));
+  KIMIA_REQUIRE(near(editor.daylight(), 1.0, 1e-12));
+  KIMIA_REQUIRE(!editor.night());
+  // Midnight is the bottom, and it is night.
+  profile.hour = 0.0;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(near(editor.sunHeight(), -1.0, 1e-12));
+  KIMIA_REQUIRE(editor.night());
+  // ... but never pitch black: the floodlights floor it.
+  KIMIA_REQUIRE(near(editor.daylight(), kimia::kWorldNightLight, 1e-12));
+  KIMIA_REQUIRE(near(editor.daylight(), 0.12, 1e-12));
+  // The boundaries are exactly where the constants say.
+  profile.hour = kimia::kWorldSunrise;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(!editor.night());
+  profile.hour = kimia::kWorldSunrise - 0.01;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.night());
+  profile.hour = kimia::kWorldSunset;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.night());
+}
+
+KIMIA_TEST(world_rain_dims_the_day_and_soaks_the_pitch) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  kimia::GameProfile profile = editor.profile();
+  profile.hour = 12.0;
+  editor.createWorld(profile);
+  const f64 clear = editor.daylight();
+  // The same midday, in a downpour, is dimmer.
+  profile.rain = 1.0;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.raining());
+  KIMIA_REQUIRE(editor.daylight() < clear);
+  KIMIA_REQUIRE(near(editor.daylight(), 1.0 - 0.6, 1e-12));
+  // Rain soaks the pitch all by itself.
+  KIMIA_REQUIRE(near(editor.pitchWetness(), 1.0));
+  // A pitch can be wet without rain (it stopped, but the ground is soaked).
+  profile.rain = 0.0;
+  profile.wetness = 0.6;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(!editor.raining());
+  KIMIA_REQUIRE(near(editor.pitchWetness(), 0.6));
+  // ... and the wetter of the two always wins.
+  profile.rain = 0.9;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(near(editor.pitchWetness(), 0.9));
+}
+
+KIMIA_TEST(world_a_wet_pitch_really_reaches_the_physics) {
+  // The profile is not decoration: a soaked world must actually make the
+  // ball run further than a dry one, through the real simulation.
+  const auto rollDistance = [](f64 wetness) {
+    WorldEditor editor;
+    createWorldFor(editor, "golf");
+    kimia::GameProfile profile = editor.profile();
+    profile.wetness = wetness;
+    editor.createWorld(profile);
+    addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+    exitPlace(editor);
+    editor.choose(3);  // PLAY
+    editor.setBallVelocity(Vec3{0.0, 0.0, -3.0});
+    for (i32 i = 0; i < 400; ++i) editor.update(1.0 / 120.0);
+    return editor.ballPosition().z;
+  };
+  const f64 dry = rollDistance(0.0);
+  const f64 wet = rollDistance(1.0);
+  KIMIA_REQUIRE(wet < dry - 0.05);  // rolled further down the -Z course
+}
+
+KIMIA_TEST(world_sky_hud_line_says_what_the_weather_is) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");  // 09:00 dry: nothing worth saying
+  KIMIA_REQUIRE(editor.skyHudText().empty());
+
+  kimia::GameProfile profile = editor.profile();
+  profile.hour = 19.5;
+  profile.rain = 0.35;
+  profile.wetness = 0.5;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.skyHudText() == "19:30 NIGHT RAIN WET");
+
+  // Morning drizzle: raining and wet, but not night.
+  profile.hour = 8.0;
+  profile.rain = 0.2;
+  profile.wetness = 0.0;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.skyHudText() == "08:00 RAIN WET");  // rain implies wet
+
+  // A dry night match.
+  profile.hour = 21.0;
+  profile.rain = 0.0;
+  profile.wetness = 0.0;
+  editor.createWorld(profile);
+  KIMIA_REQUIRE(editor.skyHudText() == "21:00 NIGHT");
+
+  // And it reaches the HUD the player actually sees.
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  editor.choose(3);
+  bool found = false;
+  for (const std::string& line : editor.hudLines()) {
+    if (line == "21:00 NIGHT") found = true;
+  }
+  KIMIA_REQUIRE(found);
+}

@@ -169,7 +169,9 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "par 3\n"
                 "wind 0.000000 0.000000\n"
                 "team 5\n"
-                "match 300.000000\n");
+                "match 300.000000\n"
+                "weather 0.000000 0.250000\n"
+                "time 17.000000\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -186,7 +188,9 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "par 3\n"
                 "wind 0.000000 0.000000\n"
                 "team 1\n"
-                "match 0.000000\n");
+                "match 0.000000\n"
+                "weather 0.000000 0.000000\n"
+                "time 9.000000\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {
@@ -373,4 +377,49 @@ KIMIA_TEST(profile_shipped_directory_loads_every_game_for_a_release) {
   KIMIA_REQUIRE(golf->scoring == kimia::Scoring::Hole);
   KIMIA_REQUIRE(near(golf->windSpeed, 0.0));  // the wind line is a comment
   KIMIA_REQUIRE(ProfileIO::save(*golf) == ProfileIO::save(*findProfile(builtins, "golf")));
+}
+
+// --- Stage 24: weather and the clock ---
+
+KIMIA_TEST(profile_weather_and_time_round_trip_and_clamp) {
+  GameProfile out;
+  std::string error;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname x\nweather 0.4 0.7\ntime 21.25\n", out, error));
+  KIMIA_REQUIRE(near(out.rain, 0.4));
+  KIMIA_REQUIRE(near(out.wetness, 0.7));
+  KIMIA_REQUIRE(near(out.hour, 21.25));
+  // Both values clamp into range.
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname x\nweather 9 -3\ntime 99\n", out, error));
+  KIMIA_REQUIRE(near(out.rain, 1.0));
+  KIMIA_REQUIRE(near(out.wetness, 0.0));
+  KIMIA_REQUIRE(near(out.hour, 24.0));
+  // A half-written weather line is ignored whole, never half applied.
+  GameProfile partial;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname x\nweather 0.5\n", partial, error));
+  KIMIA_REQUIRE(near(partial.rain, 0.0));
+  KIMIA_REQUIRE(near(partial.wetness, 0.0));
+  // Defaults with no lines at all: dry, and midday.
+  GameProfile plain;
+  KIMIA_REQUIRE(ProfileIO::load("# KIMIA profile v1\nname x\n", plain, error));
+  KIMIA_REQUIRE(near(plain.rain, 0.0));
+  KIMIA_REQUIRE(near(plain.wetness, 0.0));
+  KIMIA_REQUIRE(near(plain.hour, 12.0));
+}
+
+KIMIA_TEST(profile_each_game_has_its_own_weather) {
+  const std::vector<GameProfile> games = kimia::builtinProfiles();
+  // golf: a calm dry morning round.
+  KIMIA_REQUIRE(near(games[0].hour, 9.0));
+  KIMIA_REQUIRE(near(games[0].rain, 0.0));
+  KIMIA_REQUIRE(near(games[0].wetness, 0.0));
+  // street: after school, alley still damp.
+  KIMIA_REQUIRE(near(games[1].hour, 17.0));
+  KIMIA_REQUIRE(near(games[1].rain, 0.0));
+  KIMIA_REQUIRE(near(games[1].wetness, 0.25));
+  // grass: a floodlit evening fixture in drizzle.
+  KIMIA_REQUIRE(near(games[2].hour, 19.5));
+  KIMIA_REQUIRE(near(games[2].rain, 0.35));
+  KIMIA_REQUIRE(near(games[2].wetness, 0.5));
+  // battleground: a dusk raid.
+  KIMIA_REQUIRE(near(games[3].hour, 20.5));
 }

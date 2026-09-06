@@ -17,17 +17,17 @@
 
 // The literal is spelled once; the banner string is built from it by literal
 // concatenation and the numeric fields are pinned to it by a test.
-#define KIMIA_ENGINE_VERSION "0.7.2"
+#define KIMIA_ENGINE_VERSION "0.8.0"
 
 namespace kimia {
 
 inline constexpr const char* kEngineName = "KIMIA";
 inline constexpr const char* kEngineVersion = KIMIA_ENGINE_VERSION;
 inline constexpr u32 kEngineVersionMajor = 0U;
-inline constexpr u32 kEngineVersionMinor = 7U;
-inline constexpr u32 kEngineVersionPatch = 2U;
+inline constexpr u32 kEngineVersionMinor = 8U;
+inline constexpr u32 kEngineVersionPatch = 0U;
 
-// "KIMIA 0.7.2" — for banners and --version.
+// "KIMIA 0.8.0" — for banners and --version.
 inline constexpr const char* kEngineVersionString = "KIMIA " KIMIA_ENGINE_VERSION;
 
 }  // namespace kimia

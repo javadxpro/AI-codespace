@@ -209,6 +209,9 @@ void WorldEditor::rebuildPhysics() {
   // The breeze comes from the world's profile, so a world plays in the same
   // wind it was saved with (calm by default: windSpeed 0).
   physics_.setWind(makeWind(world_.profile.windSpeed, world_.profile.windDirection));
+  // Weather (stage 24): rain soaks the pitch, so the surface is as slick as
+  // the wetter of «how wet the profile says it is» and «how hard it rains».
+  physics_.setWetness(pitchWetness());
   crateIds_.clear();
   crateBodyIds_.clear();
   std::map<std::string, GoalGroup> goals;
@@ -942,7 +945,9 @@ bool WorldEditor::pass() {
   if (distance < kMoveEpsilon) return false;
   // A ground pass weighted to arrive: friction eats v^2 / (2*a) of range,
   // so aim for the speed that dies just past the receiver's feet.
-  const f64 decel = (ball->friction + ball->rollingFriction) * kGravity;
+  // The wet pitch is part of the sum: on a slick surface the ball keeps
+  // running, so the same pass needs less weight on it.
+  const f64 decel = (ball->friction + ball->rollingFriction) * kGravity * physics_.gripFactor();
   const f64 wanted = std::sqrt(std::max(2.0 * decel * distance * 1.15, 1e-6));
   ball->velocity = Vec3{dx / distance * wanted, 0.0, dz / distance * wanted};
   ball->spin = takeCurlSpin();
@@ -1011,6 +1016,53 @@ void WorldEditor::startRound() {
 Vec3 WorldEditor::windVector() const {
   if (!windActive()) return Vec3{0.0, 0.0, 0.0};
   return Vec3{-std::sin(world_.profile.windDirection), 0.0, -std::cos(world_.profile.windDirection)};
+}
+
+// Rain wets the pitch by itself, but a profile can also start it wet (a
+// pitch soaked before kick-off) — so the slickness is whichever is greater.
+f64 WorldEditor::pitchWetness() const {
+  const f64 fromRain = world_.profile.rain;
+  const f64 fromProfile = world_.profile.wetness;
+  return fromRain > fromProfile ? fromRain : fromProfile;
+}
+
+bool WorldEditor::raining() const { return world_.profile.rain > 0.0; }
+
+// Night is before sunrise or after sunset. The hours are deliberately plain
+// numbers rather than a solar model: this is a game, not an almanac.
+bool WorldEditor::night() const {
+  const f64 hour = world_.profile.hour;
+  return hour < kWorldSunrise || hour >= kWorldSunset;
+}
+
+// How high the sun sits, -1 (deep night) .. 1 (noon). It follows a simple
+// cosine over the day so dawn and dusk are gentle rather than a switch.
+f64 WorldEditor::sunHeight() const {
+  const f64 dayFraction = world_.profile.hour / 24.0;
+  return -std::cos(dayFraction * 2.0 * 3.14159265358979323846);
+}
+
+// Daylight, 0 (pitch dark) .. 1 (full noon sun). Floodlights mean a night
+// match is never truly black, so it floors at kWorldNightLight.
+f64 WorldEditor::daylight() const {
+  const f64 height = sunHeight();
+  const f64 lit = height <= 0.0 ? 0.0 : height;
+  const f64 clouded = lit * (1.0 - 0.6 * world_.profile.rain);  // rain dims the sky
+  return clouded < kWorldNightLight ? kWorldNightLight : clouded;
+}
+
+std::string WorldEditor::skyHudText() const {
+  // Only worth a line when the weather or the hour is actually notable.
+  const bool wet = pitchWetness() > 0.0;
+  if (!raining() && !wet && !night()) return std::string{};
+  std::ostringstream out;
+  const i32 hourPart = static_cast<i32>(world_.profile.hour);
+  const i32 minutePart = static_cast<i32>((world_.profile.hour - static_cast<f64>(hourPart)) * 60.0 + 0.5);
+  out << (hourPart < 10 ? "0" : "") << hourPart << ':' << (minutePart < 10 ? "0" : "") << minutePart;
+  if (night()) out << " NIGHT";
+  if (raining()) out << " RAIN";
+  if (wet) out << " WET";
+  return out.str();
 }
 
 std::string WorldEditor::windHudText() const {
@@ -1117,6 +1169,10 @@ std::vector<std::string> WorldEditor::hudLines() const {
     }
     const std::string wind = windHudText();
     if (!wind.empty()) lines.push_back(wind);
+    {
+      const std::string sky = skyHudText();
+      if (!sky.empty()) lines.push_back(sky);
+    }
     return lines;
   }
   if (matchMode()) {
@@ -1130,12 +1186,20 @@ std::vector<std::string> WorldEditor::hudLines() const {
     if (screen_ == Screen::Goal) lines.push_back("GOAL!");
     const std::string matchWind = windHudText();
     if (!matchWind.empty()) lines.push_back(matchWind);
+    {
+      const std::string sky = skyHudText();
+      if (!sky.empty()) lines.push_back(sky);
+    }
     return lines;
   }
   lines.push_back("SCORE " + std::to_string(world_.score));
   if (screen_ == Screen::Goal) lines.push_back("GOAL!");
   const std::string wind = windHudText();
   if (!wind.empty()) lines.push_back(wind);
+  {
+    const std::string sky = skyHudText();
+    if (!sky.empty()) lines.push_back(sky);
+  }
   return lines;
 }
 

@@ -149,6 +149,7 @@ std::vector<GameProfile> builtinProfiles() {
   golf.mode = PlayMode::Shot;
   golf.scoring = Scoring::Hole;
   golf.par = 3U;
+  golf.hour = 9.0;  // a calm, dry morning round
   profiles.push_back(golf);
 
   // فوتبال خیابونی ایران: کوی ابوذر — a tight 5v5 court between walls, a
@@ -168,6 +169,10 @@ std::vector<GameProfile> builtinProfiles() {
   street.kickUp = 2.0;
   street.teamSize = 5U;         // ۵ در برابر ۵
   street.matchSeconds = 300.0;  // ۵ دقیقه
+  // A street game after school: late afternoon, and the alley is still
+  // damp from earlier rain even though it has stopped.
+  street.hour = 17.0;
+  street.wetness = 0.25;
   profiles.push_back(street);
 
   // زمین چمن: کوی ابوذر — the professional 11v11 game: a real ball, a real
@@ -187,6 +192,11 @@ std::vector<GameProfile> builtinProfiles() {
   grass.kickUp = 0.8;
   grass.teamSize = 11U;        // ۱۱ در برابر ۱۱
   grass.matchSeconds = 600.0;  // ۱۰ دقیقه
+  // A proper evening fixture under lights, with a bit of drizzle: the
+  // ball runs on off a wet pitch.
+  grass.hour = 19.5;
+  grass.rain = 0.35;
+  grass.wetness = 0.5;
   profiles.push_back(grass);
 
   // مسابقه واقعی: بتل گراند — PUBG-like, 4-player squads; this 40 x 40 field
@@ -206,6 +216,7 @@ std::vector<GameProfile> builtinProfiles() {
   battleground.kickUp = 1.2;
   battleground.teamSize = 4U;         // تیم‌های ۴ نفره
   battleground.matchSeconds = 420.0;  // ۷ دقیقه
+  battleground.hour = 20.5;  // dusk raid
   profiles.push_back(battleground);
 
   // زمین آزاد — the sandbox: exactly the editor's original behaviour.
@@ -258,6 +269,8 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back("wind " + formatFixed6(profile.windSpeed) + ' ' + formatFixed6(profile.windDirection));
   out.push_back("team " + std::to_string(profile.teamSize));
   out.push_back("match " + formatFixed6(profile.matchSeconds));
+  out.push_back("weather " + formatFixed6(profile.rain) + ' ' + formatFixed6(profile.wetness));
+  out.push_back("time " + formatFixed6(profile.hour));
   return out;
 }
 
@@ -381,6 +394,26 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 seconds = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, seconds)) return false;
     out.matchSeconds = clampF64(seconds, 0.0, kProfileMatchMax);
+    return true;
+  }
+  if (key == "weather") {
+    // `weather <rain> <wetness>` — both or neither, like `wind`.
+    std::string rainToken;
+    std::string wetToken;
+    f64 rain = 0.0;
+    f64 wet = 0.0;
+    if (!(tokens >> rainToken >> wetToken) || !parseF64Token(rainToken, rain) || !parseF64Token(wetToken, wet)) {
+      return false;
+    }
+    out.rain = clampF64(rain, 0.0, kProfileRainMax);
+    out.wetness = clampF64(wet, 0.0, kProfileWetMax);
+    return true;
+  }
+  if (key == "time") {
+    std::string value;
+    f64 hour = 0.0;
+    if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
+    out.hour = clampF64(hour, 0.0, kProfileHourMax);
     return true;
   }
   if (key == "team") {

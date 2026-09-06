@@ -60,6 +60,17 @@ inline constexpr f64 kWorldFantasyRadius = 0.15;
 // same convention as the aim yaw.
 inline constexpr f64 kProfileWindMax = 20.0;  // matches kMaxWindAcceleration
 
+// --- Weather and the clock (stage 24) ---
+// `rain` is how hard it is coming down, 0 = dry ... 1 = downpour. `wet` is
+// how slick that leaves the ground, 0 = dry grip ... 1 = ice rink. Rain
+// wets the pitch by itself, but a profile can set them apart (a dry frosty
+// morning, or a soaked pitch after the rain stopped).
+inline constexpr f64 kProfileRainMax = 1.0;
+inline constexpr f64 kProfileWetMax = 1.0;
+// Kick-off time as hours on a 24 h clock, 12.0 = midday (the default, and
+// what every game did before this stage existed).
+inline constexpr f64 kProfileHourMax = 24.0;
+
 // Squad size limits: 1 = a single player (golf, sandbox), 11 = a full grass
 // football side. The ceiling keeps a typo from spawning a crowd the phone
 // cannot draw.
@@ -98,6 +109,9 @@ struct GameProfile {
   u32 par = 3U;                      // hole scoring: strokes each cup is rated at (scorecard)
   f64 windSpeed = 0.0;               // m/s^2 on the airborne ball (0 = calm)
   f64 windDirection = 0.0;           // radians, 0 = toward -Z (like the aim yaw)
+  f64 rain = 0.0;                    // 0 = dry ... 1 = downpour (stage 24)
+  f64 wetness = 0.0;                 // 0 = dry grip ... 1 = very slick
+  f64 hour = 12.0;                   // kick-off time, 0..24, 12 = midday
   // Squad size per side (stage 21): 5 = street football, 11 = grass, 4 = a
   // battleground team, 1 = the lone player of golf/sandbox. The engine
   // spawns teamSize - 1 team-mates plus teamSize opponents when a world

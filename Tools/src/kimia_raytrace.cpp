@@ -37,7 +37,7 @@ void printUsage() {
   std::printf("  --eye x y z    camera position\n");
   std::printf("  --target x y z camera look-at\n");
   std::printf("  --up x y z     camera up vector\n");
-  std::printf("  --sun x y z    sun direction (normalized on use)\n");
+  std::printf("  --sun x y z    sun direction (overrides the world's own hour/weather)\n");
   std::printf("  --intensity F  sun intensity (default 2.2)\n");
   std::printf("  --sky F        sky environment intensity (default 0.6)\n");
   std::printf("  --exposure F   exposure multiplier (default 1.0)\n");
@@ -52,6 +52,7 @@ int main(int argc, char** argv) {
   kimia::raytrace::RaytraceSettings settings;
   kimia::raytrace::RaytraceCamera camera;
   bool bruteForce = false;
+  bool sunOverridden = false;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -82,6 +83,7 @@ int main(int argc, char** argv) {
     } else if (arg == "--target" && nextVec3(camera.target)) {
     } else if (arg == "--up" && nextVec3(camera.up)) {
     } else if (arg == "--sun" && nextVec3(settings.sunDirection)) {
+      sunOverridden = true;
     } else if (arg == "--intensity" && nextF64(settings.sunIntensity)) {
     } else if (arg == "--sky" && nextF64(settings.skyIntensity)) {
     } else if (arg == "--exposure" && nextF64(settings.exposure)) {
@@ -112,6 +114,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "ERROR %s: %s\n", worldPath.c_str(), error.c_str());
     return 1;
   }
+
+  // The world's own weather and hour light the render, unless the caller
+  // overrode the sun on the command line.
+  if (!sunOverridden) kimia::raytrace::applyWorldSky(world, settings);
 
   kimia::raytrace::RaytraceScene scene;
   if (!kimia::raytrace::buildFromWorld(world, scene, error)) {

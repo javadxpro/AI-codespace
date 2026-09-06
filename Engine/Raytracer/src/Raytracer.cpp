@@ -472,6 +472,33 @@ bool buildFromWorld(const WorldData& world, RaytraceScene& out, std::string& err
   return true;
 }
 
+void applyWorldSky(const WorldData& world, RaytraceSettings& settings) {
+  const f64 hour = world.profile.hour;
+  const f64 rain = world.profile.rain;
+  // The sun tracks a simple arc: up at noon, below the horizon at night,
+  // and swinging east to west across the day.
+  const f64 dayAngle = hour / 24.0 * 2.0 * kPi;
+  const f64 height = -std::cos(dayAngle);   // -1 midnight ... +1 midday
+  const f64 across = std::sin(dayAngle);    // east in the morning, west by evening
+  // sunDirection is the direction the light TRAVELS, so it points down when
+  // the sun is up: negate the height.
+  Vec3 direction{across * 0.6, -height, -0.35};
+  const f64 length = direction.length();
+  if (length > 1e-9) direction = direction * (1.0 / length);
+  settings.sunDirection = direction;
+
+  // Below the horizon there is no sun at all — only the floodlights, which
+  // the sky term stands in for. Rain puts cloud in the way.
+  const f64 above = height <= 0.0 ? 0.0 : height;
+  const f64 cloud = 1.0 - 0.65 * rain;
+  settings.sunIntensity = 2.2 * above * cloud;
+  // The sky never goes fully black: a night pitch is lit, just dimly, and
+  // an overcast sky is flat rather than dark.
+  const f64 skyDay = 0.6 * cloud;
+  const f64 skyNight = 0.10;
+  settings.skyIntensity = skyNight + (skyDay - skyNight) * above;
+}
+
 bool render(const RaytraceScene& scene, const RaytraceSettings& settings, const RaytraceCamera& camera, Image& out) {
   return render(scene, settings, camera, false, out);
 }

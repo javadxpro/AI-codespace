@@ -20,6 +20,8 @@ using kimia::raytrace::RaytraceSettings;
 using kimia::raytrace::buildFromWorld;
 using kimia::raytrace::render;
 
+bool near(f64 a, f64 b, f64 tolerance = 1e-9) { return std::abs(a - b) <= tolerance; }
+
 WorldData groundWorld() {
   WorldData world;
   kimia::buildEmptyWorldScene(world);
@@ -188,3 +190,51 @@ KIMIA_TEST(raytrace_block_casts_a_soft_shadow) {
   KIMIA_REQUIRE(litSide > shadowSide * 1.25);
 }
 
+
+// --- Stage 24: the world's hour and weather light the render ---
+
+KIMIA_TEST(raytrace_sky_follows_the_hour_and_the_rain) {
+  kimia::WorldData world;
+  kimia::raytrace::RaytraceSettings settings;
+
+  // Midday: the sun is overhead, so the light travels straight down.
+  world.profile.hour = 12.0;
+  world.profile.rain = 0.0;
+  kimia::raytrace::applyWorldSky(world, settings);
+  KIMIA_REQUIRE(settings.sunDirection.y < -0.8);  // pointing down = sun up
+  const kimia::f64 noonSun = settings.sunIntensity;
+  const kimia::f64 noonSky = settings.skyIntensity;
+  KIMIA_REQUIRE(near(noonSun, 2.2, 1e-12));
+  KIMIA_REQUIRE(near(noonSky, 0.6, 1e-12));
+
+  // Midnight: no sun at all, and only a dim sky (the floodlights).
+  world.profile.hour = 0.0;
+  kimia::raytrace::applyWorldSky(world, settings);
+  KIMIA_REQUIRE(settings.sunIntensity == 0.0);
+  KIMIA_REQUIRE(near(settings.skyIntensity, 0.10, 1e-12));
+  KIMIA_REQUIRE(settings.skyIntensity < noonSky);
+  KIMIA_REQUIRE(settings.sunDirection.y > 0.8);  // "sun" below the horizon
+
+  // Morning and evening put the sun on opposite sides of the sky.
+  world.profile.hour = 8.0;
+  kimia::raytrace::applyWorldSky(world, settings);
+  const kimia::f64 morningX = settings.sunDirection.x;
+  world.profile.hour = 16.0;
+  kimia::raytrace::applyWorldSky(world, settings);
+  KIMIA_REQUIRE(morningX * settings.sunDirection.x < 0.0);
+
+  // Rain at midday: still daytime, but dimmer than a clear noon.
+  world.profile.hour = 12.0;
+  world.profile.rain = 1.0;
+  kimia::raytrace::applyWorldSky(world, settings);
+  KIMIA_REQUIRE(settings.sunIntensity < noonSun);
+  KIMIA_REQUIRE(near(settings.sunIntensity, 2.2 * 0.35, 1e-12));
+  KIMIA_REQUIRE(settings.skyIntensity < noonSky);
+
+  // The sun direction is always a unit vector, whatever the hour.
+  for (kimia::f64 hour = 0.0; hour <= 24.0; hour += 3.0) {
+    world.profile.hour = hour;
+    kimia::raytrace::applyWorldSky(world, settings);
+    KIMIA_REQUIRE(near(settings.sunDirection.length(), 1.0, 1e-12));
+  }
+}

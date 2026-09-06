@@ -45,6 +45,12 @@ struct RaytraceScene {
 // is included at its rest position when the scene has no Ball entity.
 bool buildFromWorld(const WorldData& world, RaytraceScene& out, std::string& error);
 
+// Weather and the clock (stage 24): fills in the sun direction, its
+// strength and the sky brightness from the world's profile, so a render of
+// a night match really is lit like one and a rainy day is flat and grey.
+// The rest of `settings` (size, samples, exposure) is left untouched.
+void applyWorldSky(const WorldData& world, RaytraceSettings& settings);
+
 struct RaytraceCamera {
   Vec3 eye{0.0, 3.6, 6.2};
   Vec3 target{0.0, 0.2, 0.0};

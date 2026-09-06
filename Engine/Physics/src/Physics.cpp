@@ -347,28 +347,40 @@ void PhysicsWorld::resolvePair(const Contact& contact, bool countContacts) {
   }
 }
 
+void PhysicsWorld::setWetness(f64 wetness) {
+  wetness_ = wetness < 0.0 ? 0.0 : (wetness > 1.0 ? 1.0 : wetness);
+}
+
+// Dry returns exactly 1.0, so a dry world is bit-identical to one with no
+// notion of weather at all.
+f64 PhysicsWorld::gripFactor() const {
+  if (wetness_ == 0.0) return 1.0;
+  return 1.0 - (1.0 - kWetMinGrip) * wetness_;
+}
+
 void PhysicsWorld::applyPairFriction(const Contact& contact) {
+  const f64 grip = gripFactor();
   if (contact.sphereA) {
     SphereBody* body = sphere(contact.idA);
     if (body != nullptr) {
-      dampTangential(body->velocity, contact.normal, body->friction + body->rollingFriction, fixedDt_);
+      dampTangential(body->velocity, contact.normal, (body->friction + body->rollingFriction) * grip, fixedDt_);
     }
   } else {
     DynamicBox* body = dynamicBox(contact.idA);
     if (body != nullptr) {
-      dampTangential(body->velocity, contact.normal, body->friction + body->rollingFriction, fixedDt_);
+      dampTangential(body->velocity, contact.normal, (body->friction + body->rollingFriction) * grip, fixedDt_);
     }
   }
   if (!contact.staticB) {
     if (contact.sphereB) {
       SphereBody* body = sphere(contact.idB);
       if (body != nullptr) {
-        dampTangential(body->velocity, contact.normal, body->friction + body->rollingFriction, fixedDt_);
+        dampTangential(body->velocity, contact.normal, (body->friction + body->rollingFriction) * grip, fixedDt_);
       }
     } else {
       DynamicBox* body = dynamicBox(contact.idB);
       if (body != nullptr) {
-        dampTangential(body->velocity, contact.normal, body->friction + body->rollingFriction, fixedDt_);
+        dampTangential(body->velocity, contact.normal, (body->friction + body->rollingFriction) * grip, fixedDt_);
       }
     }
   }

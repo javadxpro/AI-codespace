@@ -33,6 +33,11 @@ inline constexpr f64 kWorldDribbleSpeed = 1.15;
 // (rad/s). Positive curls to the right of the aim.
 inline constexpr f64 kWorldMaxCurl = 14.0;
 
+// --- Weather and the clock (stage 24) ---
+inline constexpr f64 kWorldSunrise = 6.0;   // before this it is night
+inline constexpr f64 kWorldSunset = 19.0;   // from this hour it is night
+inline constexpr f64 kWorldNightLight = 0.12;  // floodlights: never pitch black
+
 // --- Object builder constants (all chosen from menus) ---
 inline constexpr f64 kWorldBlockSmall = 0.5;
 inline constexpr f64 kWorldBlockMedium = 1.0;
@@ -322,6 +327,14 @@ public:
   // relative to the CAMERA behind the ball (i.e. relative to the aim), so the
   // player reads "the wind pushes my shot left". Empty when calm.
   std::string windHudText() const;
+
+  // --- Weather and the clock (stage 24) ---
+  bool raining() const;
+  bool night() const;
+  f64 pitchWetness() const;  // 0 dry .. 1 slick; the greater of rain and wet
+  f64 sunHeight() const;     // -1 deep night .. 1 noon
+  f64 daylight() const;      // 0 dark .. 1 full sun (floored by floodlights)
+  std::string skyHudText() const;  // "19:30 NIGHT RAIN WET", empty when plain
 
   // Debug/test hooks.
   void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
