@@ -74,6 +74,32 @@ inline constexpr f64 kAiSupportGap = 3.0;
 // Below this skill the computer players do not move at all.
 inline constexpr f64 kAiIdleSkill = 0.05;
 
+// --- Keeping the computer players unstuck (stage 27.1) ---
+// Players push each other apart when they get closer than this, so two of
+// them can never occupy the same spot and deadlock.
+inline constexpr f64 kAiPersonalSpace = 1.1;
+// How hard that push is, relative to running pace.
+inline constexpr f64 kAiSeparationForce = 1.4;
+// A chaser aims for a spot this far BEHIND the ball (on its own goal
+// side), so it arrives able to push the ball forward instead of standing
+// on top of it — which is what made two chasers meet and stop dead.
+inline constexpr f64 kAiApproachOffset = 0.45;
+// A player that wants to move but has covered less than this in
+// kAiStuckTime seconds is jammed, and sidesteps to get around whatever is
+// in the way.
+inline constexpr f64 kAiStuckDistance = 0.25;
+inline constexpr f64 kAiStuckTime = 0.6;
+// How long a player keeps sidestepping once it decides it is stuck.
+inline constexpr f64 kAiUnstickTime = 0.7;
+// A player carrying the ball drives it at goal from this far out.
+inline constexpr f64 kAiShootRange = 6.0;
+// A ball this close to a wall is trapped: the attacker takes it back
+// toward the middle instead of pinning it against the boards forever.
+inline constexpr f64 kAiWallEscape = 1.2;
+// How hard the player on the ball nudges it along, m/s. Without this the
+// ball only ever moves when somebody collides with it by luck.
+inline constexpr f64 kAiDribblePush = 2.6;
+
 // --- Camera director (stage 28) ---
 // How fast the camera swings to follow the aim, 1/s.
 inline constexpr f64 kCameraFollowRate = 6.0;
@@ -466,6 +492,16 @@ public:
   // How sharp this world's computer players are, 0 (statues) .. 1.
   f64 aiSkill() const { return world_.profile.aiSkill; }
   bool aiActive() const { return world_.profile.aiSkill > kAiIdleSkill && squadCount() > 1U; }
+  // What a computer player is doing right now. This is the answer to
+  // "why is that one running there?" and the thing tests assert on.
+  enum class AiRole { Idle, Keeper, Attack, Defend, Support };
+
+  // The role the engine has given this player this frame.
+  AiRole aiRole(u32 id) const;
+  static const char* aiRoleName(AiRole role);
+  // True when this side has the ball (their chaser is on it).
+  bool aiHasPossession(u32 team) const;
+
   // The character each side has sent for the ball right now (0 = nobody).
   // Only one per team: the rest hold their shape instead of swarming.
   u32 aiChaser(u32 team) const;
@@ -579,6 +615,7 @@ private:
   Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
   void updateTrick(f64 seconds);  // advance and finish the running trick
   void updateAi(f64 seconds);     // drive every computer player one step
+  Vec3 aiSeparation(u32 id) const;  // push away from crowding team-mates
   void updateStamina(f64 seconds, bool running);
   void updateRules(f64 seconds, const Vec3& previousBall);
   void awardRestart(Stoppage reason, u32 team, const Vec3& spot);
@@ -623,6 +660,11 @@ private:
   u32 restartTeam_ = 0U;
   Vec3 restartSpot_{0.0, 0.0, 0.0};
   f64 stamina_ = 1.0;
+  // Per-character jam detection: where it was, how long it has failed to
+  // get anywhere, and how long it should keep sidestepping.
+  std::map<u32, Vec3> aiLastPos_;
+  std::map<u32, f64> aiStuckFor_;
+  std::map<u32, f64> aiUnstickFor_;
   Trick trick_ = Trick::None;
   Trick lastTrick_ = Trick::None;
   f64 trickTimer_ = 0.0;    // counts down while a trick runs

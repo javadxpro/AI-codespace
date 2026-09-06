@@ -3096,15 +3096,33 @@ KIMIA_TEST(world_ai_support_players_do_not_all_swarm_the_ball) {
     editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
     editor.update(1.0 / 60.0);
   }
-  // Count how many of team 2 ended up standing on the ball.
+  // Only the chaser is allowed to actually stand ON the ball. Others may
+  // run past it — a support player holding a wide lane is fine — but
+  // nobody else may park on it.
   u32 onTheBall = 0U;
   for (const u32 id : editor.squadIds()) {
     if (id == kimia::kPrimaryCharacter || editor.squadTeam(id) != 2U) continue;
     const Vec3 at = editor.squadPosition(id);
-    if (std::sqrt(std::pow(at.x - ballSpot.x, 2.0) + std::pow(at.z - ballSpot.z, 2.0)) < 1.5) ++onTheBall;
+    if (std::sqrt(std::pow(at.x - ballSpot.x, 2.0) + std::pow(at.z - ballSpot.z, 2.0)) <
+        kimia::kAiPersonalSpace) {
+      ++onTheBall;
+    }
   }
   KIMIA_REQUIRE(chaser != 0U);
-  KIMIA_REQUIRE(onTheBall == 1U);  // exactly the chaser, nobody else
+  KIMIA_REQUIRE(onTheBall <= 1U);  // the chaser at most, never a pile-up
+
+  // And nobody is standing inside anybody else: personal space is what
+  // stops two players deadlocking against each other.
+  for (const u32 a : editor.squadIds()) {
+    if (a == kimia::kPrimaryCharacter) continue;
+    for (const u32 b : editor.squadIds()) {
+      if (b == kimia::kPrimaryCharacter || b <= a) continue;
+      const Vec3 pa = editor.squadPosition(a);
+      const Vec3 pb = editor.squadPosition(b);
+      const f64 apart = std::sqrt(std::pow(pa.x - pb.x, 2.0) + std::pow(pa.z - pb.z, 2.0));
+      KIMIA_REQUIRE(apart > 0.35);  // never occupying the same spot
+    }
+  }
 }
 
 KIMIA_TEST(world_ai_defender_tackles_the_ball_away) {
@@ -3633,4 +3651,128 @@ KIMIA_TEST(world_a_stoppage_shows_on_the_match_hud) {
   }
   KIMIA_REQUIRE(hasDecision);
   KIMIA_REQUIRE(hasScore);  // the score and clock stay up too
+}
+
+// --- Stage 27.1: the computer players must not jam each other ---
+
+KIMIA_TEST(world_ai_never_deadlocks_and_the_ball_keeps_moving) {
+  // The bug the player reported: the sides ran into each other, jammed,
+  // and the ball sat in one spot for the rest of the match. Two minutes of
+  // pure computer football with the human parked out of the way.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  // Human out of the way, ball on the centre spot: pure computer football.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.5});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+
+  f64 lowest = 1e9;
+  f64 highest = -1e9;
+  f64 previous = editor.ballPosition().z;
+  i32 frozenFrames = 0;
+  i32 longestFreeze = 0;
+  for (i32 f = 0; f < 3600; ++f) {  // one minute at 60 Hz
+    editor.update(1.0 / 60.0);
+    const f64 z = editor.ballPosition().z;
+    if (z < lowest) lowest = z;
+    if (z > highest) highest = z;
+    if (std::abs(z - previous) < 0.01) {
+      ++frozenFrames;
+      if (frozenFrames > longestFreeze) longestFreeze = frozenFrames;
+    } else {
+      frozenFrames = 0;
+    }
+    previous = z;
+  }
+
+  // The ball must actually travel: a deadlocked match leaves it in one
+  // place. Half the pitch is a low bar that the old code failed outright.
+  KIMIA_REQUIRE(highest - lowest > editor.world().halfLength());
+  // And it must never sit still for long. The old bug froze it forever.
+  KIMIA_REQUIRE(longestFreeze < 180);  // under three seconds
+}
+
+KIMIA_TEST(world_ai_players_keep_out_of_each_others_space) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.5});
+  for (i32 f = 0; f < 1800; ++f) editor.update(1.0 / 60.0);
+
+  // Nobody ends up inside anybody else. Two players on the same spot was
+  // exactly the deadlock: each pushed into the other and neither moved.
+  for (const u32 a : editor.squadIds()) {
+    if (a == kimia::kPrimaryCharacter) continue;
+    for (const u32 b : editor.squadIds()) {
+      if (b == kimia::kPrimaryCharacter || b <= a) continue;
+      const Vec3 pa = editor.squadPosition(a);
+      const Vec3 pb = editor.squadPosition(b);
+      KIMIA_REQUIRE(std::sqrt(std::pow(pa.x - pb.x, 2.0) + std::pow(pa.z - pb.z, 2.0)) > 0.35);
+    }
+  }
+}
+
+KIMIA_TEST(world_ai_support_players_each_get_their_own_lane) {
+  // The old code picked a slot with `id % 3`, so on a five-a-side team two
+  // players were handed the IDENTICAL spot and piled up on each other.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.5});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+
+  std::vector<Vec3> lanes;
+  for (const u32 id : editor.squadIds()) {
+    if (id == kimia::kPrimaryCharacter || editor.squadTeam(id) != 2U) continue;
+    if (editor.aiRole(id) != WorldEditor::AiRole::Support) continue;
+    lanes.push_back(editor.aiTargetFor(id));
+  }
+  KIMIA_REQUIRE(lanes.size() >= 2U);  // street really does field spare players
+  // Every supporting player is sent somewhere different.
+  for (kimia::usize a = 0; a < lanes.size(); ++a) {
+    for (kimia::usize b = a + 1; b < lanes.size(); ++b) {
+      KIMIA_REQUIRE(std::abs(lanes[a].x - lanes[b].x) > 0.5);
+    }
+  }
+}
+
+KIMIA_TEST(world_ai_roles_say_what_each_player_is_doing) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.5});
+
+  // Names the HUD and the tests agree on.
+  KIMIA_REQUIRE(std::string(WorldEditor::aiRoleName(WorldEditor::AiRole::Keeper)) == "KEEPER");
+  KIMIA_REQUIRE(std::string(WorldEditor::aiRoleName(WorldEditor::AiRole::Attack)) == "ATTACK");
+  KIMIA_REQUIRE(std::string(WorldEditor::aiRoleName(WorldEditor::AiRole::Defend)) == "DEFEND");
+  KIMIA_REQUIRE(std::string(WorldEditor::aiRoleName(WorldEditor::AiRole::Support)) == "SUPPORT");
+
+  // The human never gets a computer role.
+  KIMIA_REQUIRE(editor.aiRole(kimia::kPrimaryCharacter) == WorldEditor::AiRole::Idle);
+  // Each side has exactly one keeper, and it is doing the keeper's job.
+  for (u32 team = 1U; team <= 2U; ++team) {
+    const u32 keeper = editor.aiKeeper(team);
+    KIMIA_REQUIRE(keeper != 0U);
+    KIMIA_REQUIRE(editor.aiRole(keeper) == WorldEditor::AiRole::Keeper);
+  }
+  // With the ball parked between the sides, whoever is on it attacks and
+  // the other side's chaser defends: the same player, two different jobs.
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  for (i32 f = 0; f < 240; ++f) editor.update(1.0 / 60.0);
+  // Possession is EXCLUSIVE — both sides believing they had it was what
+  // made them drag the ball opposite ways and stall.
+  KIMIA_REQUIRE(!(editor.aiHasPossession(1U) && editor.aiHasPossession(2U)));
+}
+
+KIMIA_TEST(world_ai_takes_a_trapped_ball_back_off_the_wall) {
+  // A ball pinned on the boards used to freeze the match: the attacker
+  // stood on it and its target was where it already was.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.5});
+  const f64 endWall = editor.world().halfLength() - editor.world().ball.radius;
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, -endWall});
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+
+  for (i32 f = 0; f < 900; ++f) editor.update(1.0 / 60.0);
+  // Somebody has dug it out and brought it back into the pitch.
+  KIMIA_REQUIRE(editor.ballPosition().z > -endWall + 0.5);
 }

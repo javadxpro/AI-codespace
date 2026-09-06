@@ -1405,6 +1405,86 @@ u32 WorldEditor::aiKeeper(u32 team) const {
   return best;
 }
 
+const char* WorldEditor::aiRoleName(AiRole role) {
+  switch (role) {
+    case AiRole::Keeper: return "KEEPER";
+    case AiRole::Attack: return "ATTACK";
+    case AiRole::Defend: return "DEFEND";
+    case AiRole::Support: return "SUPPORT";
+    case AiRole::Idle: break;
+  }
+  return "IDLE";
+}
+
+// A side has the ball when its chaser is on it AND is closer to it than
+// anybody from the other side. Possession has to be EXCLUSIVE: when both
+// sides thought they had it, both attacked, each dragged the ball the
+// opposite way, and the two of them stood there cancelling out forever.
+bool WorldEditor::aiHasPossession(u32 team) const {
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return false;
+  const u32 chaser = aiChaser(team);
+  if (chaser == 0U) return false;
+  const CharacterBody* body = physics_.characterById(chaser);
+  if (body == nullptr) return false;
+  const f64 dx = ball->position.x - body->position.x;
+  const f64 dz = ball->position.z - body->position.z;
+  const f64 mine = std::sqrt(dx * dx + dz * dz);
+  if (mine >= world_.ball.radius + kAiTackleReach + kAiApproachOffset) return false;
+
+  // Anybody closer — including the human — takes it off us.
+  for (const u32 other : physics_.characterIds()) {
+    const CharacterBody* rival = physics_.characterById(other);
+    if (rival == nullptr || rival->team == team) continue;
+    const f64 rx = ball->position.x - rival->position.x;
+    const f64 rz = ball->position.z - rival->position.z;
+    if (std::sqrt(rx * rx + rz * rz) < mine) return false;
+  }
+  return true;
+}
+
+WorldEditor::AiRole WorldEditor::aiRole(u32 id) const {
+  if (!aiActive() || id == kPrimaryCharacter) return AiRole::Idle;
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return AiRole::Idle;
+  const u32 team = body->team;
+  if (id == aiKeeper(team)) return AiRole::Keeper;
+  // The chaser attacks when its side has the ball and defends when it does
+  // not: the same player, two different jobs.
+  if (id == aiChaser(team)) return aiHasPossession(team) ? AiRole::Attack : AiRole::Defend;
+  return AiRole::Support;
+}
+
+// Push away from anyone standing too close. This is what stops two players
+// occupying the same spot and deadlocking — the bug where a match froze
+// with two opponents stacked on the ball.
+Vec3 WorldEditor::aiSeparation(u32 id) const {
+  const CharacterBody* self = physics_.characterById(id);
+  if (self == nullptr) return Vec3{0.0, 0.0, 0.0};
+  Vec3 push{0.0, 0.0, 0.0};
+  for (const u32 other : physics_.characterIds()) {
+    if (other == id) continue;
+    const CharacterBody* body = physics_.characterById(other);
+    if (body == nullptr) continue;
+    const f64 dx = self->position.x - body->position.x;
+    const f64 dz = self->position.z - body->position.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    if (distance >= kAiPersonalSpace) continue;
+    if (distance < kMoveEpsilon) {
+      // Exactly on top of each other: break the tie with the id so the two
+      // of them pick opposite directions instead of both waiting.
+      const f64 nudge = id % 2U == 0U ? 1.0 : -1.0;
+      push.x += nudge;
+      continue;
+    }
+    // The closer they are, the harder the shove.
+    const f64 strength = (kAiPersonalSpace - distance) / kAiPersonalSpace;
+    push.x += dx / distance * strength;
+    push.z += dz / distance * strength;
+  }
+  return push;
+}
+
 Vec3 WorldEditor::aiTargetFor(u32 id) const {
   const CharacterBody* body = physics_.characterById(id);
   if (body == nullptr || id == kPrimaryCharacter) return Vec3{0.0, 0.0, 0.0};
@@ -1426,19 +1506,72 @@ Vec3 WorldEditor::aiTargetFor(u32 id) const {
     return Vec3{x, body->position.y, ownGoalZ + forward * comeOut};
   }
 
-  // --- Chaser: go and get it ---
-  if (id == aiChaser(team)) return Vec3{ball->position.x, body->position.y, ball->position.z};
+  const f64 boundX = world_.halfWidth() - kPlayerMargin;
+  const f64 limit = world_.halfLength() - kPlayerMargin;
+  const f64 theirGoalZ = forward * world_.halfLength();
+
+  // --- The player on the ball ---
+  if (id == aiChaser(team)) {
+    const f64 toBallX = ball->position.x - body->position.x;
+    const f64 toBallZ = ball->position.z - body->position.z;
+    const f64 range = std::sqrt(toBallX * toBallX + toBallZ * toBallZ);
+
+    // ATTACK: already on the ball, so carry it at their goal rather than
+    // standing over it. This is the difference between a game and a scrum:
+    // somebody has to actually take the ball somewhere.
+    if (range < world_.ball.radius + kAiTackleReach + kAiApproachOffset) {
+      // A ball pinned against a wall is the classic deadlock: the attacker
+      // stands on it, its target is where it already is, and the match
+      // stops. Peel back toward the middle of the pitch instead.
+      const f64 wallZ = world_.halfLength() - world_.ball.radius;
+      const f64 wallX = world_.halfWidth() - world_.ball.radius;
+      const bool onEndWall = std::abs(ball->position.z) > wallZ - kAiWallEscape;
+      const bool onSideWall = std::abs(ball->position.x) > wallX - kAiWallEscape;
+      if (onEndWall || onSideWall) {
+        return Vec3{onSideWall ? 0.0 : ball->position.x, body->position.y,
+                    onEndWall ? 0.0 : ball->position.z};
+      }
+      const f64 driveX = ball->position.x * 0.6;  // cut infield toward the posts
+      const f64 aheadZ = ball->position.z + forward * kAiShootRange;
+      return Vec3{std::min(boundX, std::max(-boundX, driveX)), body->position.y,
+                  std::min(limit, std::max(-limit, forward > 0.0 ? std::min(aheadZ, theirGoalZ)
+                                                                 : std::max(aheadZ, theirGoalZ)))};
+    }
+
+    // DEFEND / close down: approach the ball from our OWN goal side, not
+    // its centre. Two chasers aiming at the exact same point met head on
+    // and both stopped; arriving from behind it means they end up facing
+    // the right way and the ball squirts free instead of jamming.
+    return Vec3{ball->position.x, body->position.y,
+                std::min(limit, std::max(-limit, ball->position.z - forward * kAiApproachOffset))};
+  }
 
   // --- Everyone else: hold a shape relative to the ball ---
-  // Sit goal-side of the ball, spread across the width, so the side keeps
-  // its shape and there is somebody to pass to.
-  const f64 supportZ = ball->position.z - forward * kAiSupportGap;
-  const f64 limit = world_.halfLength() - kPlayerMargin;
-  // Fan out from the ball rather than all standing on the same spot: the
-  // character id gives each one a stable slot.
-  const f64 spread = (static_cast<f64>(id % 3U) - 1.0) * kAiSupportGap;
-  const f64 boundX = world_.halfWidth() - kPlayerMargin;
-  return Vec3{std::min(boundX, std::max(-boundX, ball->position.x + spread)), body->position.y,
+  // Each supporting player gets its OWN slot. The old code used id % 3, so on a
+  // five-a-side team ids 7 and 10 were handed the identical spot and piled
+  // up on each other. Numbering within the team fixes that.
+  u32 slot = 0U;
+  u32 mates = 0U;
+  for (const u32 other : physics_.characterIds()) {
+    if (other == kPrimaryCharacter) continue;
+    const CharacterBody* mate = physics_.characterById(other);
+    if (mate == nullptr || mate->team != team) continue;
+    if (other == aiKeeper(team) || other == aiChaser(team)) continue;
+    if (other == id) slot = mates;
+    ++mates;
+  }
+  if (mates == 0U) mates = 1U;
+  // Spread the supporting players evenly across the width instead of
+  // stacking them: (slot + 1) / (mates + 1) maps to the whole pitch.
+  const f64 t = static_cast<f64>(slot + 1U) / static_cast<f64>(mates + 1U);
+  const f64 lane = -boundX + 2.0 * boundX * t;
+
+  // With the ball, push UP in support so there is an option ahead; without
+  // it, drop goal-side and defend. A team that only ever sits behind the
+  // ball never attacks.
+  const f64 gap = aiHasPossession(team) ? -kAiSupportGap * 0.5 : kAiSupportGap;
+  const f64 supportZ = ball->position.z - forward * gap;
+  return Vec3{std::min(boundX, std::max(-boundX, lane)), body->position.y,
               std::min(limit, std::max(-limit, supportZ))};
 }
 
@@ -1467,16 +1600,92 @@ void WorldEditor::updateAi(f64 seconds) {
       const f64 pace = std::min(speed, distance / std::max(seconds, 1e-4));
       wanted = Vec3{dx / distance * pace, 0.0, dz / distance * pace};
     }
+
+    // --- Personal space ---
+    // Steer away from anyone crowding this player. Without it two of them
+    // walk into each other, each keeps pressing forward, and neither ever
+    // moves again.
+    const Vec3 apart = aiSeparation(id);
+    wanted.x += apart.x * speed * kAiSeparationForce;
+    wanted.z += apart.z * speed * kAiSeparationForce;
+
+    // --- Getting unjammed ---
+    // Wanting to move but going nowhere means something is in the way.
+    // After kAiStuckTime of that, sidestep for a moment to walk around it.
+    const bool tryingToMove = distance > kAiStuckDistance;
+    const Vec3 previous = aiLastPos_.count(id) > 0U ? aiLastPos_[id] : body->position;
+    const f64 travelled =
+        std::sqrt(std::pow(body->position.x - previous.x, 2.0) + std::pow(body->position.z - previous.z, 2.0));
+    f64& stuckFor = aiStuckFor_[id];
+    f64& unstickFor = aiUnstickFor_[id];
+    // Moving slower than a crawl while trying to run = something is in the way.
+    if (tryingToMove && travelled < kAiStuckDistance * seconds) {
+      stuckFor += seconds;
+    } else {
+      stuckFor = 0.0;
+    }
+    if (stuckFor > kAiStuckTime) {
+      unstickFor = kAiUnstickTime;
+      stuckFor = 0.0;
+    }
+    if (unstickFor > 0.0) {
+      unstickFor -= seconds;
+      // Strafe across the blocked direction. Odd and even ids go opposite
+      // ways, so two players jammed together never pick the same escape.
+      const f64 side = id % 2U == 0U ? 1.0 : -1.0;
+      const f64 length = std::sqrt(wanted.x * wanted.x + wanted.z * wanted.z);
+      if (length > kMoveEpsilon) {
+        // Take a copy first: rotating in place would feed the already
+        // updated x back into z and bend the sidestep off course.
+        const f64 wx = wanted.x;
+        const f64 wz = wanted.z;
+        wanted.x += -wz / length * speed * side;
+        wanted.z += wx / length * speed * side;
+      } else {
+        wanted.x += speed * side;
+      }
+    }
+    aiLastPos_[id] = body->position;
+
+    // Never ask for more than a run: the pushes above can stack up.
+    const f64 wantedSpeed = std::sqrt(wanted.x * wanted.x + wanted.z * wanted.z);
+    if (wantedSpeed > speed) {
+      wanted.x = wanted.x / wantedSpeed * speed;
+      wanted.z = wanted.z / wantedSpeed * speed;
+    }
     physics_.moveCharacter(id, seconds, wanted);
     // Keep them on the pitch, like the human.
     body->position.x = std::min(boundX, std::max(-boundX, body->position.x));
     body->position.z = std::min(boundZ, std::max(-boundZ, body->position.z));
 
+    // --- Carrying the ball ---
+    // The player on the ball nudges it toward where it is running. Without
+    // this an "attacking" player just stands over a stationary ball.
+    if (ball != nullptr && aiRole(id) == AiRole::Attack) {
+      const f64 ballDx = ball->position.x - body->position.x;
+      const f64 ballDz = ball->position.z - body->position.z;
+      if (std::sqrt(ballDx * ballDx + ballDz * ballDz) < world_.ball.radius + kAiTackleReach + kAiApproachOffset) {
+        const Vec3 want = aiTargetFor(id);
+        const f64 towardX = want.x - ball->position.x;
+        const f64 towardZ = want.z - ball->position.z;
+        const f64 towardLength = std::sqrt(towardX * towardX + towardZ * towardZ);
+        if (towardLength > kMoveEpsilon) {
+          ball->velocity.x = towardX / towardLength * kAiDribblePush * skill;
+          ball->velocity.z = towardZ / towardLength * kAiDribblePush * skill;
+        }
+      }
+    }
+
     // --- Tackling ---
     // An opponent who reaches the ball knocks it away toward their own
     // attacking end. This is what makes a trick risky: start showing off
     // in front of a defender and they will take it off you.
+    //
+    // Only a DEFENDER tackles. This used to fire for the attacker too, so
+    // the side in possession booted its own ball goal-ward every frame —
+    // straight into the end wall, where it stuck and the match froze.
     if (ball == nullptr || body->team == 1U) continue;
+    if (aiRole(id) != AiRole::Defend) continue;
     const f64 ballDx = ball->position.x - body->position.x;
     const f64 ballDz = ball->position.z - body->position.z;
     if (std::sqrt(ballDx * ballDx + ballDz * ballDz) > world_.ball.radius + kAiTackleReach) continue;
