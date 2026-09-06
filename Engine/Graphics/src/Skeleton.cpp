@@ -371,4 +371,73 @@ void figureLimbs(const Skeleton& rig, const std::vector<Transform3D>& pose, cons
   out.push_back(head);
 }
 
+// --- Hand-authored rigs (stage 35) ---
+
+void customFigureLimbs(const std::vector<CustomBone>& bones, const FigureMotion& motion, const Vec3& position,
+                       f64 yaw, std::vector<FigureLimb>& out) {
+  out.clear();
+  if (bones.empty()) return;
+
+  // How far this frame is through the walk cycle. Identical maths to the
+  // built-in figure, so a hand-made rig moves in the same rhythm.
+  f64 phase = 0.0;
+  f64 reach = 0.0;
+  if (!motion.downed && !motion.airborne && motion.speed >= 0.05) {
+    reach = std::min(0.85, motion.speed * 0.16);
+    phase = std::sin(motion.time * (2.2 + std::min(motion.speed, 8.0) * 0.55));
+  }
+
+  // Each bone's own rotation about its start point.
+  const usize count = bones.size();
+  std::vector<Mat4> local(count);
+  for (usize i = 0; i < count; ++i) {
+    f64 angle = phase * reach * bones[i].swing;
+    if (motion.airborne) angle = -0.7 * std::abs(bones[i].swing);  // tuck
+    if (motion.downed) angle = 0.0;
+    local[i] = Mat4::translation(bones[i].from) * Mat4::rotationX(angle) *
+               Mat4::translation(Vec3{-bones[i].from.x, -bones[i].from.y, -bones[i].from.z});
+  }
+
+  // Resolve each bone's parent chain. Bones may be listed in any order —
+  // the user is dragging them around, not maintaining a sorted array — so
+  // walk up by name each time and stop if the chain loops.
+  std::vector<Mat4> world(count);
+  for (usize i = 0; i < count; ++i) {
+    Mat4 accumulated = local[i];
+    std::string parent = bones[i].parent;
+    for (usize guard = 0; guard < count && !parent.empty(); ++guard) {
+      bool found = false;
+      for (usize j = 0; j < count; ++j) {
+        if (bones[j].name != parent) continue;
+        accumulated = local[j] * accumulated;
+        parent = bones[j].parent;
+        found = true;
+        break;
+      }
+      if (!found) break;  // dangling parent: draw it where it was authored
+    }
+    world[i] = accumulated;
+  }
+
+  // Turn to face the heading, then stand the character where it belongs.
+  const f64 sinYaw = std::sin(yaw);
+  const f64 cosYaw = std::cos(yaw);
+  const auto place = [&](const Vec3& p) {
+    return Vec3{position.x + p.x * cosYaw + p.z * sinYaw, position.y + p.y,
+                position.z - p.x * sinYaw + p.z * cosYaw};
+  };
+
+  // A downed character folds forward onto the ground.
+  const Mat4 fall = motion.downed ? Mat4::rotationX(-1.4) : Mat4{};
+
+  out.reserve(count);
+  for (usize i = 0; i < count; ++i) {
+    FigureLimb limb;
+    limb.from = place(fall * (world[i] * bones[i].from));
+    limb.to = place(fall * (world[i] * bones[i].to));
+    limb.thickness = bones[i].thickness;
+    out.push_back(limb);
+  }
+}
+
 }  // namespace kimia

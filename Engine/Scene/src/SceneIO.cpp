@@ -159,6 +159,13 @@ bool SceneIO::save(const Scene& scene, std::string& out) {
       stream << " anim " << quoteName(clip.clip) << ' ' << quoteName(clip.trigger) << ' '
              << (clip.loop ? "loop" : "once") << ' ' << format(clip.speed);
     }
+    // Rig bones (stage 35): name, parent, from, to, thickness, swing.
+    for (const RigBone& bone : entity.rig) {
+      stream << " bone " << quoteName(bone.name) << ' ' << quoteName(bone.parent.empty() ? "-" : bone.parent)
+             << ' ' << format(bone.from.x) << ' ' << format(bone.from.y) << ' ' << format(bone.from.z) << ' '
+             << format(bone.to.x) << ' ' << format(bone.to.y) << ' ' << format(bone.to.z) << ' '
+             << format(bone.thickness) << ' ' << format(bone.swing);
+    }
     for (const SoundComponent& sound : entity.sounds) {
       stream << " sound " << quoteName(sound.sound) << ' ' << quoteName(sound.trigger) << ' '
              << format(sound.volume);
@@ -275,6 +282,30 @@ bool SceneIO::load(const std::string& text, Scene& out, std::string& error) {
         clip.speed = speed;
         entity.animations.push_back(clip);
         i += 5U;
+        continue;
+      }
+      if (keyword == "bone") {
+        // All ten fields or none, like every other multi-value line here.
+        if (i + 10U >= tokens.size()) {
+          complete = false;
+          break;
+        }
+        RigBone bone;
+        f64 fx = 0.0, fy = 0.0, fz = 0.0, tx = 0.0, ty = 0.0, tz = 0.0, thick = 0.0, swing = 0.0;
+        if (!parseF64(tokens[i + 3U], fx) || !parseF64(tokens[i + 4U], fy) || !parseF64(tokens[i + 5U], fz) ||
+            !parseF64(tokens[i + 6U], tx) || !parseF64(tokens[i + 7U], ty) || !parseF64(tokens[i + 8U], tz) ||
+            !parseF64(tokens[i + 9U], thick) || !parseF64(tokens[i + 10U], swing)) {
+          complete = false;
+          break;
+        }
+        bone.name = tokens[i + 1U];
+        bone.parent = tokens[i + 2U] == "-" ? std::string() : tokens[i + 2U];
+        bone.from = Vec3{fx, fy, fz};
+        bone.to = Vec3{tx, ty, tz};
+        bone.thickness = thick;
+        bone.swing = swing;
+        entity.rig.push_back(bone);
+        i += 11U;
         continue;
       }
       if (keyword == "sound") {

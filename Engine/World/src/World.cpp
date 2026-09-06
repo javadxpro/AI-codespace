@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/Skeleton.h>
 #include <kimia/World.h>
 #include <kimia/WorldIO.h>
 
@@ -1331,6 +1332,74 @@ bool WorldEditor::addEntitySound(const std::string& name, const SoundComponent& 
   EntityData* target = world_.scene.get(world_.scene.find(name));
   if (target == nullptr || sound.sound.empty()) return false;
   target->sounds.push_back(sound);
+  return true;
+}
+
+bool WorldEditor::setEntityBone(const std::string& name, const RigBone& bone) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr || bone.name.empty()) return false;
+  for (RigBone& existing : target->rig) {
+    if (existing.name != bone.name) continue;
+    existing = bone;  // moving a bone is a replace, not a second bone
+    return true;
+  }
+  target->rig.push_back(bone);
+  return true;
+}
+
+bool WorldEditor::removeEntityBone(const std::string& name, const std::string& bone) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  for (usize i = 0; i < target->rig.size(); ++i) {
+    if (target->rig[i].name != bone) continue;
+    // Anything parented to it becomes a root rather than vanishing.
+    for (RigBone& child : target->rig) {
+      if (child.parent == bone) child.parent.clear();
+    }
+    target->rig.erase(target->rig.begin() + static_cast<std::ptrdiff_t>(i));
+    return true;
+  }
+  return false;
+}
+
+bool WorldEditor::clearEntityRig(const std::string& name) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->rig.clear();
+  return true;
+}
+
+bool WorldEditor::fitDefaultRig(const std::string& name, f64 height) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  if (height <= 0.0) height = 1.7;
+  // Build the engine's figure, then write it out as editable bones. The
+  // point is to give the user something real to drag, not to hide it.
+  const Skeleton figure = makeFigureRig(height);
+  std::vector<Transform3D> pose;
+  poseFigure(figure, FigureMotion{}, pose);
+  std::vector<FigureLimb> limbs;
+  figureLimbs(figure, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+
+  // Same order as figureLimbs builds them.
+  static const char* kNames[] = {"Torso", "Neck",  "LeftArm",  "LeftHand", "RightArm", "RightHand",
+                                 "LeftLeg", "LeftFoot", "RightLeg", "RightFoot", "Head"};
+  static const char* kParents[] = {"",        "Torso",   "Torso",    "LeftArm", "Torso", "RightArm",
+                                   "",        "LeftLeg", "",         "RightLeg", "Neck"};
+  // Arms swing against the legs, the body does not swing at all.
+  static const f64 kSwing[] = {0.0, 0.0, -0.8, -0.8, 0.8, 0.8, 1.0, 0.9, -1.0, -0.9, 0.0};
+
+  target->rig.clear();
+  for (usize i = 0; i < limbs.size() && i < sizeof(kNames) / sizeof(kNames[0]); ++i) {
+    RigBone bone;
+    bone.name = kNames[i];
+    bone.parent = kParents[i];
+    bone.from = limbs[i].from;
+    bone.to = limbs[i].to;
+    bone.thickness = limbs[i].thickness;
+    bone.swing = kSwing[i];
+    target->rig.push_back(bone);
+  }
   return true;
 }
 

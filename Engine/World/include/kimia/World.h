@@ -623,6 +623,16 @@ public:
   bool clearEntityBody(const std::string& name);
   bool addEntityAnimation(const std::string& name, const AnimationComponent& clip);
   bool addEntitySound(const std::string& name, const SoundComponent& sound);
+  // --- A character's own bones (stage 35) ---
+  // Adds or REPLACES a bone by name, so dragging one in the editor is a
+  // repeat call rather than a delete and an add.
+  bool setEntityBone(const std::string& name, const RigBone& bone);
+  bool removeEntityBone(const std::string& name, const std::string& bone);
+  bool clearEntityRig(const std::string& name);
+  // Fills an entity with the engine's default figure, as a starting point
+  // to edit rather than a thing to accept. Height in metres.
+  bool fitDefaultRig(const std::string& name, f64 height);
+
   bool clearEntityAnimations(const std::string& name);
   bool clearEntitySounds(const std::string& name);
   // Creates an entity from a mesh file, sized to fit `size`. This is the

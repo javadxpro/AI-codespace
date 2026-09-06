@@ -1,7 +1,9 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/Studio.h>
+#include <kimia/WorldIO.h>
 #include <kimia_test.h>
 
+#include <cmath>
 #include <map>
 #include <string>
 
@@ -17,6 +19,8 @@ using Params = std::map<std::string, std::string>;
 std::string ask(WorldEditor& editor, const std::string& path, const Params& params = Params{}) {
   return kimia::studio::handleApi(editor, path, params);
 }
+
+bool near(kimia::f64 a, kimia::f64 b, kimia::f64 eps = 1e-9) { return std::abs(a - b) <= eps; }
 
 bool has(const std::string& haystack, const std::string& needle) {
   return haystack.find(needle) != std::string::npos;
@@ -254,4 +258,128 @@ KIMIA_TEST(studio_imported_model_reports_its_texture) {
   // The mesh carries UVs, without which a texture cannot be applied.
   KIMIA_REQUIRE(!asset->mesh.uvs.empty());
   KIMIA_REQUIRE(asset->mesh.uvs.size() == asset->mesh.positions.size());
+}
+
+// --- Stage 35: a character's own bones ---
+
+KIMIA_TEST(studio_fits_a_default_frame_you_can_then_edit) {
+  // The player asked to place the bones themselves. The default frame is a
+  // STARTING POINT to drag, not something to accept: it comes back as real
+  // editable coordinates rather than hiding inside the engine.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/dossier", {{"name", "Model_1"}}), "\"bones\":[]"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/default-rig", {{"name", "Model_1"}, {"height", "1.7"}}), "\"ok\":true"));
+
+  const std::string sheet = ask(editor, "/api/dossier", {{"name", "Model_1"}});
+  KIMIA_REQUIRE(has(sheet, "\"name\":\"LeftLeg\""));
+  KIMIA_REQUIRE(has(sheet, "\"name\":\"Head\""));
+  // Each bone says where it runs from and to, and how it swings.
+  KIMIA_REQUIRE(has(sheet, "\"from\":"));
+  KIMIA_REQUIRE(has(sheet, "\"swing\":"));
+  // A foot hangs off a leg: the parent chain is real, not decoration.
+  KIMIA_REQUIRE(has(sheet, "\"parent\":\"LeftLeg\""));
+
+  const kimia::EntityData* model = editor.entity("Model_1");
+  KIMIA_REQUIRE(model != nullptr);
+  KIMIA_REQUIRE(model->rig.size() == 11U);
+}
+
+KIMIA_TEST(studio_setting_a_bone_moves_it_rather_than_duplicating_it) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  ask(editor, "/api/default-rig", {{"name", "Model_1"}, {"height", "1.7"}});
+  const kimia::usize before = editor.entity("Model_1")->rig.size();
+
+  // Dragging a bone in the Bench calls this repeatedly with one name.
+  ask(editor, "/api/set-bone", {{"name", "Model_1"}, {"bone", "LeftLeg"}, {"parent", ""},
+                                {"fx", "0"}, {"fy", "0.9"}, {"fz", "0"},
+                                {"tx", "0.2"}, {"ty", "0.3"}, {"tz", "0"},
+                                {"thickness", "0.1"}, {"swing", "1.4"}});
+  KIMIA_REQUIRE(editor.entity("Model_1")->rig.size() == before);
+
+  bool found = false;
+  for (const kimia::RigBone& bone : editor.entity("Model_1")->rig) {
+    if (bone.name != "LeftLeg") continue;
+    found = true;
+    KIMIA_REQUIRE(near(bone.to.x, 0.2));
+    KIMIA_REQUIRE(near(bone.to.y, 0.3));
+    KIMIA_REQUIRE(near(bone.swing, 1.4));
+  }
+  KIMIA_REQUIRE(found);
+
+  // A brand new name really is a new bone: characters are not limited to
+  // the default frame's parts.
+  ask(editor, "/api/set-bone", {{"name", "Model_1"}, {"bone", "Tail"}, {"parent", "Torso"},
+                                {"fx", "0"}, {"fy", "0.9"}, {"fz", "0"},
+                                {"tx", "0"}, {"ty", "0.7"}, {"tz", "-0.5"},
+                                {"thickness", "0.05"}, {"swing", "0.4"}});
+  KIMIA_REQUIRE(editor.entity("Model_1")->rig.size() == before + 1U);
+
+  // A bone with no name is refused rather than saved unusable.
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-bone", {{"name", "Model_1"}, {"bone", ""}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_dropping_a_bone_orphans_its_children_rather_than_losing_them) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  ask(editor, "/api/default-rig", {{"name", "Model_1"}, {"height", "1.7"}});
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-bone", {{"name", "Model_1"}, {"bone", "LeftLeg"}}), "\"ok\":true"));
+  // The foot that hung off it is still there, now standing on its own,
+  // because silently deleting somebody's work would be worse.
+  bool footSurvived = false;
+  for (const kimia::RigBone& bone : editor.entity("Model_1")->rig) {
+    if (bone.name != "LeftFoot") continue;
+    footSurvived = true;
+    KIMIA_REQUIRE(bone.parent.empty());
+  }
+  KIMIA_REQUIRE(footSurvived);
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-bone", {{"name", "Model_1"}, {"bone", "Nope"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/clear-rig", {{"name", "Model_1"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.entity("Model_1")->rig.empty());
+}
+
+KIMIA_TEST(studio_custom_bones_survive_a_save_and_load) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  ask(editor, "/api/default-rig", {{"name", "Model_1"}, {"height", "1.7"}});
+  ask(editor, "/api/set-bone", {{"name", "Model_1"}, {"bone", "Tail"}, {"parent", "Torso"},
+                                {"fx", "0.1"}, {"fy", "0.9"}, {"fz", "0.2"},
+                                {"tx", "0.3"}, {"ty", "0.7"}, {"tz", "-0.5"},
+                                {"thickness", "0.06"}, {"swing", "0.4"}});
+
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  kimia::WorldData reloaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, error));
+
+  const kimia::EntityData* back = reloaded.scene.get(reloaded.scene.find("Model_1"));
+  KIMIA_REQUIRE(back != nullptr);
+  KIMIA_REQUIRE(back->rig.size() == 12U);
+  bool tail = false;
+  for (const kimia::RigBone& bone : back->rig) {
+    if (bone.name != "Tail") continue;
+    tail = true;
+    KIMIA_REQUIRE(bone.parent == "Torso");
+    KIMIA_REQUIRE(near(bone.from.x, 0.1));
+    KIMIA_REQUIRE(near(bone.to.z, -0.5));
+    KIMIA_REQUIRE(near(bone.thickness, 0.06));
+    KIMIA_REQUIRE(near(bone.swing, 0.4));
+  }
+  KIMIA_REQUIRE(tail);
+
+  // A world with no custom bones still saves exactly as before.
+  WorldEditor plain;
+  streetWorld(plain);
+  std::string plainText;
+  kimia::WorldIO::save(plain.world(), plainText);
+  KIMIA_REQUIRE(plainText.find(" bone ") == std::string::npos);
 }

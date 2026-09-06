@@ -390,15 +390,23 @@ KIMIA_TEST(figure_rig_is_a_valid_skeleton_with_named_joints) {
   KIMIA_REQUIRE(rig.findBone("LeftFoot") >= 0);
   KIMIA_REQUIRE(rig.findBone("RightHand") >= 0);
   // A hand hangs off an arm, a foot off a leg — not straight off the hips.
-  KIMIA_REQUIRE(rig.bones[rig.findBone("LeftHand")].parent == rig.findBone("LeftArm"));
-  KIMIA_REQUIRE(rig.bones[rig.findBone("LeftFoot")].parent == rig.findBone("LeftLeg"));
+  // findBone returns a SIGNED index (-1 = missing), so it is checked and
+  // converted deliberately. Indexing a vector with it directly is what
+  // broke the build on Clang: GCC's -Wconversion does not imply
+  // -Wsign-conversion in C++, but Clang's does.
+  const auto boneAt = [&rig](const char* name) -> const kimia::Bone& {
+    const i32 index = rig.findBone(name);
+    KIMIA_REQUIRE(index >= 0);
+    return rig.bones[static_cast<usize>(index)];
+  };
+  KIMIA_REQUIRE(boneAt("LeftHand").parent == rig.findBone("LeftArm"));
+  KIMIA_REQUIRE(boneAt("LeftFoot").parent == rig.findBone("LeftLeg"));
 
   // Every limb bone must have LENGTH. A zero-length bone cannot swing:
   // the first build gave the legs a sideways offset only, and they stayed
   // rigid however fast the figure ran.
   for (const char* name : {"LeftArm", "LeftHand", "LeftLeg", "LeftFoot"}) {
-    const kimia::Bone& bone = rig.bones[rig.findBone(name)];
-    KIMIA_REQUIRE(std::abs(bone.restPose.position.y) > 0.05);
+    KIMIA_REQUIRE(std::abs(boneAt(name).restPose.position.y) > 0.05);
   }
 }
 

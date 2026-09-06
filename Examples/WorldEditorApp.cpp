@@ -257,6 +257,33 @@ void addAimIndicator(RenderScene& scene, const WorldEditor& editor, const MeshDa
 // which nobody noticed while they stood still. Now that stage 27 has them
 // running about, an invisible opposition makes a match unplayable. Each
 // character is a coloured box: our side in blue, theirs in red.
+// Lays a set of limb segments into the scene as stretched cubes.
+void addLimbs(RenderScene& scene, const MeshData& cube, const std::vector<kimia::FigureLimb>& limbs,
+              const Vec3& color) {
+  for (const kimia::FigureLimb& limb : limbs) {
+    const Vec3 along = limb.to - limb.from;
+    const f64 length = along.length();
+    if (length < 1e-4) continue;
+    const Vec3 middle = limb.from + along * 0.5;
+    const Vec3 up{0.0, 1.0, 0.0};
+    const Vec3 dir = along * (1.0 / length);
+    const f64 dot = up.x * dir.x + up.y * dir.y + up.z * dir.z;
+    Mat4 orient;
+    if (dot < 0.9999) {
+      if (dot < -0.9999) {
+        orient = Mat4::rotationX(3.14159265358979323846);
+      } else {
+        const Vec3 axis{up.y * dir.z - up.z * dir.y, up.z * dir.x - up.x * dir.z, up.x * dir.y - up.y * dir.x};
+        orient = kimia::Quat::fromAxisAngle(axis, std::acos(dot)).toMat4();
+      }
+    }
+    scene.objects.push_back({&cube,
+                             Mat4::translation(middle) * orient *
+                                 Mat4::scaling(Vec3{limb.thickness, length, limb.thickness}),
+                             color, 1.0, nullptr});
+  }
+}
+
 // One rig shared by everyone: it is a fixed shape, so building it per
 // character per frame would be waste.
 const kimia::Skeleton& figureRig() {
@@ -273,29 +300,43 @@ void addFigure(RenderScene& scene, const MeshData& cube, const kimia::Skeleton& 
   static std::vector<kimia::FigureLimb> limbs;
   kimia::poseFigure(rig, motion, pose);
   kimia::figureLimbs(rig, pose, at, facing, limbs);
-  for (const kimia::FigureLimb& limb : limbs) {
-    const Vec3 along = limb.to - limb.from;
-    const f64 length = along.length();
-    if (length < 1e-4) continue;
-    const Vec3 middle = limb.from + along * 0.5;
-    // Build the segment lying along +Y, then turn +Y onto the bone.
-    const Vec3 up{0.0, 1.0, 0.0};
-    const Vec3 dir = along * (1.0 / length);
-    const f64 dot = up.x * dir.x + up.y * dir.y + up.z * dir.z;
-    Mat4 orient;  // identity when the bone already points up
-    if (dot < 0.9999) {
-      if (dot < -0.9999) {
-        orient = Mat4::rotationX(3.14159265358979323846);  // straight down
-      } else {
-        const Vec3 axis{up.y * dir.z - up.z * dir.y, up.z * dir.x - up.x * dir.z, up.x * dir.y - up.y * dir.x};
-        orient = kimia::Quat::fromAxisAngle(axis, std::acos(dot)).toMat4();
-      }
-    }
-    scene.objects.push_back({&cube,
-                             Mat4::translation(middle) * orient *
-                                 Mat4::scaling(Vec3{limb.thickness, length, limb.thickness}),
-                             color, 1.0});
+  addLimbs(scene, cube, limbs, color);
+}
+
+// Draws a character using bones the user drew themselves.
+void addCustomFigure(RenderScene& scene, const MeshData& cube, const std::vector<kimia::CustomBone>& bones,
+                     const kimia::FigureMotion& motion, const Vec3& at, f64 facing, const Vec3& color) {
+  static std::vector<kimia::FigureLimb> limbs;
+  kimia::customFigureLimbs(bones, motion, at, facing, limbs);
+  addLimbs(scene, cube, limbs, color);
+}
+
+// The bones a squad member should use, or null for the engine's figure.
+// A character's rig is read off the scene entity that represents it: the
+// human uses "Player", and everyone else falls back to a "Squad" entity if
+// the world defines one, so a whole team can be re-boned in one go.
+const std::vector<kimia::CustomBone>* customRigFor(const WorldEditor& editor, kimia::u32 id) {
+  static std::vector<kimia::CustomBone> converted;
+  const char* wanted = id == kimia::kPrimaryCharacter ? "Player" : "Squad";
+  const kimia::EntityData* entity = editor.entity(wanted);
+  if (entity == nullptr && id == kimia::kPrimaryCharacter) return nullptr;
+  if (entity == nullptr || entity->rig.empty()) {
+    entity = editor.entity("Player");
+    if (entity == nullptr || entity->rig.empty()) return nullptr;
   }
+  converted.clear();
+  converted.reserve(entity->rig.size());
+  for (const kimia::RigBone& bone : entity->rig) {
+    kimia::CustomBone out;
+    out.name = bone.name;
+    out.parent = bone.parent;
+    out.from = bone.from;
+    out.to = bone.to;
+    out.thickness = bone.thickness;
+    out.swing = bone.swing;
+    converted.push_back(out);
+  }
+  return &converted;
 }
 
 void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cube) {
@@ -315,8 +356,7 @@ void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cu
     } else if (!editor.arenaMode() && id == editor.aiKeeper(team)) {
       color = keeperColor;
     }
-    // A jointed figure, not a sliding box (stage 33). The rig is the
-    // engine's; the moment somebody imports a model it replaces this.
+    // A jointed figure, not a sliding box (stage 33).
     kimia::FigureMotion motion;
     motion.speed = editor.squadSpeed(id);
     motion.time = editor.figureClock();
@@ -324,7 +364,14 @@ void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cu
     motion.downed = down;
     // The feet belong on the floor: the body position is its centre.
     const Vec3 feet{at.x, at.y - kimia::kWorldPlayerRadius - 0.15, at.z};
-    addFigure(scene, cube, figureRig(), motion, feet, editor.squadFacing(id), color);
+    // A character with bones of its own uses them (stage 35). The engine's
+    // figure is only the fallback for anyone who has not drawn one.
+    const std::vector<kimia::CustomBone>* own = customRigFor(editor, id);
+    if (own != nullptr) {
+      addCustomFigure(scene, cube, *own, motion, feet, editor.squadFacing(id), color);
+    } else {
+      addFigure(scene, cube, figureRig(), motion, feet, editor.squadFacing(id), color);
+    }
   }
 }
 

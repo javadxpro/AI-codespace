@@ -196,4 +196,27 @@ struct FigureLimb {
 void figureLimbs(const Skeleton& rig, const std::vector<Transform3D>& pose, const Vec3& position, f64 yaw,
                  std::vector<FigureLimb>& out);
 
+// --- Hand-authored rigs (stage 35) ---
+//
+// A character whose bones the user drew, rather than the engine's default
+// figure. Each bone is "from here to there" in the character's own space
+// (feet at y = 0), which is how a person describes a limb and how the
+// Workbench lets one be dragged.
+struct CustomBone {
+  std::string name;
+  std::string parent;  // "" = a root
+  Vec3 from{0.0, 0.0, 0.0};
+  Vec3 to{0.0, 0.0, 0.0};
+  f64 thickness = 0.08;
+  f64 swing = 0.0;  // how much this bone swings when walking; sign = phase
+};
+
+// Poses a hand-authored rig and returns the segments to draw, in world
+// space. Bones swing about their own start point, so a thigh pivots at the
+// hip and takes its shin with it. A bone whose parent is missing is drawn
+// where it was authored rather than dropped, so a half-built rig is still
+// visible while you are building it.
+void customFigureLimbs(const std::vector<CustomBone>& bones, const FigureMotion& motion, const Vec3& position,
+                       f64 yaw, std::vector<FigureLimb>& out);
+
 }  // namespace kimia

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # literal lives in Engine/Core/include/kimia/Version.h; the configure step
 # below and a unit test keep the two identical. Bump both + add the entry at
 # the top of CHANGELOG.md per release.
-project(KIMIA VERSION 0.18.0 LANGUAGES C CXX)
+project(KIMIA VERSION 0.19.0 LANGUAGES C CXX)
 file(STRINGS Engine/Core/include/kimia/Version.h KIMIA_VERSION_LINE REGEX "#define KIMIA_ENGINE_VERSION \"")
 string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" KIMIA_HEADER_VERSION "${KIMIA_VERSION_LINE}")
 if(NOT KIMIA_HEADER_VERSION STREQUAL PROJECT_VERSION)
@@ -29,7 +29,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 message(STATUS "KIMIA build type: ${CMAKE_BUILD_TYPE}, compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 
-set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wdouble-promotion)
+# -Wsign-conversion is listed EXPLICITLY: GCC's -Wconversion does not imply
+# it in C++ but Clang's does, so a signed/unsigned slip compiled clean on
+# every GCC gate here and then failed on the phone's Clang. Naming it makes
+# both compilers agree.
+set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+                          -Wdouble-promotion)
 # Binaries live in <build>/bin (the paths the engine spec's gates use).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -112,11 +117,11 @@ endif()
 
 # Vendored FBX loader (single-file library, upstream code).
 add_library(kimia_ufbx STATIC ThirdParty/ufbx/ufbx.c)
-target_include_directories(kimia_ufbx PUBLIC ThirdParty/ufbx)
+target_include_directories(kimia_ufbx SYSTEM PUBLIC ThirdParty/ufbx)
 
 # Vendored OGG/Vorbis decoder (upstream C code; strict C++ warnings don't apply).
 add_library(kimia_stb_vorbis STATIC ThirdParty/stb/stb_vorbis_impl.c)
-target_include_directories(kimia_stb_vorbis PUBLIC ThirdParty/stb)
+target_include_directories(kimia_stb_vorbis SYSTEM PUBLIC ThirdParty/stb)
 # Clang (Termux) flags an upstream pointer-overflow guard in stb_vorbis.c as
 # tautological; that is vendored code, so keep our zero-warning gate honest
 # without patching the library.
@@ -134,6 +139,10 @@ target_include_directories(kimia_assets PUBLIC
     Engine/Graphics/include
     Engine/Assets/include
     Engine/Core/include
+)
+# SYSTEM: third-party headers are not ours to keep warning-clean, and with
+# -Wsign-conversion on they would drown our own diagnostics in stb noise.
+target_include_directories(kimia_assets SYSTEM PUBLIC
     ThirdParty/stb
     ThirdParty/dr
 )

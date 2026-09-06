@@ -171,6 +171,20 @@ std::string dossierJson(const EntityData& entity) {
   }
   out += "]";
 
+  // The character's own bones, so the Bench can list and drag them.
+  out += ",\"bones\":[";
+  for (usize i = 0; i < entity.rig.size(); ++i) {
+    const RigBone& bone = entity.rig[i];
+    if (i > 0U) out += ",";
+    out += "{\"name\":" + quoted(bone.name);
+    out += ",\"parent\":" + quoted(bone.parent);
+    out += ",\"from\":" + vec3Json(bone.from);
+    out += ",\"to\":" + vec3Json(bone.to);
+    out += ",\"thickness\":" + number(bone.thickness);
+    out += ",\"swing\":" + number(bone.swing) + "}";
+  }
+  out += "]";
+
   out += ",\"noises\":[";
   for (usize i = 0; i < entity.sounds.size(); ++i) {
     const SoundComponent& sound = entity.sounds[i];
@@ -288,6 +302,41 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     if (what == "motions") return editor.clearEntityAnimations(name) ? okJson() : errorJson("no such object");
     if (what == "noises") return editor.clearEntitySounds(name) ? okJson() : errorJson("no such object");
     return errorJson("unwire what?");
+  }
+
+  // --- A character's own bones (stage 35) ---
+  // "Set" rather than "add": dragging a bone in the Bench calls this over
+  // and over with the same name.
+  if (path == "/api/set-bone") {
+    RigBone bone;
+    bone.name = param(params, "bone");
+    bone.parent = param(params, "parent");
+    bone.from = Vec3{numberParam(params, "fx", 0.0), numberParam(params, "fy", 0.0),
+                     numberParam(params, "fz", 0.0)};
+    bone.to = Vec3{numberParam(params, "tx", 0.0), numberParam(params, "ty", 0.0),
+                   numberParam(params, "tz", 0.0)};
+    bone.thickness = numberParam(params, "thickness", 0.08);
+    bone.swing = numberParam(params, "swing", 0.0);
+    if (bone.name.empty()) return errorJson("a bone needs a name");
+    if (!editor.setEntityBone(param(params, "name"), bone)) return errorJson("no such object");
+    return okJson();
+  }
+  if (path == "/api/drop-bone") {
+    if (!editor.removeEntityBone(param(params, "name"), param(params, "bone"))) {
+      return errorJson("no such bone");
+    }
+    return okJson();
+  }
+  if (path == "/api/clear-rig") {
+    if (!editor.clearEntityRig(param(params, "name"))) return errorJson("no such object");
+    return okJson();
+  }
+  // A starting point to edit, not a thing to accept as-is.
+  if (path == "/api/default-rig") {
+    if (!editor.fitDefaultRig(param(params, "name"), numberParam(params, "height", 1.7))) {
+      return errorJson("no such object");
+    }
+    return okJson();
   }
 
   // Labels.
@@ -488,6 +537,31 @@ input[type=color]{padding:2px;height:30px}
       <div class="row"><button class="go" style="flex:1" onclick="wireNoise()">Wire up</button>
         <button class="bad" onclick="unwire('noises')">Clear</button></div>
 
+      <h2>Frame &mdash; bones</h2>
+      <div id="bones"></div>
+      <div class="row"><input id="bName" placeholder="LeftLeg">
+        <input id="bParent" placeholder="parent"></div>
+      <div class="hint">from x y z &rarr; to x y z (feet at y=0)</div>
+      <div class="grid3">
+        <input id="bfx" type="number" step="0.01" value="0">
+        <input id="bfy" type="number" step="0.01" value="0.9">
+        <input id="bfz" type="number" step="0.01" value="0">
+      </div>
+      <div class="grid3" style="margin-top:4px">
+        <input id="btx" type="number" step="0.01" value="0">
+        <input id="bty" type="number" step="0.01" value="0.45">
+        <input id="btz" type="number" step="0.01" value="0">
+      </div>
+      <div class="row" style="margin-top:4px">
+        <label>thick</label><input id="bth" type="number" step="0.01" value="0.08">
+        <label>swing</label><input id="bsw" type="number" step="0.1" value="1">
+      </div>
+      <div class="row">
+        <button class="go" style="flex:1" onclick="setBone()">Set bone</button>
+        <button onclick="defaultRig()">Default</button>
+        <button class="bad" onclick="clearRig()">Clear</button>
+      </div>
+
       <h2>Bench test</h2>
       <div class="row"><input id="pullWire" placeholder="k"><button onclick="pull()">Pull</button></div>
       <div class="hint">Pull a wire to fire it here, without leaving the Bench.</div>
@@ -596,6 +670,31 @@ function pick(name){
       chip.appendChild(x);
       lab.appendChild(chip);
     });
+    var bv = document.getElementById('bones');
+    bv.innerHTML = '';
+    (o.bones || []).forEach(function(b){
+      var w = document.createElement('div');
+      w.className = 'wire';
+      w.style.cursor = 'pointer';
+      var span = b.parent ? (b.name + ' \u2190 ' + b.parent) : b.name;
+      w.innerHTML = '<i>' + span + '</i><span>' + b.swing.toFixed(1) + '</span>';
+      // Click a bone to load it into the fields, so editing is a tweak
+      // rather than retyping the whole thing.
+      w.onclick = function(){
+        document.getElementById('bName').value = b.name;
+        document.getElementById('bParent').value = b.parent;
+        document.getElementById('bfx').value = b.from[0].toFixed(3);
+        document.getElementById('bfy').value = b.from[1].toFixed(3);
+        document.getElementById('bfz').value = b.from[2].toFixed(3);
+        document.getElementById('btx').value = b.to[0].toFixed(3);
+        document.getElementById('bty').value = b.to[1].toFixed(3);
+        document.getElementById('btz').value = b.to[2].toFixed(3);
+        document.getElementById('bth').value = b.thickness.toFixed(3);
+        document.getElementById('bsw').value = b.swing.toFixed(2);
+      };
+      bv.appendChild(w);
+    });
+
     var mv = document.getElementById('motions');
     mv.innerHTML = '';
     o.motions.forEach(function(m){
@@ -666,6 +765,29 @@ function wireNoise(){
 function unwire(what){
   if (!need()) return;
   api('unwire', {name: picked, what: what}, function(){ pick(picked); });
+}
+function setBone(){
+  if (!need()) return;
+  api('set-bone', {name: picked,
+    bone: document.getElementById('bName').value,
+    parent: document.getElementById('bParent').value,
+    fx: document.getElementById('bfx').value, fy: document.getElementById('bfy').value,
+    fz: document.getElementById('bfz').value, tx: document.getElementById('btx').value,
+    ty: document.getElementById('bty').value, tz: document.getElementById('btz').value,
+    thickness: document.getElementById('bth').value,
+    swing: document.getElementById('bsw').value}, function(d){
+      if (d && d.ok) { flash('bone set'); pick(picked); }
+    });
+}
+function defaultRig(){
+  if (!need()) return;
+  api('default-rig', {name: picked, height: 1.7}, function(d){
+    if (d && d.ok) { flash('default frame fitted \u2014 now edit it'); pick(picked); }
+  });
+}
+function clearRig(){
+  if (!need()) return;
+  api('clear-rig', {name: picked}, function(){ pick(picked); });
 }
 function pull(){
   api('pull', {wiring: document.getElementById('pullWire').value}, function(d){

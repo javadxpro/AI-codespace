@@ -540,8 +540,12 @@ bool render(const RaytraceScene& scene, const RaytraceSettings& settings, const 
 
       Vec3 accumulated{0.0, 0.0, 0.0};
       for (i32 sample = 0; sample < settings.samplesPerPixel; ++sample) {
-        const u64 pixelSeed = (static_cast<u64>(y) * 73856093ULL ^ static_cast<u64>(x) * 19349663ULL) + 1ULL;
-        Rng rng(pixelSeed + static_cast<u64>(sample) * 83492791ULL);
+        // The mixing constants are u64 rather than ULL literals: u64 is
+        // `unsigned long` here, and mixing it with `unsigned long long`
+        // trips -Wsign-conversion on Clang.
+        const u64 pixelSeed =
+            (static_cast<u64>(y) * u64{73856093} ^ static_cast<u64>(x) * u64{19349663}) + u64{1};
+        Rng rng(pixelSeed + static_cast<u64>(sample) * u64{83492791});
         accumulated += radiance(ctx, primary, rng, 0);
       }
       const f64 inv = settings.exposure / static_cast<f64>(settings.samplesPerPixel);

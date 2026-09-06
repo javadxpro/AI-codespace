@@ -60,6 +60,25 @@ struct AnimationComponent {
   f64 speed = 1.0;
 };
 
+// --- Rig component (stage 35) ---
+//
+// One bone of a character, as the editor edits it: a named segment with a
+// start and an end, in the character's own space with the feet at y = 0.
+// This is deliberately "from here to there" rather than a rotation and a
+// length, because that is how a person describes a limb and how the
+// Workbench lets you drag one.
+struct RigBone {
+  std::string name;    // "LeftLeg", "Tail", whatever the character needs
+  std::string parent;  // parent bone's name ("" = a root)
+  Vec3 from{0.0, 0.0, 0.0};
+  Vec3 to{0.0, 0.0, 0.0};
+  f64 thickness = 0.08;
+  // Which way the bone swings when the character walks. 0 = still (a head
+  // or a torso), 1 = a full stride, negative = opposite phase, which is
+  // how the arms are made to swing against the legs.
+  f64 swing = 0.0;
+};
+
 // Sound component: a registered sound name, played on the same kind of
 // trigger as an animation.
 struct SoundComponent {
@@ -88,6 +107,9 @@ struct EntityData {
   std::optional<BodyComponent> body;
   std::vector<AnimationComponent> animations;
   std::vector<SoundComponent> sounds;
+  // A character's own bones (stage 35). Empty means "use the engine's
+  // default figure", so nothing that worked before needs changing.
+  std::vector<RigBone> rig;
 
   bool hasTag(const std::string& tag) const {
     for (const std::string& own : tags) {
