@@ -183,3 +183,182 @@ KIMIA_TEST(gl_pipeline_when_available_or_skipped) {
   KIMIA_REQUIRE(!renderer.ready());
   context.destroy();
 }
+
+// --- Stage 34: textures in the software rasteriser ---
+
+namespace {
+
+// An 8x8 checkerboard: unmistakable when it is sampled, and unmistakable
+// when it is not.
+kimia::Image checkerTexture() {
+  kimia::Image texture;
+  texture.width = 8;
+  texture.height = 8;
+  texture.channels = 3;
+  texture.pixels.assign(8U * 8U * 3U, 0U);
+  for (kimia::i32 y = 0; y < 8; ++y) {
+    for (kimia::i32 x = 0; x < 8; ++x) {
+      const kimia::u8 value = ((x + y) % 2 == 0) ? 20U : 240U;
+      const kimia::usize index = (static_cast<kimia::usize>(y) * 8U + static_cast<kimia::usize>(x)) * 3U;
+      texture.pixels[index] = value;
+      texture.pixels[index + 1U] = value;
+      texture.pixels[index + 2U] = value;
+    }
+  }
+  return texture;
+}
+
+// A flat-on view of a quad, lit almost entirely by ambient so the shading
+// does not muddy what the texture is doing.
+kimia::RenderScene quadScene(const kimia::MeshData& quad, const kimia::Image* texture) {
+  kimia::RenderScene scene;
+  scene.view = kimia::Mat4::lookAt(Vec3{0.0, 3.0, 4.0}, Vec3{0.0, 0.0, 0.0}, Vec3{0.0, 1.0, 0.0});
+  scene.projection = kimia::Mat4::perspective(1.0, 1.0, 0.1, 100.0);
+  scene.cameraPosition = Vec3{0.0, 3.0, 4.0};
+  scene.lightDirection = Vec3{0.0, -1.0, -0.2};
+  scene.ambient = 0.9;
+  scene.objects.push_back({&quad, kimia::Mat4{}, Vec3{1.0, 1.0, 1.0}, 0.5, texture});
+  return scene;
+}
+
+// How many distinct non-black grey levels the image contains.
+kimia::usize distinctGreys(const kimia::Image& image) {
+  std::vector<kimia::u8> seen;
+  for (kimia::usize i = 0; i + 2U < image.pixels.size(); i += 3U) {
+    const kimia::u8 value = image.pixels[i];
+    if (value == 0U) continue;
+    bool known = false;
+    for (const kimia::u8 other : seen) {
+      if (other == value) known = true;
+    }
+    if (!known) seen.push_back(value);
+  }
+  return seen.size();
+}
+
+}  // namespace
+
+KIMIA_TEST(renderer_draws_a_texture_instead_of_a_flat_colour) {
+  // The importer has always pulled a diffuse map's path out of a .mtl or
+  // an FBX, but nothing ever loaded or drew it: every model rendered as a
+  // flat colour however carefully it was textured.
+  const kimia::MeshData quad = kimia::makePlane(4.0, 4.0);
+  const kimia::Image texture = checkerTexture();
+
+  kimia::Image plain;
+  KIMIA_REQUIRE(kimia::renderSoftware(quadScene(quad, nullptr), 160, 160, Vec3{0.0, 0.0, 0.0}, plain));
+  kimia::Image textured;
+  KIMIA_REQUIRE(kimia::renderSoftware(quadScene(quad, &texture), 160, 160, Vec3{0.0, 0.0, 0.0}, textured));
+
+  // Untextured, the whole quad is one shade. Textured, it is two.
+  KIMIA_REQUIRE(distinctGreys(plain) == 1U);
+  KIMIA_REQUIRE(distinctGreys(textured) == 2U);
+  // And the two images really are different pictures.
+  kimia::usize differing = 0U;
+  for (kimia::usize i = 0; i < plain.pixels.size(); ++i) {
+    if (plain.pixels[i] != textured.pixels[i]) ++differing;
+  }
+  KIMIA_REQUIRE(differing > 1000U);
+}
+
+KIMIA_TEST(renderer_texture_is_perspective_correct) {
+  // Interpolating u directly instead of u/w is the classic texturing bug:
+  // the picture looks plausible head-on and warps as a surface recedes.
+  //
+  // The signature is band SPACING, not band count. On a strip running away
+  // from the camera with a striped texture mapped along it, correct maths
+  // crowds the far stripes together so fewer of them are distinguishable;
+  // affine interpolation spreads all of them out evenly.
+  //
+  // (Two earlier attempts at this test — counting bands per row, and
+  // finding a seam — both passed with the correction REMOVED, so they
+  // proved nothing. This one was checked by breaking the code on purpose.)
+  kimia::Image stripes;
+  stripes.width = 16;
+  stripes.height = 1;
+  stripes.channels = 3;
+  stripes.pixels.assign(16U * 3U, 0U);
+  for (kimia::i32 i = 0; i < 16; ++i) {
+    const kimia::u8 value = (i % 2 == 0) ? 20U : 240U;
+    stripes.pixels[static_cast<kimia::usize>(i) * 3U] = value;
+    stripes.pixels[static_cast<kimia::usize>(i) * 3U + 1U] = value;
+    stripes.pixels[static_cast<kimia::usize>(i) * 3U + 2U] = value;
+  }
+
+  // A long ground strip with U running along the receding axis.
+  kimia::MeshData strip;
+  strip.name = "strip";
+  strip.positions = {Vec3{-2.0, 0.0, 0.0}, Vec3{-2.0, 0.0, -40.0}, Vec3{2.0, 0.0, -40.0}, Vec3{2.0, 0.0, 0.0}};
+  strip.normals.assign(4U, Vec3{0.0, 1.0, 0.0});
+  strip.uvs = {kimia::Vec2{0.0, 0.0}, kimia::Vec2{1.0, 0.0}, kimia::Vec2{1.0, 1.0}, kimia::Vec2{0.0, 1.0}};
+  strip.indices = {0U, 2U, 1U, 0U, 3U, 2U};
+
+  kimia::RenderScene scene;
+  scene.view = kimia::Mat4::lookAt(Vec3{0.0, 1.0, 3.0}, Vec3{0.0, 0.0, -20.0}, Vec3{0.0, 1.0, 0.0});
+  scene.projection = kimia::Mat4::perspective(1.0, 1.0, 0.1, 200.0);
+  scene.cameraPosition = Vec3{0.0, 1.0, 3.0};
+  scene.lightDirection = Vec3{0.0, -1.0, 0.0};
+  scene.ambient = 1.0;
+  scene.objects.push_back({&strip, kimia::Mat4{}, Vec3{1.0, 1.0, 1.0}, 0.5, &stripes});
+
+  kimia::Image image;
+  KIMIA_REQUIRE(kimia::renderSoftware(scene, 200, 200, Vec3{0.0, 0.0, 0.0}, image));
+
+  // Count the stripes visible down the middle of the strip.
+  kimia::i32 bands = 0;
+  kimia::i32 previous = -1;
+  kimia::i32 drawnRows = 0;
+  for (kimia::i32 y = 0; y < image.height; ++y) {
+    const kimia::u8* pixel = image.at(image.width / 2, y);
+    if (pixel[0] == 0U) continue;
+    ++drawnRows;
+    const kimia::i32 shade = pixel[0] > 128U ? 1 : 0;
+    if (shade != previous) ++bands;
+    previous = shade;
+  }
+  KIMIA_REQUIRE(drawnRows > 20);
+  // Sixteen stripes exist, but perspective compresses the distant ones
+  // into fewer than sixteen distinguishable bands. Affine interpolation
+  // measures exactly 16 here; correct interpolation measures 10.
+  KIMIA_REQUIRE(bands > 2);
+  KIMIA_REQUIRE(bands < 14);
+}
+
+KIMIA_TEST(renderer_texture_is_tinted_by_the_object_colour) {
+  // A white object shows the image unchanged; a coloured one tints it, so
+  // team colours still work on a textured model.
+  const kimia::MeshData quad = kimia::makePlane(4.0, 4.0);
+  const kimia::Image texture = checkerTexture();
+
+  kimia::RenderScene red = quadScene(quad, &texture);
+  red.objects[0].color = Vec3{1.0, 0.0, 0.0};
+  kimia::Image image;
+  KIMIA_REQUIRE(kimia::renderSoftware(red, 120, 120, Vec3{0.0, 0.0, 0.0}, image));
+
+  // Every drawn pixel keeps its red and loses its green and blue.
+  bool sawRed = false;
+  for (kimia::usize i = 0; i + 2U < image.pixels.size(); i += 3U) {
+    if (image.pixels[i] == 0U) continue;
+    KIMIA_REQUIRE(image.pixels[i + 1U] == 0U);
+    KIMIA_REQUIRE(image.pixels[i + 2U] == 0U);
+    sawRed = true;
+  }
+  KIMIA_REQUIRE(sawRed);
+}
+
+KIMIA_TEST(renderer_survives_a_texture_it_cannot_use) {
+  // A mesh with no UVs, or an empty image, must fall back to flat colour
+  // rather than reading past the end of anything.
+  const kimia::MeshData cube = kimia::makeCube(1.0);
+  const kimia::Image texture = checkerTexture();
+
+  kimia::Image image;
+  kimia::RenderScene scene = quadScene(cube, &texture);
+  KIMIA_REQUIRE(kimia::renderSoftware(scene, 100, 100, Vec3{0.0, 0.0, 0.0}, image));
+
+  // An empty texture attached to a UV'd mesh is equally harmless.
+  const kimia::MeshData quad = kimia::makePlane(2.0, 2.0);
+  const kimia::Image empty;
+  kimia::Image second;
+  KIMIA_REQUIRE(kimia::renderSoftware(quadScene(quad, &empty), 100, 100, Vec3{0.0, 0.0, 0.0}, second));
+}

@@ -646,6 +646,14 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
   return asset;
 }
 
+std::optional<MeshAsset> loadMeshAsset(const std::string& path, std::string& error) {
+  const std::string ext = extension(path);
+  if (ext == ".obj") return loadOBJAsset(path, error);
+  if (ext == ".fbx") return loadFBXAsset(path, error);
+  error = "unsupported mesh format (expected .obj or .fbx): " + path;
+  return std::nullopt;
+}
+
 std::optional<std::vector<MeshData>> loadFBXAll(const std::string& path, std::string& error) {
   auto asset = loadFBXImpl(path, error);
   if (!asset.has_value()) return std::nullopt;

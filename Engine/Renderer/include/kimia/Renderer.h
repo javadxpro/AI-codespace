@@ -20,6 +20,12 @@ struct RenderObject {
   Mat4 model;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
+  // Optional texture (stage 34). When set, the mesh's UVs choose a pixel
+  // from this image and `color` tints it. Null means a plain colour, which
+  // is what everything drawn before this existed still gets.
+  //
+  // Not owned: the caller keeps the image alive for the frame.
+  const Image* texture = nullptr;
 };
 
 // Everything the renderer needs to draw a frame.

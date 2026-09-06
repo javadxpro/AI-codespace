@@ -484,6 +484,10 @@ int main(int argc, char** argv) {
 
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
+  // Diffuse textures, keyed by the same mesh file (stage 34). An entry with
+  // an empty image means "this model has no texture" — cached too, so a
+  // model without one is not re-examined every frame.
+  std::map<std::string, kimia::Image> loadedTextures;
   kimia::OrbitCamera orbitCamera;  // arrow keys orbit, q/e zoom, c resets
   // The distance the player chose by hand. A broadcast camera moves
   // orbitCamera.distance around every frame, so the manual zoom is
@@ -592,6 +596,7 @@ int main(int argc, char** argv) {
       const MeshData* mesh = &cubeMesh;
       if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
       if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
+      const kimia::Image* texture = nullptr;
       if (!entity.meshFile.empty()) {
         // Model entity: load the OBJ/FBX once, then draw it every frame.
         auto found = loadedMeshes.find(entity.meshFile);
@@ -604,6 +609,29 @@ int main(int argc, char** argv) {
         }
         if (found != loadedMeshes.end()) mesh = &found->second;
         else return;  // mesh missing/unreadable: skip this entity
+
+        // Its texture, once (stage 34). The importer has always pulled the
+        // diffuse map's path out of the .mtl or the FBX materials, but
+        // nothing ever loaded the image — so every model rendered as a
+        // flat colour however carefully it was textured.
+        auto skin = loadedTextures.find(entity.meshFile);
+        if (skin == loadedTextures.end()) {
+          kimia::Image image;
+          std::string assetError;
+          auto asset = kimia::assets::loadMeshAsset(entity.meshFile, assetError);
+          if (asset.has_value()) {
+            for (const kimia::MaterialData& material : asset->materials) {
+              if (material.texturePath.empty()) continue;
+              auto loadedImage = kimia::assets::loadImage(material.texturePath, assetError);
+              if (loadedImage.has_value()) {
+                image = std::move(*loadedImage);
+                break;
+              }
+            }
+          }
+          skin = loadedTextures.emplace(entity.meshFile, std::move(image)).first;
+        }
+        if (skin->second.width > 0 && skin->second.height > 0) texture = &skin->second;
       }
       // Crates follow the physics bodies while playing, and the player
       // entity follows the character controller so the play character is
@@ -616,7 +644,7 @@ int main(int argc, char** argv) {
       const Vec3 scale = entity.mesh == kimia::MeshKind::sphere ? entity.transform.scale * 0.5
                                                                 : entity.transform.scale;
       const Mat4 model = Mat4::translation(position) * Mat4::scaling(scale);
-      scene.objects.push_back({mesh, model, entity.color, entity.roughness});
+      scene.objects.push_back({mesh, model, entity.color, entity.roughness, texture});
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.
         scene.objects.push_back(

@@ -49,6 +49,10 @@ std::optional<MeshAsset> loadOBJAsset(const std::string& path, std::string& erro
 // texture data is written next to the FBX file as `<base>_<material>.png`.
 std::optional<MeshAsset> loadFBXAsset(const std::string& path, std::string& error);
 
+// Whichever of the two the extension calls for. Callers that just want
+// "the model and its materials" should not have to care about the format.
+std::optional<MeshAsset> loadMeshAsset(const std::string& path, std::string& error);
+
 // --- Skeletons and animation (stage 25) ---
 //
 // Loads the first skinned mesh in an FBX plus its skeleton and every

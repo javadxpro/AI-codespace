@@ -1,3 +1,4 @@
+#include <kimia/AssetPipeline.h>
 #include <kimia/Studio.h>
 #include <kimia_test.h>
 
@@ -223,4 +224,34 @@ KIMIA_TEST(studio_bench_page_is_self_contained) {
   // It talks to the API this file implements.
   KIMIA_REQUIRE(has(page, "/api/"));
   KIMIA_REQUIRE(has(page, "frame.png"));
+}
+
+// --- Stage 34: an imported model keeps its texture ---
+
+KIMIA_TEST(studio_imported_model_reports_its_texture) {
+  // The whole chain: a .obj that names a .mtl that names a .png. The
+  // importer has always resolved that path; until this stage nothing
+  // loaded the image, so every model rendered as a flat colour.
+  std::string error;
+  auto asset = kimia::assets::loadMeshAsset("Tests/assets/crate.obj", error);
+  KIMIA_REQUIRE(asset.has_value());
+  KIMIA_REQUIRE(!asset->materials.empty());
+
+  std::string skin;
+  for (const kimia::MaterialData& material : asset->materials) {
+    if (!material.texturePath.empty()) skin = material.texturePath;
+  }
+  KIMIA_REQUIRE(!skin.empty());
+  KIMIA_REQUIRE(skin.find("crate_skin.png") != std::string::npos);
+
+  // And the image at that path really loads, with real pixels in it.
+  auto image = kimia::assets::loadImage(skin, error);
+  KIMIA_REQUIRE(image.has_value());
+  KIMIA_REQUIRE(image->width == 32);
+  KIMIA_REQUIRE(image->height == 32);
+  KIMIA_REQUIRE(image->channels >= 3);
+
+  // The mesh carries UVs, without which a texture cannot be applied.
+  KIMIA_REQUIRE(!asset->mesh.uvs.empty());
+  KIMIA_REQUIRE(asset->mesh.uvs.size() == asset->mesh.positions.size());
 }
