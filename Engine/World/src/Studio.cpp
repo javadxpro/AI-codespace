@@ -239,6 +239,47 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return "{\"ok\":true,\"items\":" + stringsJson(editor.entitiesWithTag(param(params, "label"))) + "}";
   }
 
+  // --- Blueprints and stages ---
+
+  if (path == "/api/library") {
+    std::string out = "{\"ok\":true,\"blueprints\":" + stringsJson(editor.blueprintNames());
+    out += ",\"stages\":" + stringsJson(editor.stageNames());
+    out += ",\"stage\":" + quoted(editor.currentStage());
+    return out + "}";
+  }
+  // Save the selected object as a reusable blueprint.
+  if (path == "/api/keep") {
+    const std::string as = param(params, "as", param(params, "name"));
+    if (!editor.keepBlueprint(param(params, "name"), as)) return errorJson("no such object");
+    return okJson("name", as);
+  }
+  if (path == "/api/forget") {
+    if (!editor.forgetBlueprint(param(params, "blueprint"))) return errorJson("no such blueprint");
+    return okJson();
+  }
+  // Stamp one into the scene — the whole point of saving it.
+  if (path == "/api/stamp") {
+    const Vec3 at{numberParam(params, "x", 0.0), numberParam(params, "y", 0.0),
+                  numberParam(params, "z", 0.0)};
+    const std::string name = editor.stampBlueprint(param(params, "blueprint"), at);
+    if (name.empty()) return errorJson("no such blueprint");
+    return okJson("name", name);
+  }
+  if (path == "/api/add-stage") {
+    if (!editor.addStage(param(params, "stage"))) return errorJson("that stage already exists");
+    return okJson();
+  }
+  if (path == "/api/go-stage") {
+    if (!editor.goToStage(param(params, "stage"))) return errorJson("no such stage");
+    return okJson("stage", editor.currentStage());
+  }
+  if (path == "/api/drop-stage") {
+    if (!editor.removeStage(param(params, "stage"))) {
+      return errorJson("cannot remove the stage you are on");
+    }
+    return okJson();
+  }
+
   // --- The live viewport: tap and drag on the scene itself ---
 
   // What did I tap? Returns the object's name and opens its Dossier, so a
@@ -657,6 +698,16 @@ input[type=color]{padding:2px;height:30px}
   <div id="rack">
     <h2>Rack</h2>
     <div id="rackList"></div>
+    <h2>Stages</h2>
+    <div id="stageList"></div>
+    <div class="row"><input id="newStage" placeholder="Level 2">
+      <button onclick="addStage()">Add</button></div>
+
+    <h2>Blueprints</h2>
+    <div id="bpList"></div>
+    <div class="row"><input id="bpName" placeholder="save selected as...">
+      <button class="go" onclick="keepBlueprint()">Keep</button></div>
+
     <h2>Bring in</h2>
     <div class="row"><input id="inFile" placeholder="assets/thing.obj"></div>
     <div class="row"><label>size</label><input id="inSize" type="number" value="1" step="0.1"></div>
@@ -908,6 +959,83 @@ function loadRack(){
       row.onclick = function(){ pick(it.name); };
       box.appendChild(row);
     });
+  });
+}
+
+function loadLibrary(){
+  api('library', {}, function(d){
+    if (!d) return;
+    var st = document.getElementById('stageList');
+    st.innerHTML = '';
+    (d.stages || []).forEach(function(name){
+      var el = document.createElement('div');
+      el.className = 'item' + (name === d.stage ? ' on' : '');
+      var label = document.createElement('span');
+      label.textContent = name;
+      el.appendChild(label);
+      if (name !== d.stage){
+        var x = document.createElement('span');
+        x.textContent = '\u00d7';
+        x.style.cssText = 'margin-right:auto;color:#8b97a5';
+        x.onclick = function(ev){
+          ev.stopPropagation();
+          api('drop-stage', {stage: name}, loadLibrary);
+        };
+        el.appendChild(x);
+      }
+      el.onclick = function(){
+        api('go-stage', {stage: name}, function(r){
+          if (r && r.ok){ picked = null; flash('on ' + name); loadRack(); loadLibrary(); }
+        });
+      };
+      st.appendChild(el);
+    });
+
+    var bp = document.getElementById('bpList');
+    bp.innerHTML = '';
+    if (!(d.blueprints || []).length){
+      bp.innerHTML = '<div class="hint">Select an object and Keep it, then ' +
+        'stamp copies without setting it up again.</div>';
+    }
+    (d.blueprints || []).forEach(function(name){
+      var el = document.createElement('div');
+      el.className = 'item';
+      var label = document.createElement('span');
+      label.textContent = name;
+      el.appendChild(label);
+      var x = document.createElement('span');
+      x.textContent = '\u00d7';
+      x.style.cssText = 'margin-right:auto;color:#8b97a5';
+      x.onclick = function(ev){
+        ev.stopPropagation();
+        api('forget', {blueprint: name}, loadLibrary);
+      };
+      el.appendChild(x);
+      el.onclick = function(){
+        api('stamp', {blueprint: name, x: 0, y: 0, z: 0}, function(r){
+          if (r && r.ok){ flash('stamped ' + r.name); loadRack(); pick(r.name); }
+        });
+      };
+      bp.appendChild(el);
+    });
+  });
+}
+function keepBlueprint(){
+  if (!need()) return;
+  var as = document.getElementById('bpName').value || picked;
+  api('keep', {name: picked, as: as}, function(d){
+    if (d && d.ok){
+      document.getElementById('bpName').value = '';
+      flash('kept as ' + d.name);
+      loadLibrary();
+    }
+  });
+}
+function addStage(){
+  var name = document.getElementById('newStage').value.trim();
+  if (!name) return;
+  api('add-stage', {stage: name}, function(d){
+    if (d && d.ok){ document.getElementById('newStage').value = ''; loadLibrary(); }
   });
 }
 
@@ -1280,6 +1408,7 @@ setInterval(function(){
 }, 1000);
 if (window.innerWidth <= 900) document.getElementById('rackBtn').style.display = '';
 loadRack();
+loadLibrary();
 </script>
 </body>
 </html>)BENCH";

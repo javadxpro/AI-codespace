@@ -147,6 +147,11 @@ public:
   Scene(Scene&&) = default;
   Scene& operator=(Scene&&) = default;
 
+  // Copying a scene is deliberately not silent: scenes are large and an
+  // accidental copy would be an expensive surprise. Switching stages
+  // genuinely needs one, so it asks for it by name.
+  Scene clone() const;
+
   EntityHandle create(const std::string& name = "Entity");
   EntityHandle create(const EntityData& data);
   bool destroy(EntityHandle handle);

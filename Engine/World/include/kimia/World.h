@@ -1,6 +1,7 @@
 #pragma once
 
 #include <kimia/GameProfile.h>
+#include <kimia/Library.h>
 #include <kimia/Logic.h>
 #include <kimia/Picking.h>
 #include <kimia/Physics.h>
@@ -600,6 +601,25 @@ public:
   // component attached in the editor can respond to it with no code.
   static const char* eventTriggerName(GameEvent event);
 
+  // --- Blueprints and stages ---
+  // A blueprint is a saved object with everything already set up; a stage
+  // is a whole scene. Together they are what turns "a room" into "a game".
+  const Library& library() const { return library_; }
+  // Saves an object as a blueprint (or updates one of the same name).
+  bool keepBlueprint(const std::string& entityName, const std::string& blueprintName);
+  bool forgetBlueprint(const std::string& blueprintName);
+  // Stamps a blueprint into the current scene, returning the new name.
+  std::string stampBlueprint(const std::string& blueprintName, const Vec3& at);
+  std::vector<std::string> blueprintNames() const;
+
+  // Stages. The one being edited is always `currentStage()`; switching
+  // stashes the scene you were on and brings the other one back.
+  const std::string& currentStage() const { return currentStage_; }
+  std::vector<std::string> stageNames() const;
+  bool addStage(const std::string& name);
+  bool goToStage(const std::string& name);
+  bool removeStage(const std::string& name);
+
   // --- The live viewport: working on the scene itself ---
   // The app owns the camera, so it hands the engine the view each frame.
   // Everything the editor does with a tap is decided here, where it can
@@ -868,6 +888,9 @@ private:
   std::vector<std::string> triggeredSounds_;
 
   // Visual logic state.
+  Library library_;
+  std::string currentStage_ = "Main";
+
   pick::Viewport viewport_;
   std::string selected_;
 

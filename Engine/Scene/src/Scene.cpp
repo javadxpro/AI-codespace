@@ -2,6 +2,13 @@
 
 namespace kimia {
 
+Scene Scene::clone() const {
+  Scene copy;
+  forEach([&copy](EntityHandle, const EntityData& entity) { copy.create(entity); });
+  copy.demoShot = demoShot;
+  return copy;
+}
+
 EntityHandle Scene::create(const std::string& name) {
   EntityData data;
   data.name = name;

@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/Library.h>
 #include <kimia/Studio.h>
 #include <kimia/WorldIO.h>
 #include <kimia_test.h>
@@ -535,4 +536,135 @@ KIMIA_TEST(studio_rule_forms_refuse_nonsense) {
   // An unknown trigger falls back rather than being refused, so a newer
   // save opened in an older build still loads.
   KIMIA_REQUIRE(has(ask(editor, "/api/add-rule", {{"rulename", "odd"}, {"trigger", "wat"}}), "\"ok\":true"));
+}
+
+// --- Blueprints and stages: the parts a real game is built from ---
+
+KIMIA_TEST(studio_keeps_a_blueprint_with_everything_set_up) {
+  // The point of a blueprint: set an object up ONCE, then stamp it twenty
+  // times without twenty rounds of the same form-filling.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  ask(editor, "/api/fit-body", {{"name", "Model_1"}, {"kind", "dynamic"}, {"mass", "3"}});
+  ask(editor, "/api/label", {{"name", "Model_1"}, {"label", "enemy"}});
+  ask(editor, "/api/wire-noise", {{"name", "Model_1"}, {"sound", "kick"}, {"wiring", "k"}});
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/keep", {{"name", "Model_1"}, {"as", "Barrel"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/library"), "\"blueprints\":[\"Barrel\"]"));
+
+  // Stamping brings the WHOLE object, not just its shape.
+  const std::string stamped = ask(editor, "/api/stamp", {{"blueprint", "Barrel"}, {"x", "4"}, {"z", "2"}});
+  KIMIA_REQUIRE(has(stamped, "\"ok\":true"));
+  const kimia::EntityData* copy = editor.entity("Barrel");
+  KIMIA_REQUIRE(copy != nullptr);
+  KIMIA_REQUIRE(copy->meshFile == "Tests/assets/crate.obj");
+  KIMIA_REQUIRE(copy->body.has_value());
+  KIMIA_REQUIRE(copy->body->kind == kimia::BodyKind::Dynamic);
+  KIMIA_REQUIRE(near(copy->body->mass, 3.0));
+  KIMIA_REQUIRE(copy->hasTag("enemy"));
+  KIMIA_REQUIRE(copy->sounds.size() == 1U);
+  KIMIA_REQUIRE(near(copy->transform.position.x, 4.0));
+
+  // And it is SOLID immediately, not after a reload.
+  const kimia::usize dynamics = editor.physicsDynamicCount();
+  ask(editor, "/api/stamp", {{"blueprint", "Barrel"}, {"x", "-4"}});
+  KIMIA_REQUIRE(editor.physicsDynamicCount() == dynamics + 1U);
+}
+
+KIMIA_TEST(studio_two_stamps_are_two_objects) {
+  // Two copies must be two things the rules can tell apart, or a rule
+  // saying "destroy Barrel" would be ambiguous.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  ask(editor, "/api/keep", {{"name", "Model_1"}, {"as", "Barrel"}});
+
+  const std::string first = ask(editor, "/api/stamp", {{"blueprint", "Barrel"}});
+  const std::string second = ask(editor, "/api/stamp", {{"blueprint", "Barrel"}});
+  KIMIA_REQUIRE(has(first, "\"name\":\"Barrel\""));
+  KIMIA_REQUIRE(has(second, "\"name\":\"Barrel_2\""));
+  KIMIA_REQUIRE(editor.entity("Barrel") != nullptr);
+  KIMIA_REQUIRE(editor.entity("Barrel_2") != nullptr);
+
+  // Keeping under an existing name EDITS that blueprint rather than
+  // making a second one you cannot tell apart.
+  ask(editor, "/api/keep", {{"name", "Barrel_2"}, {"as", "Barrel"}});
+  KIMIA_REQUIRE(has(ask(editor, "/api/library"), "\"blueprints\":[\"Barrel\"]"));
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/forget", {{"blueprint", "Barrel"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/stamp", {{"blueprint", "Barrel"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/keep", {{"name", "ghost"}, {"as", "X"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_stages_keep_their_own_scenes) {
+  // A game is a menu, a level and a victory screen — not one endless
+  // field. Switching away must not throw the work away.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  KIMIA_REQUIRE(editor.entity("Model_1") != nullptr);
+  KIMIA_REQUIRE(editor.currentStage() == "Main");
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-stage", {{"stage", "Level 2"}}), "\"ok\":true"));
+  // A stage that already exists is refused rather than silently replacing.
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-stage", {{"stage", "Level 2"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/add-stage", {{"stage", "Main"}}), "\"ok\":false"));
+
+  // The new stage is its own empty room.
+  KIMIA_REQUIRE(has(ask(editor, "/api/go-stage", {{"stage", "Level 2"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.currentStage() == "Level 2");
+  KIMIA_REQUIRE(editor.entity("Model_1") == nullptr);
+  KIMIA_REQUIRE(editor.entity("Ground") != nullptr);  // never opens on nothing
+
+  // Going back brings the first stage's work back untouched.
+  KIMIA_REQUIRE(has(ask(editor, "/api/go-stage", {{"stage", "Main"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.entity("Model_1") != nullptr);
+
+  // Work done AFTER a stage has been visited once must also survive.
+  // Testing only the first switch missed this: the first time you leave a
+  // stage it is filed away for the first time, and a later departure takes
+  // a different path through the code. Editing on the second visit and
+  // switching again is what actually exercises it.
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  KIMIA_REQUIRE(editor.entity("Model_2") != nullptr);
+  ask(editor, "/api/go-stage", {{"stage", "Level 2"}});
+  KIMIA_REQUIRE(editor.entity("Model_2") == nullptr);
+  ask(editor, "/api/go-stage", {{"stage", "Main"}});
+  KIMIA_REQUIRE(editor.entity("Model_1") != nullptr);
+  KIMIA_REQUIRE(editor.entity("Model_2") != nullptr);
+
+  // And the other stage keeps ITS own later work too.
+  ask(editor, "/api/go-stage", {{"stage", "Level 2"}});
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  const std::string onLevelTwo = "Model_1";
+  KIMIA_REQUIRE(editor.entity(onLevelTwo) != nullptr);
+  ask(editor, "/api/go-stage", {{"stage", "Main"}});
+  ask(editor, "/api/go-stage", {{"stage", "Level 2"}});
+  KIMIA_REQUIRE(editor.entity(onLevelTwo) != nullptr);
+
+  // Back to Main for the deletion checks below.
+  ask(editor, "/api/go-stage", {{"stage", "Main"}});
+  KIMIA_REQUIRE(editor.currentStage() == "Main");
+
+  // The stage you are standing on cannot be deleted.
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-stage", {{"stage", "Main"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/drop-stage", {{"stage", "Level 2"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/go-stage", {{"stage", "Level 2"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_a_rule_can_send_the_player_to_another_stage) {
+  // Several stages are only worth having if the game can move between
+  // them, so the "scene" action has to really switch.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-stage", {{"stage", "Level 2"}});
+  ask(editor, "/api/add-rule", {{"rulename", "next level"}, {"trigger", "key"}, {"subject", "n"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "scene"}, {"text", "Level 2"}});
+
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.currentStage() == "Main");
+  editor.setLogicKeys({"n"}, {});
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.currentStage() == "Level 2");
 }

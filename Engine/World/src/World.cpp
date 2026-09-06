@@ -1239,6 +1239,99 @@ void WorldEditor::updateTrick(f64 seconds) {
   events_.push_back(GameEvent::Trick);
 }
 
+// --- Blueprints and stages ---
+
+bool WorldEditor::keepBlueprint(const std::string& entityName, const std::string& blueprintName) {
+  const EntityData* source = entity(entityName);
+  if (source == nullptr || blueprintName.empty()) return false;
+  library_.keep(blueprintName, *source);
+  return true;
+}
+
+bool WorldEditor::forgetBlueprint(const std::string& blueprintName) {
+  return library_.forget(blueprintName);
+}
+
+std::string WorldEditor::stampBlueprint(const std::string& blueprintName, const Vec3& at) {
+  const std::string name = library_.stamp(blueprintName, world_.scene, at);
+  if (name.empty()) return name;
+  rebuildPhysics();  // a stamped object is solid straight away
+  refreshManaged();
+  return name;
+}
+
+std::vector<std::string> WorldEditor::blueprintNames() const {
+  std::vector<std::string> names;
+  names.reserve(library_.blueprints.size());
+  for (const Blueprint& blueprint : library_.blueprints) names.push_back(blueprint.name);
+  return names;
+}
+
+std::vector<std::string> WorldEditor::stageNames() const {
+  // The stage being edited lives in world_.scene, not in the library, so
+  // it is listed here rather than being absent from its own project.
+  std::vector<std::string> names;
+  names.push_back(currentStage_);
+  for (const Stage& stage : library_.stages) {
+    if (stage.name != currentStage_) names.push_back(stage.name);
+  }
+  return names;
+}
+
+bool WorldEditor::addStage(const std::string& name) {
+  if (name.empty() || name == currentStage_) return false;
+  if (library_.findStage(name) != nullptr) return false;
+  Stage stage;
+  stage.name = name;
+  // A new stage starts as an empty room with a floor, the same as a new
+  // world does — an editor should never open on nothing at all.
+  WorldData scratch;
+  scratch.profile = world_.profile;
+  buildEmptyWorldScene(scratch);
+  stage.scene = std::move(scratch.scene);
+  library_.stages.push_back(std::move(stage));
+  return true;
+}
+
+bool WorldEditor::goToStage(const std::string& name) {
+  if (name == currentStage_) return true;
+  Stage* target = library_.findStage(name);
+  if (target == nullptr) return false;
+
+  // Stash the scene being edited before bringing the other one in, or
+  // switching away would throw the work away.
+  Stage* here = library_.findStage(currentStage_);
+  if (here == nullptr) {
+    Stage saved;
+    saved.name = currentStage_;
+    saved.scene = world_.scene.clone();
+    library_.stages.push_back(std::move(saved));
+    target = library_.findStage(name);  // the vector may have moved
+    if (target == nullptr) return false;
+  } else {
+    here->scene = world_.scene.clone();
+  }
+
+  world_.scene = target->scene.clone();
+  currentStage_ = name;
+  selected_.clear();
+  rebuildPhysics();
+  refreshManaged();
+  return true;
+}
+
+bool WorldEditor::removeStage(const std::string& name) {
+  // The stage you are standing on cannot be deleted: there would be
+  // nothing to show.
+  if (name == currentStage_) return false;
+  for (usize i = 0; i < library_.stages.size(); ++i) {
+    if (library_.stages[i].name != name) continue;
+    library_.stages.erase(library_.stages.begin() + static_cast<std::ptrdiff_t>(i));
+    return true;
+  }
+  return false;
+}
+
 // --- The live viewport ---
 
 std::string WorldEditor::pickEntityAt(f64 pixelX, f64 pixelY) const {
@@ -1416,6 +1509,11 @@ void WorldEditor::runLogic(f64 seconds) {
         break;
       case Act::ShowMessage:
         logicMessage_ = effect.text;
+        break;
+      case Act::GoToScene:
+        // A rule can send the player from a menu to a level, which is
+        // what makes several stages worth having.
+        goToStage(effect.text);
         break;
       default:
         break;  // variables and events are the runtime's own business
