@@ -4,6 +4,7 @@
 #include <kimia/GraphicsTypes.h>
 #include <kimia/Image.h>
 #include <kimia/Mesh.h>
+#include <kimia/Skeleton.h>
 
 #include <optional>
 #include <string>
@@ -47,6 +48,22 @@ std::optional<MeshAsset> loadOBJAsset(const std::string& path, std::string& erro
 // FBX: extracts material names, diffuse colors and diffuse textures. Embedded
 // texture data is written next to the FBX file as `<base>_<material>.png`.
 std::optional<MeshAsset> loadFBXAsset(const std::string& path, std::string& error);
+
+// --- Skeletons and animation (stage 25) ---
+//
+// Loads the first skinned mesh in an FBX plus its skeleton and every
+// animation stack in the file. An FBX with no skin deformer is not an
+// error here — it simply has no skeleton — so callers should check
+// `skinned.skeleton.isEmpty()`.
+struct SkinnedAsset {
+  SkinnedMesh skinned;
+  std::vector<AnimationClip> clips;
+
+  bool hasSkeleton() const { return !skinned.skeleton.isEmpty(); }
+  bool hasAnimation() const { return !clips.empty(); }
+};
+
+std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string& error);
 
 // --- Images: .png / .jpg / .jpeg ---
 std::optional<Image> loadImage(const std::string& path, std::string& error);
