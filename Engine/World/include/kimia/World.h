@@ -2,6 +2,7 @@
 
 #include <kimia/GameProfile.h>
 #include <kimia/Logic.h>
+#include <kimia/Picking.h>
 #include <kimia/Physics.h>
 #include <kimia/Scene.h>
 #include <kimia/Types.h>
@@ -599,6 +600,22 @@ public:
   // component attached in the editor can respond to it with no code.
   static const char* eventTriggerName(GameEvent event);
 
+  // --- The live viewport: working on the scene itself ---
+  // The app owns the camera, so it hands the engine the view each frame.
+  // Everything the editor does with a tap is decided here, where it can
+  // be tested without a renderer.
+  void setViewport(const pick::Viewport& viewport) { viewport_ = viewport; }
+  const pick::Viewport& viewport() const { return viewport_; }
+  // What is under a screen pixel; empty when nothing is.
+  std::string pickEntityAt(f64 pixelX, f64 pixelY) const;
+  // Drags the selected object across the ground from one pixel to
+  // another, snapping to `grid` (0 = free). False when the drag went
+  // somewhere meaningless, such as up into the sky.
+  bool dragEntity(const std::string& name, f64 fromX, f64 fromY, f64 toX, f64 toY, f64 grid);
+  // The object the editor is working on.
+  void selectEntity(const std::string& name) { selected_ = name; }
+  const std::string& selectedName() const { return selected_; }
+
   // --- Visual logic: the rules that make it a game ---
   // Everything the Workbench needs to show and edit a rule set, and what
   // the play loop needs to run it.
@@ -851,6 +868,9 @@ private:
   std::vector<std::string> triggeredSounds_;
 
   // Visual logic state.
+  pick::Viewport viewport_;
+  std::string selected_;
+
   LogicRuntime logicRuntime_;
   std::string logicMessage_;
   std::vector<std::string> logicKeysPressed_;  // fed in by the app each frame

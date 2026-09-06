@@ -239,6 +239,30 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return "{\"ok\":true,\"items\":" + stringsJson(editor.entitiesWithTag(param(params, "label"))) + "}";
   }
 
+  // --- The live viewport: tap and drag on the scene itself ---
+
+  // What did I tap? Returns the object's name and opens its Dossier, so a
+  // tap on the picture and a click in the Rack do the same thing.
+  if (path == "/api/tap") {
+    const std::string name = editor.pickEntityAt(numberParam(params, "x", 0.0), numberParam(params, "y", 0.0));
+    if (name.empty()) return "{\"ok\":true,\"name\":\"\"}";  // a miss is not an error
+    editor.selectEntity(name);
+    return okJson("name", name);
+  }
+
+  // Slide the object across the ground between two pixels.
+  if (path == "/api/drag") {
+    const std::string name = param(params, "name");
+    if (!editor.dragEntity(name, numberParam(params, "fromx", 0.0), numberParam(params, "fromy", 0.0),
+                           numberParam(params, "tox", 0.0), numberParam(params, "toy", 0.0),
+                           numberParam(params, "grid", 0.0))) {
+      return errorJson("that drag went nowhere useful");
+    }
+    const EntityData* moved = editor.entity(name);
+    if (moved == nullptr) return errorJson("no such object");
+    return "{\"ok\":true,\"position\":" + vec3Json(moved->transform.position) + "}";
+  }
+
   // --- Rules: the game's logic, without code ---
 
   // The rule list, each one as the sentence it reads as.
@@ -556,7 +580,14 @@ body{margin:0;background:var(--steel);color:var(--ink);
   overflow:auto;padding:8px}
 #stage{grid-area:stage;position:relative;background:#0e1114;display:flex;
   align-items:center;justify-content:center;overflow:hidden}
-#stage img{max-width:100%;max-height:100%;image-rendering:pixelated}
+#stage img{max-width:100%;max-height:100%;image-rendering:pixelated;
+  touch-action:none;user-select:none;-webkit-user-drag:none}
+#stagebar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:12px;
+  align-items:center;padding:6px 10px;background:rgba(18,22,26,.82);
+  border-top:1px solid var(--edge);font-size:11px;color:var(--dim)}
+#stagebar label{display:flex;gap:5px;align-items:center}
+#stagebar select{width:auto;padding:2px 5px}
+#tapHint{margin-right:auto;color:var(--brass)}
 #dossier{grid-area:dossier;background:var(--steel2);border-right:1px solid var(--edge);
   overflow:auto;padding:10px}
 #strip{grid-area:strip;background:#12161a;border-top:1px solid var(--edge);
@@ -632,7 +663,17 @@ input[type=color]{padding:2px;height:30px}
     <button class="go" style="width:100%" onclick="bringIn()">Bring in</button>
   </div>
 
-  <div id="stage"><img id="view" alt="world"></div>
+  <div id="stage">
+    <img id="view" alt="world">
+    <div id="stagebar">
+      <label><input type="checkbox" id="dragOn" checked> drag</label>
+      <label>grid <select id="gridStep">
+        <option value="0">off</option><option value="0.25">0.25</option>
+        <option value="0.5" selected>0.5</option><option value="1">1</option>
+      </select></label>
+      <span id="tapHint">tap an object to select it</span>
+    </div>
+  </div>
 
   <div id="dossier">
     <div id="empty" class="hint">Pick something from the Rack to open its Dossier.</div>
@@ -1156,6 +1197,75 @@ function scrap(){
     }
   });
 }
+
+// --- Touching the picture ---
+// A tap selects; a drag slides the selected object along the ground. The
+// same handlers serve mouse and touch, because the editor has to work on
+// a phone and on a desktop without two code paths.
+(function(){
+  var view = document.getElementById('view');
+  var dragging = false, lastX = 0, lastY = 0, moved = 0, downAt = 0;
+
+  // The image is scaled to fit, so a screen pixel is not a frame pixel.
+  function toFrame(ev){
+    var r = view.getBoundingClientRect();
+    var p = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+    return {
+      x: (p.clientX - r.left) / r.width * (view.naturalWidth || r.width),
+      y: (p.clientY - r.top) / r.height * (view.naturalHeight || r.height)
+    };
+  }
+
+  function begin(ev){
+    var p = toFrame(ev);
+    dragging = true; lastX = p.x; lastY = p.y; moved = 0; downAt = Date.now();
+    ev.preventDefault();
+  }
+  function move(ev){
+    if (!dragging) return;
+    var p = toFrame(ev);
+    var dx = p.x - lastX, dy = p.y - lastY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    // Only drag once the finger has really moved, or every tap would
+    // nudge the object slightly.
+    if (picked && document.getElementById('dragOn').checked && moved > 6){
+      api('drag', {name: picked, fromx: lastX, fromy: lastY, tox: p.x, toy: p.y,
+                   grid: document.getElementById('gridStep').value}, function(d){
+        if (d && d.ok && d.position){
+          document.getElementById('px').value = d.position[0].toFixed(2);
+          document.getElementById('py').value = d.position[1].toFixed(2);
+          document.getElementById('pz').value = d.position[2].toFixed(2);
+        }
+      });
+      lastX = p.x; lastY = p.y;
+    }
+    ev.preventDefault();
+  }
+  function end(ev){
+    if (!dragging) return;
+    dragging = false;
+    // A short press that barely moved is a TAP: select what is under it.
+    if (moved <= 6 && Date.now() - downAt < 600){
+      api('tap', {x: lastX, y: lastY}, function(d){
+        if (!d) return;
+        if (d.name){
+          pick(d.name);
+          document.getElementById('tapHint').textContent = d.name;
+        } else {
+          document.getElementById('tapHint').textContent = 'nothing there';
+        }
+      });
+    }
+    if (ev.cancelable) ev.preventDefault();
+  }
+
+  view.addEventListener('mousedown', begin);
+  view.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  view.addEventListener('touchstart', begin, {passive:false});
+  view.addEventListener('touchmove', move, {passive:false});
+  view.addEventListener('touchend', end, {passive:false});
+})();
 
 setInterval(function(){
   document.getElementById('view').src = '/frame.png?t=' + Date.now();

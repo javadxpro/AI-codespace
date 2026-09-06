@@ -16,6 +16,7 @@
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
+#include <kimia/Picking.h>
 #include <kimia/Skeleton.h>
 #include <kimia/Studio.h>
 #include <kimia/Version.h>
@@ -776,6 +777,19 @@ int main(int argc, char** argv) {
     scene.projection = Mat4::perspective(kimia::radians(60.0), static_cast<f64>(width) / static_cast<f64>(height),
                                          0.1, 100.0);
     scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
+
+    // Hand the camera to the engine so a tap on the picture can be turned
+    // into an object. The app owns the camera; the engine owns the
+    // decision about what was hit, where it can be tested.
+    {
+      kimia::pick::Viewport viewport;
+      viewport.view = scene.view;
+      viewport.projection = scene.projection;
+      viewport.eye = eye;
+      viewport.width = width;
+      viewport.height = height;
+      editor.setViewport(viewport);
+    }
 
     Image image;
     if (renderer.ready()) {

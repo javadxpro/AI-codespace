@@ -1239,6 +1239,27 @@ void WorldEditor::updateTrick(f64 seconds) {
   events_.push_back(GameEvent::Trick);
 }
 
+// --- The live viewport ---
+
+std::string WorldEditor::pickEntityAt(f64 pixelX, f64 pixelY) const {
+  const pick::Hit hit = pick::pickAt(viewport_, pick::targetsFromScene(world_.scene), pixelX, pixelY);
+  return hit.hit ? hit.name : std::string();
+}
+
+bool WorldEditor::dragEntity(const std::string& name, f64 fromX, f64 fromY, f64 toX, f64 toY, f64 grid) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  Vec3 delta;
+  // Drag along the plane at the OBJECT'S OWN height, so something on a
+  // table slides across the table rather than jumping to the floor.
+  if (!pick::dragDelta(viewport_, fromX, fromY, toX, toY, target->transform.position.y, delta)) {
+    return false;
+  }
+  target->transform.position = pick::snapTo(target->transform.position + delta, grid);
+  rebuildPhysics();  // an editor shows the result now, not after a reload
+  return true;
+}
+
 // --- Visual logic: the rules that make a scene into a game ---
 
 usize WorldEditor::addRule(const Rule& rule) {
