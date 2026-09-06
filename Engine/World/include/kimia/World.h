@@ -225,6 +225,18 @@ public:
   bool celebrating() const { return screen_ == Screen::Goal; }
   Vec3 playerPosition() const { return playerPos_; }
   bool physicsCharacterOnGround() const { return physics_.character()->onGround; }
+
+  // --- Squads (stage 21) ---
+  // A profile with «team N» greater than 1 fills the pitch on entering PLAY:
+  // N - 1 team-mates on the player's side (team 1) and N opponents (team 2).
+  // They are solid physics characters standing in a line formation, so the
+  // player and the ball collide with them. The engine only places bodies —
+  // it never invents the pitch itself.
+  u32 teamSize() const { return world_.profile.teamSize; }
+  u32 squadCount() const { return static_cast<u32>(physics_.characterCount()); }
+  std::vector<u32> squadIds() const { return physics_.characterIds(); }
+  Vec3 squadPosition(u32 id) const;  // origin when the id is unknown
+  u32 squadTeam(u32 id) const;       // 0 when the id is unknown
   Vec3 ballPosition() const;
   Vec3 ballVelocity() const;
   u32 score() const { return world_.score; }
@@ -333,6 +345,7 @@ private:
   void rebuildPhysics();
   void resetBallToCenter();
   void enterPlay();
+  void spawnSquads();  // formation for the current profile's «team N»
   void applyEnvironmentToScene();
   void beginPlace();      // ghost to the origin, enter Place
   void confirmPlace();    // create/update the pending object at the ghost

@@ -732,3 +732,100 @@ KIMIA_TEST(physics_calm_world_is_bit_identical_to_no_wind_at_all) {
   KIMIA_REQUIRE(untouched.y == calm.y);
   KIMIA_REQUIRE(untouched.z == calm.z);
 }
+
+// --- Stage 21: many characters ---
+
+KIMIA_TEST(physics_characters_have_their_own_ids_and_teams) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  // Every world starts with exactly the player, character 1, team 0.
+  KIMIA_REQUIRE(world.characterCount() == 1U);
+  KIMIA_REQUIRE(world.characterIds().size() == 1U);
+  KIMIA_REQUIRE(world.characterIds()[0] == kimia::kPrimaryCharacter);
+  KIMIA_REQUIRE(world.characterIds()[0] == 1U);
+  KIMIA_REQUIRE(world.character() == world.characterById(1U));
+  KIMIA_REQUIRE(world.character()->team == 0U);
+
+  kimia::CharacterBody mate;
+  mate.position = Vec3{2.0, 0.5, 0.0};
+  mate.team = 1U;
+  const u32 mateId = world.addCharacter(mate);
+  kimia::CharacterBody foe;
+  foe.position = Vec3{-2.0, 0.5, 0.0};
+  foe.team = 2U;
+  const u32 foeId = world.addCharacter(foe);
+  KIMIA_REQUIRE(mateId == 2U);
+  KIMIA_REQUIRE(foeId == 3U);
+  KIMIA_REQUIRE(world.characterCount() == 3U);
+  KIMIA_REQUIRE(world.characterById(mateId)->team == 1U);
+  KIMIA_REQUIRE(world.characterById(foeId)->team == 2U);
+  KIMIA_REQUIRE(near(world.characterById(foeId)->position.x, -2.0));
+
+  // Characters must NOT eat the sphere/box ids: they are a separate space.
+  // The plane above took body id 1, so the first sphere is still 2 — exactly
+  // what it was before characters became plural.
+  SphereBody ball;
+  ball.position = Vec3{0.0, 2.0, 0.0};
+  KIMIA_REQUIRE(world.addSphere(ball) == 2U);
+
+  KIMIA_REQUIRE(world.removeCharacter(mateId));
+  KIMIA_REQUIRE(!world.removeCharacter(mateId));  // gone already
+  KIMIA_REQUIRE(world.characterCount() == 2U);
+  KIMIA_REQUIRE(world.characterById(mateId) == nullptr);
+  const std::vector<u32> ids = world.characterIds();  // ascending
+  KIMIA_REQUIRE(ids.size() == 2U);
+  KIMIA_REQUIRE(ids[0] == 1U);
+  KIMIA_REQUIRE(ids[1] == 3U);
+}
+
+KIMIA_TEST(physics_a_character_cannot_walk_through_another_character) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.resetCharacter(Vec3{0.0, 0.5, 0.0});
+  kimia::CharacterBody wallOfFlesh;
+  wallOfFlesh.position = Vec3{1.2, 0.5, 0.0};  // 0.3 + 0.3 = 0.6 wide gap left
+  const u32 blockerId = world.addCharacter(wallOfFlesh);
+  // Walk right for a full second at 4 m/s: without a body in the way the
+  // player would reach x = 4.0.
+  for (u32 i = 0; i < 60U; ++i) world.moveCharacter(1.0 / 60.0, Vec3{4.0, 0.0, 0.0});
+  const kimia::CharacterBody* player = world.character();
+  // Stopped touching the blocker: centers exactly one full width apart.
+  KIMIA_REQUIRE(near(player->position.x, 1.2 - 0.6, 1e-9));
+  KIMIA_REQUIRE(player->position.x < 0.61);
+  KIMIA_REQUIRE(player->collisionCount > 0U);
+  // The blocker never moved — it is not pushed, it is solid.
+  KIMIA_REQUIRE(near(world.characterById(blockerId)->position.x, 1.2));
+}
+
+KIMIA_TEST(physics_a_character_can_stand_on_another_characters_head) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  kimia::CharacterBody base;
+  base.position = Vec3{0.0, 0.5, 0.0};  // top of the head at y = 1.0
+  world.addCharacter(base);
+  // Drop the player from above onto that head.
+  world.resetCharacter(Vec3{0.0, 3.0, 0.0});
+  for (u32 i = 0; i < 120U; ++i) world.moveCharacter(1.0 / 60.0, Vec3{0.0, 0.0, 0.0});
+  const kimia::CharacterBody* player = world.character();
+  // Feet on the head: center = head top (1.0) + half height (0.5) = 1.5.
+  KIMIA_REQUIRE(near(player->position.y, 1.5, 1e-9));
+  KIMIA_REQUIRE(player->onGround);
+  KIMIA_REQUIRE(near(player->velocity.y, 0.0, 1e-9));
+}
+
+KIMIA_TEST(physics_clear_keeps_the_player_and_drops_the_extra_characters) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  world.resetCharacter(Vec3{1.0, 0.5, 2.0});
+  kimia::CharacterBody mate;
+  mate.team = 2U;
+  world.addCharacter(mate);
+  KIMIA_REQUIRE(world.characterCount() == 2U);
+  world.clear();
+  // Rebuilding the level keeps player 1 exactly where it stood.
+  KIMIA_REQUIRE(world.characterCount() == 1U);
+  KIMIA_REQUIRE(near(world.character()->position.x, 1.0));
+  KIMIA_REQUIRE(near(world.character()->position.z, 2.0));
+  // And the next spawn starts the extra ids over again at 2.
+  KIMIA_REQUIRE(world.addCharacter(kimia::CharacterBody{}) == 2U);
+}

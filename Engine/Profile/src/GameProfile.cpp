@@ -166,6 +166,7 @@ std::vector<GameProfile> builtinProfiles() {
   street.kickBase = 3.0;
   street.kickSpeedScale = 0.6;
   street.kickUp = 2.0;
+  street.teamSize = 5U;  // ۵ در برابر ۵
   profiles.push_back(street);
 
   // زمین چمن: کوی ابوذر — the professional 11v11 game: a real ball, a real
@@ -183,6 +184,7 @@ std::vector<GameProfile> builtinProfiles() {
   grass.kickBase = 4.0;
   grass.kickSpeedScale = 0.8;
   grass.kickUp = 0.8;
+  grass.teamSize = 11U;  // ۱۱ در برابر ۱۱
   profiles.push_back(grass);
 
   // مسابقه واقعی: بتل گراند — PUBG-like, 4-player squads; this 40 x 40 field
@@ -200,6 +202,7 @@ std::vector<GameProfile> builtinProfiles() {
   battleground.kickBase = 2.0;
   battleground.kickSpeedScale = 0.5;
   battleground.kickUp = 1.2;
+  battleground.teamSize = 4U;  // تیم‌های ۴ نفره
   profiles.push_back(battleground);
 
   // زمین آزاد — the sandbox: exactly the editor's original behaviour.
@@ -250,6 +253,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back(std::string("scoring ") + scoringName(profile.scoring));
   out.push_back("par " + std::to_string(profile.par));
   out.push_back("wind " + formatFixed6(profile.windSpeed) + ' ' + formatFixed6(profile.windDirection));
+  out.push_back("team " + std::to_string(profile.teamSize));
   return out;
 }
 
@@ -366,6 +370,14 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     }
     out.windSpeed = clampF64(speed, 0.0, kProfileWindMax);
     out.windDirection = direction;
+    return true;
+  }
+  if (key == "team") {
+    std::string value;
+    f64 team = 0.0;
+    if (!(tokens >> value) || !parseF64Token(value, team)) return false;
+    out.teamSize = static_cast<u32>(clampF64(std::floor(team), static_cast<f64>(kProfileTeamMin),
+                                             static_cast<f64>(kProfileTeamMax)));
     return true;
   }
   return false;

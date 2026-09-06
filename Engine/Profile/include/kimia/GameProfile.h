@@ -60,6 +60,12 @@ inline constexpr f64 kWorldFantasyRadius = 0.15;
 // same convention as the aim yaw.
 inline constexpr f64 kProfileWindMax = 20.0;  // matches kMaxWindAcceleration
 
+// Squad size limits: 1 = a single player (golf, sandbox), 11 = a full grass
+// football side. The ceiling keeps a typo from spawning a crowd the phone
+// cannot draw.
+inline constexpr u32 kProfileTeamMin = 1U;
+inline constexpr u32 kProfileTeamMax = 16U;
+
 // Field size limits (meters). Small enough to stay inside the 20-unit
 // inspector clamp era, large enough for a 40 x 40 battleground map.
 inline constexpr f64 kProfileFieldMin = 4.0;
@@ -89,6 +95,11 @@ struct GameProfile {
   u32 par = 3U;                      // hole scoring: strokes each cup is rated at (scorecard)
   f64 windSpeed = 0.0;               // m/s^2 on the airborne ball (0 = calm)
   f64 windDirection = 0.0;           // radians, 0 = toward -Z (like the aim yaw)
+  // Squad size per side (stage 21): 5 = street football, 11 = grass, 4 = a
+  // battleground team, 1 = the lone player of golf/sandbox. The engine
+  // spawns teamSize - 1 team-mates plus teamSize opponents when a world
+  // asks for a match; a profile of 1 keeps the single-player behaviour.
+  u32 teamSize = 1U;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -127,6 +138,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   scoring gate
 //   par 3                        (hole scoring: rated strokes per cup, 1..20)
 //   wind 0.000000 0.000000       (speed m/s^2 0..20, direction radians)
+//   team 5                       (players per side, 1..16; 1 = single player)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

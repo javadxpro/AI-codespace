@@ -93,7 +93,9 @@ void dampTangential(Vec3& velocity, const Vec3& normal, f64 factor, f64 dt) {
 }  // namespace
 
 PhysicsWorld::PhysicsWorld(f64 fixedDt, u32 maxStepsPerFrame)
-    : fixedDt_(fixedDt), accumulator_(fixedDt, maxStepsPerFrame) {}
+    : fixedDt_(fixedDt), accumulator_(fixedDt, maxStepsPerFrame) {
+  addCharacter(CharacterBody{});  // character 1: the player, always present
+}
 
 u32 PhysicsWorld::addSphere(const SphereBody& body) {
   const u32 id = nextId_;
@@ -152,6 +154,15 @@ void PhysicsWorld::clear() {
   dynamicBoxes_.clear();
   planes_.clear();
   boxes_.clear();
+  // Characters: the extra players go away, but player 1 is KEPT as it is.
+  // clear() rebuilds the level, not the player — the game positions the
+  // player itself (resetCharacter) and used to rely on it surviving here.
+  const CharacterBody primary = characters_.count(kPrimaryCharacter) > 0U
+                                    ? characters_.at(kPrimaryCharacter)
+                                    : CharacterBody{};
+  characters_.clear();
+  nextCharacterId_ = kPrimaryCharacter;
+  addCharacter(primary);
   time_ = 0.0;
   steps_ = 0U;
 }
@@ -531,9 +542,10 @@ void characterResolveAxis(CharacterBody& character, const Vec3& boxCenter, const
 
 }  // namespace
 
-// Feet still resting on a surface? (a plane at the feet height, or a box
-// whose top face is under the character's center)
-bool PhysicsWorld::characterSupported(const CharacterBody& character) const {
+// Feet still resting on a surface? (a plane at the feet height, a box whose
+// top face is under the character's center, or ANOTHER character's head —
+// standing on a team-mate is legal, it just has to be stable.)
+bool PhysicsWorld::characterSupported(const CharacterBody& character, u32 selfId) const {
   const f64 feet = character.position.y - character.halfExtents.y;
   for (const auto& pair : planes_) {
     if (std::abs(feet - pair.second.y) <= 1e-6) return true;
@@ -551,25 +563,69 @@ bool PhysicsWorld::characterSupported(const CharacterBody& character) const {
   for (const auto& pair : dynamicBoxes_) {
     if (supportedByBox(pair.second.position, pair.second.halfExtents)) return true;
   }
+  for (const auto& pair : characters_) {
+    if (pair.first == selfId) continue;
+    if (supportedByBox(pair.second.position, pair.second.halfExtents)) return true;
+  }
   return false;
 }
 
-void PhysicsWorld::resetCharacter(const Vec3& position) {
-  character_.position = position;
-  character_.velocity = Vec3{0.0, 0.0, 0.0};
-  character_.onGround = false;
-  character_.collisionCount = 0U;
+// --- Characters ---
+
+u32 PhysicsWorld::addCharacter(const CharacterBody& body) {
+  const u32 id = nextCharacterId_++;
+  characters_[id] = body;
+  return id;
 }
 
-bool PhysicsWorld::characterJump(f64 height) {
-  if (!character_.onGround) return false;
-  character_.velocity.y = std::sqrt(2.0 * kGravity * height);
-  character_.onGround = false;
+bool PhysicsWorld::removeCharacter(u32 id) { return characters_.erase(id) > 0U; }
+
+CharacterBody* PhysicsWorld::characterById(u32 id) {
+  const auto it = characters_.find(id);
+  return it == characters_.end() ? nullptr : &it->second;
+}
+
+const CharacterBody* PhysicsWorld::characterById(u32 id) const {
+  const auto it = characters_.find(id);
+  return it == characters_.end() ? nullptr : &it->second;
+}
+
+std::vector<u32> PhysicsWorld::characterIds() const {
+  std::vector<u32> ids;
+  ids.reserve(characters_.size());
+  for (const auto& pair : characters_) ids.push_back(pair.first);  // std::map: ascending
+  return ids;
+}
+
+void PhysicsWorld::resetCharacter(const Vec3& position) { resetCharacter(kPrimaryCharacter, position); }
+
+void PhysicsWorld::resetCharacter(u32 id, const Vec3& position) {
+  CharacterBody* character = characterById(id);
+  if (character == nullptr) return;
+  character->position = position;
+  character->velocity = Vec3{0.0, 0.0, 0.0};
+  character->onGround = false;
+  character->collisionCount = 0U;
+}
+
+bool PhysicsWorld::characterJump(f64 height) { return characterJump(kPrimaryCharacter, height); }
+
+bool PhysicsWorld::characterJump(u32 id, f64 height) {
+  CharacterBody* character = characterById(id);
+  if (character == nullptr || !character->onGround) return false;
+  character->velocity.y = std::sqrt(2.0 * kGravity * height);
+  character->onGround = false;
   return true;
 }
 
 void PhysicsWorld::moveCharacter(f64 dt, const Vec3& desiredVelocity) {
-  CharacterBody& character = character_;
+  moveCharacter(kPrimaryCharacter, dt, desiredVelocity);
+}
+
+void PhysicsWorld::moveCharacter(u32 id, f64 dt, const Vec3& desiredVelocity) {
+  CharacterBody* self = characterById(id);
+  if (self == nullptr) return;
+  CharacterBody& character = *self;
   character.collisionCount = 0U;
 
   // Horizontal control is direct; gravity owns the vertical.
@@ -588,12 +644,20 @@ void PhysicsWorld::moveCharacter(f64 dt, const Vec3& desiredVelocity) {
   for (const auto& pair : dynamicBoxes_) {
     characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 0);
   }
+  for (const auto& pair : characters_) {
+    if (pair.first == id) continue;  // never collide with yourself
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 0);
+  }
 
   character.position.z += character.velocity.z * dt;
   for (const auto& pair : boxes_) {
     characterResolveAxis(character, pair.second.center, pair.second.halfExtents, 2);
   }
   for (const auto& pair : dynamicBoxes_) {
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 2);
+  }
+  for (const auto& pair : characters_) {
+    if (pair.first == id) continue;
     characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 2);
   }
 
@@ -616,10 +680,14 @@ void PhysicsWorld::moveCharacter(f64 dt, const Vec3& desiredVelocity) {
   for (const auto& pair : dynamicBoxes_) {
     characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 1);
   }
+  for (const auto& pair : characters_) {
+    if (pair.first == id) continue;
+    characterResolveAxis(character, pair.second.position, pair.second.halfExtents, 1);
+  }
   if (character.velocity.y == 0.0 && falling) character.onGround = true;
   // Standing still: verify the support is still there (walking off an edge
   // must drop the character).
-  if (character.onGround && !characterSupported(character)) character.onGround = false;
+  if (character.onGround && !characterSupported(character, id)) character.onGround = false;
 }
 
 }  // namespace kimia

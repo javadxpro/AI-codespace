@@ -167,7 +167,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "mode kick\n"
                 "scoring gate\n"
                 "par 3\n"
-                "wind 0.000000 0.000000\n");
+                "wind 0.000000 0.000000\n"
+                "team 5\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -182,7 +183,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "mode shot\n"
                 "scoring hole\n"
                 "par 3\n"
-                "wind 0.000000 0.000000\n");
+                "wind 0.000000 0.000000\n"
+                "team 1\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {

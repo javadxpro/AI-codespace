@@ -69,11 +69,18 @@ struct CharacterBody {
   Vec3 velocity{0.0, 0.0, 0.0};
   bool onGround = false;
   u32 collisionCount = 0U;  // faces touched during the last move
+  // Which side this character plays for (stage 21). 0 = no team (the lone
+  // player of a sandbox world); 1 and 2 are the two sides of a match. The
+  // physics layer only carries the number — the rules live in the game.
+  u32 team = 0U;
 };
 
 // Falls faster than this are clamped so a slow frame cannot tunnel through
 // a one-unit obstacle (6 m/s * 0.1 s = 0.6 m per host frame).
 inline constexpr f64 kMaxCharacterFallSpeed = 6.0;
+
+// Every world has a character with this id: the one the player drives.
+inline constexpr u32 kPrimaryCharacter = 1U;
 
 // --- Wind (stage 20.5-b2) ---
 //
@@ -140,9 +147,26 @@ public:
   u32 addPlane(f64 y);
   u32 addBox(const Vec3& center, const Vec3& halfExtents);
 
-  // The single kinematic character the caller drives (see CharacterBody).
-  CharacterBody* character() { return &character_; }
-  const CharacterBody* character() const { return &character_; }
+  // --- Characters (stage 21: N of them) ---
+  //
+  // Characters have their OWN 1-based id space (they are kinematic, not
+  // solver bodies, and keeping them separate leaves every sphere/box id
+  // exactly where it was). Ids are never reused. Character 1 always
+  // exists, so the single-character API below keeps working unchanged:
+  // character() is character 1, and a world that never adds another one
+  // behaves exactly as it did before.
+  u32 addCharacter(const CharacterBody& body);
+  bool removeCharacter(u32 id);
+  CharacterBody* characterById(u32 id);
+  const CharacterBody* characterById(u32 id) const;
+  usize characterCount() const { return characters_.size(); }
+  // The character ids in ascending (creation) order — a deterministic walk
+  // for the game layer and for serialization.
+  std::vector<u32> characterIds() const;
+
+  // The first character (id kPrimaryCharacter). The one-player API.
+  CharacterBody* character() { return characterById(kPrimaryCharacter); }
+  const CharacterBody* character() const { return characterById(kPrimaryCharacter); }
 
   // The world wind (see Wind). Off by default, so every existing world and
   // every existing test behaves exactly as before.
@@ -151,14 +175,19 @@ public:
 
   // Teleports the character to `position`, zeroing velocity and ground state.
   void resetCharacter(const Vec3& position);
+  void resetCharacter(u32 id, const Vec3& position);
 
   // Moves the character for dt seconds toward the desired horizontal
   // velocity (the y component is ignored — gravity owns the vertical).
+  // Characters are solid to each other: a mover is blocked by, and slides
+  // along, every OTHER character as well as the level geometry.
   void moveCharacter(f64 dt, const Vec3& desiredVelocity);
+  void moveCharacter(u32 id, f64 dt, const Vec3& desiredVelocity);
 
   // Starts a jump of the given height (meters, feet apex) when the character
   // stands on something: v = sqrt(2 g h). Returns true when the jump began.
   bool characterJump(f64 height);
+  bool characterJump(u32 id, f64 height);
 
   // Highest Y (starting from center.y, capped at maxHeight) at which a sphere
   // of this radius at (center.x, ?, center.z) does NOT strictly overlap any
@@ -199,7 +228,7 @@ private:
   void collectContacts(std::vector<Contact>& contacts) const;
   void resolvePair(const Contact& contact, bool countContacts);
   void applyPairFriction(const Contact& contact);
-  bool characterSupported(const CharacterBody& character) const;
+  bool characterSupported(const CharacterBody& character, u32 selfId) const;
 
   f64 fixedDt_;
   FixedTimeStep accumulator_;
@@ -207,7 +236,8 @@ private:
   std::map<u32, DynamicBox> dynamicBoxes_;
   std::map<u32, StaticPlane> planes_;
   std::map<u32, StaticBox> boxes_;
-  CharacterBody character_;
+  std::map<u32, CharacterBody> characters_;
+  u32 nextCharacterId_ = kPrimaryCharacter;
   Wind wind_;
   u32 nextId_ = 1U;
   f64 time_ = 0.0;

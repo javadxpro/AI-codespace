@@ -362,6 +362,47 @@ bool WorldEditor::saveWorld(const std::string& path, std::string& error) {
   return true;
 }
 
+Vec3 WorldEditor::squadPosition(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return Vec3{0.0, 0.0, 0.0};
+  return body->position;
+}
+
+u32 WorldEditor::squadTeam(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return 0U;
+  return body->team;
+}
+
+// Line up the two sides. The player (character 1) always keeps team 1 and
+// its own resting spot; the rest are spread evenly across the width of the
+// field, team 1 on the player's half (+Z) and team 2 on the far half (-Z),
+// one third of the way out from the middle so nobody starts inside a wall.
+void WorldEditor::spawnSquads() {
+  const u32 size = world_.profile.teamSize;
+  physics_.character()->team = size > 1U ? 1U : 0U;
+  if (size <= 1U) return;  // single-player profile: nothing to spawn
+
+  const CharacterBody shape;  // default half extents
+  const f64 rowZ = world_.halfLength() / 3.0;
+  const f64 feet = playerRest().y;
+  const f64 span = world_.halfWidth() - kPlayerMargin;
+  for (u32 team = 1U; team <= 2U; ++team) {
+    // Team 1 is a man short: the human player is already on the pitch.
+    const u32 count = team == 1U ? size - 1U : size;
+    for (u32 index = 0U; index < count; ++index) {
+      CharacterBody body = shape;
+      body.team = team;
+      // Evenly spaced slots: (i + 1) / (count + 1) maps to -span..+span.
+      const f64 t = static_cast<f64>(index + 1U) / static_cast<f64>(count + 1U);
+      body.position.x = -span + 2.0 * span * t;
+      body.position.y = feet;
+      body.position.z = team == 1U ? rowZ : -rowZ;
+      physics_.addCharacter(body);
+    }
+  }
+}
+
 void WorldEditor::enterPlay() {
   playerPos_ = playerRest();
   physics_.resetCharacter(playerPos_);  // feet on the ground, velocity zero
@@ -378,6 +419,7 @@ void WorldEditor::enterPlay() {
   // Rebuild the physics world: the ball and every crate reset to their
   // placed spots and velocities.
   rebuildPhysics();
+  spawnSquads();
   lastError_.clear();
   screen_ = Screen::Play;
 }

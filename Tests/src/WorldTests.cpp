@@ -2192,3 +2192,84 @@ KIMIA_TEST(world_wind_rides_along_in_the_world_file) {
                                      old, error));
   KIMIA_REQUIRE(near(old.profile.windSpeed, 0.0));
 }
+
+// --- Stage 21: squads from the profile ---
+
+KIMIA_TEST(world_street_profile_fills_the_pitch_with_five_a_side) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  KIMIA_REQUIRE(editor.teamSize() == 5U);
+  // In the builder there is still exactly one body: the lone player.
+  KIMIA_REQUIRE(editor.squadCount() == 1U);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  // 5 a side = 10 players on the pitch, the human being one of them.
+  KIMIA_REQUIRE(editor.squadCount() == 10U);
+  const std::vector<u32> ids = editor.squadIds();
+  KIMIA_REQUIRE(ids.size() == 10U);
+  KIMIA_REQUIRE(ids[0] == 1U);
+  // The human is character 1 and plays for team 1.
+  KIMIA_REQUIRE(editor.squadTeam(1U) == 1U);
+  u32 ours = 0U;
+  u32 theirs = 0U;
+  for (const u32 id : ids) {
+    if (editor.squadTeam(id) == 1U) ++ours;
+    if (editor.squadTeam(id) == 2U) ++theirs;
+  }
+  KIMIA_REQUIRE(ours == 5U);
+  KIMIA_REQUIRE(theirs == 5U);
+  // Formation: our four team-mates on +Z, their five on -Z. The street court
+  // is 16 long, so the rows sit at z = +/- 8/3.
+  const f64 row = 16.0 / 2.0 / 3.0;
+  for (const u32 id : ids) {
+    if (id == 1U) continue;
+    const Vec3 spot = editor.squadPosition(id);
+    KIMIA_REQUIRE(near(spot.z, editor.squadTeam(id) == 1U ? row : -row, 1e-9));
+    // Inside the 5-wide court, feet on the floor.
+    KIMIA_REQUIRE(spot.x > -2.5);
+    KIMIA_REQUIRE(spot.x < 2.5);
+    KIMIA_REQUIRE(near(spot.y, editor.playerPosition().y, 1e-9));
+  }
+  // Nobody is standing on anybody: every slot is a different x per row.
+  KIMIA_REQUIRE(!near3(editor.squadPosition(ids[1]), editor.squadPosition(ids[2])));
+  KIMIA_REQUIRE(editor.squadTeam(999U) == 0U);            // unknown id
+  KIMIA_REQUIRE(near3(editor.squadPosition(999U), Vec3{0.0, 0.0, 0.0}));
+}
+
+KIMIA_TEST(world_grass_is_eleven_a_side_and_golf_stays_alone) {
+  WorldEditor grass;
+  createWorldFor(grass, "grass");
+  KIMIA_REQUIRE(grass.teamSize() == 11U);
+  addGolfBall(grass, Vec3{0.0, 0.0, 0.0});
+  exitPlace(grass);
+  grass.choose(3);  // PLAY
+  KIMIA_REQUIRE(grass.squadCount() == 22U);
+
+  // Golf is «team 1»: a single player, exactly as before stage 21.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(golf.teamSize() == 1U);
+  addGolfBall(golf, Vec3{0.0, 0.0, 6.0});
+  exitPlace(golf);
+  golf.choose(3);  // PLAY
+  KIMIA_REQUIRE(golf.squadCount() == 1U);
+  KIMIA_REQUIRE(golf.squadTeam(1U) == 0U);  // no sides in golf
+}
+
+KIMIA_TEST(world_profile_team_key_round_trips_and_clamps) {
+  kimia::GameProfile out;
+  std::string error;
+  // Parse a squad size out of profile text.
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nteam 7\n", out, error));
+  KIMIA_REQUIRE(out.teamSize == 7U);
+  // Nonsense is clamped into 1..16, never left to spawn a crowd.
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nteam 900\n", out, error));
+  KIMIA_REQUIRE(out.teamSize == kimia::kProfileTeamMax);
+  KIMIA_REQUIRE(out.teamSize == 16U);
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nteam 0\n", out, error));
+  KIMIA_REQUIRE(out.teamSize == 1U);
+  // An old profile with no team line is a single player.
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\n", out, error));
+  KIMIA_REQUIRE(out.teamSize == 1U);
+}

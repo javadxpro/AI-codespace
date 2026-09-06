@@ -13,3 +13,5 @@ kick 2.000000 0.500000 1.200000
 mode kick
 scoring gate
 par 3
+wind 0.000000 0.000000
+team 4
