@@ -3183,3 +3183,202 @@ KIMIA_TEST(world_ai_skill_reaches_the_simulation_from_the_profile) {
   // Half a second of chasing: the sharp one is measurably closer.
   KIMIA_REQUIRE(chaseGap(1.0) < chaseGap(0.3));
 }
+
+// --- Stage 28: match HUD, camera director and sound cues ---
+
+KIMIA_TEST(world_camera_style_comes_from_the_profile) {
+  // Each game asks for the camera that suits it, and the engine — not the
+  // app — is what answers.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(golf.cameraStyle() == kimia::CameraStyle::Chase);
+
+  WorldEditor street;
+  streetAtTheFeet(street);
+  KIMIA_REQUIRE(street.cameraStyle() == kimia::CameraStyle::Broadcast);
+
+  WorldEditor grass;
+  createWorldFor(grass, "grass");
+  KIMIA_REQUIRE(grass.cameraStyle() == kimia::CameraStyle::Broadcast);
+
+  // The sandbox keeps the plain editor orbit it always had.
+  WorldEditor sandbox = editorWithWorld();
+  KIMIA_REQUIRE(sandbox.cameraStyle() == kimia::CameraStyle::Orbit);
+}
+
+KIMIA_TEST(world_only_a_chase_camera_swings_behind_the_aim) {
+  // A broadcast camera holds its side of the pitch. Swinging it around
+  // every time the player turns would be unwatchable.
+  WorldEditor street;
+  streetAtTheFeet(street);
+  KIMIA_REQUIRE(!street.cameraFollowsAim());
+
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  addGolfBall(golf, Vec3{0.0, 0.0, 0.0});
+  exitPlace(golf);
+  golf.choose(3);  // PLAY
+  KIMIA_REQUIRE(golf.playing());
+  KIMIA_REQUIRE(golf.cameraFollowsAim());
+
+  // Nothing follows anything outside play.
+  WorldEditor idle;
+  createWorldFor(idle, "golf");
+  KIMIA_REQUIRE(!idle.playing());
+  KIMIA_REQUIRE(!idle.cameraFollowsAim());
+}
+
+KIMIA_TEST(world_broadcast_camera_pulls_back_as_the_play_spreads_out) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(0.0);  // measure the camera, not a defender's run
+  const f64 resting = 7.0;
+
+  // Ball at the player's feet: nothing to spread out, so it sits at its
+  // closest.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  const f64 tight = editor.cameraDistance(resting);
+  KIMIA_REQUIRE(near(tight, kimia::kCameraBroadcastNear, 1e-9));
+
+  // A long ball: the camera must pull back or half the play leaves frame.
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 6.0});
+  const f64 wide = editor.cameraDistance(resting);
+  KIMIA_REQUIRE(near(wide, kimia::kCameraBroadcastNear + 6.0 * kimia::kCameraBroadcastPerMeter, 1e-9));
+  KIMIA_REQUIRE(wide > tight);
+
+  // It never pulls back forever, or the players become specks.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, -7.5});
+  KIMIA_REQUIRE(editor.cameraDistance(resting) <= kimia::kCameraBroadcastFar);
+
+  // A chase camera ignores all of this and keeps the distance it is given.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  addGolfBall(golf, Vec3{0.0, 0.0, 0.0});
+  exitPlace(golf);
+  golf.choose(3);
+  KIMIA_REQUIRE(near(golf.cameraDistance(resting), resting, 1e-12));
+}
+
+KIMIA_TEST(world_broadcast_camera_frames_between_ball_and_player) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(0.0);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 6.0});
+  // Biased toward the ball, because that is what the viewer is watching,
+  // but not ON the ball — the player has to stay in shot.
+  const Vec3 target = editor.cameraTarget();
+  KIMIA_REQUIRE(near(target.z, 6.0 * kimia::kCameraBallBias, 1e-9));
+  KIMIA_REQUIRE(target.z < 6.0);
+  KIMIA_REQUIRE(target.z > 3.0);
+
+  // A chase camera just watches the ball itself.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  addGolfBall(golf, Vec3{0.0, 0.0, 0.0});
+  exitPlace(golf);
+  golf.choose(3);
+  golf.setBallPosition(Vec3{1.0, kGolfBallRadius, 2.0});
+  KIMIA_REQUIRE(near3(golf.cameraTarget(), golf.ballPosition(), 1e-12));
+}
+
+KIMIA_TEST(world_match_hud_counts_down_the_closing_seconds) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  editor.setAiSkill(0.0);
+  editor.choose(0);
+  editor.choose(1);
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.matchMode());
+
+  // Early on there is no warning: a 5 minute match has plenty left.
+  const auto hasLastLine = [](const std::vector<std::string>& lines) {
+    for (const std::string& line : lines) {
+      if (line.rfind("LAST ", 0) == 0) return true;
+    }
+    return false;
+  };
+  KIMIA_REQUIRE(!hasLastLine(editor.hudLines()));
+
+  // Run down to the closing stretch.
+  const f64 target = kimia::kMatchFinalWhistleWarning - 5.0;
+  while (editor.matchClock() > target && !editor.matchOver()) editor.update(0.1);
+  const std::vector<std::string> lines = editor.hudLines();
+  KIMIA_REQUIRE(hasLastLine(lines));
+  // The score and clock are still there too.
+  bool hasScore = false;
+  for (const std::string& line : lines) {
+    if (line.find("MA 0 - 0 ANHA") != std::string::npos) hasScore = true;
+  }
+  KIMIA_REQUIRE(hasScore);
+}
+
+KIMIA_TEST(world_match_blows_a_whistle_at_full_time) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  editor.setAiSkill(0.0);
+  editor.choose(0);
+  editor.choose(1);
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);
+  KIMIA_REQUIRE(editor.matchMode());
+  editor.drainEvents();  // ignore whatever kick-off produced
+
+  // Run the clock out.
+  while (!editor.matchOver()) editor.update(1.0);
+  const std::vector<WorldEditor::GameEvent> events = editor.drainEvents();
+  bool whistle = false;
+  bool roundOver = false;
+  for (const WorldEditor::GameEvent event : events) {
+    if (event == WorldEditor::GameEvent::Whistle) whistle = true;
+    if (event == WorldEditor::GameEvent::RoundOver) roundOver = true;
+  }
+  // Full time is a whistle AND the end-of-round cue, in that order.
+  KIMIA_REQUIRE(whistle);
+  KIMIA_REQUIRE(roundOver);
+}
+
+KIMIA_TEST(world_a_completed_trick_has_its_own_sound_cue) {
+  // A trick used to share the generic kick sound, which made showing off
+  // sound like an ordinary touch.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(0.0);
+  editor.drainEvents();
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Juggle));
+  editor.update(kimia::kTrickJuggleTime + 0.01);
+  KIMIA_REQUIRE(editor.styleScore() == kimia::kTrickJugglePoints);
+
+  const std::vector<WorldEditor::GameEvent> events = editor.drainEvents();
+  bool trick = false;
+  for (const WorldEditor::GameEvent event : events) {
+    if (event == WorldEditor::GameEvent::Trick) trick = true;
+  }
+  KIMIA_REQUIRE(trick);
+}
+
+KIMIA_TEST(world_a_tackle_reports_its_own_sound_cue) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(1.0);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+  editor.drainEvents();
+
+  bool tackle = false;
+  for (i32 i = 0; i < 180 && !tackle; ++i) {
+    editor.update(1.0 / 60.0);
+    for (const WorldEditor::GameEvent event : editor.drainEvents()) {
+      if (event == WorldEditor::GameEvent::Tackle) tackle = true;
+    }
+  }
+  KIMIA_REQUIRE(tackle);
+}

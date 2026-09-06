@@ -173,7 +173,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "weather 0.000000 0.250000\n"
                 "time 17.000000\n"
                 "tricks on\n"
-                "ai 0.600000\n");
+                "ai 0.600000\n"
+                "camera broadcast\n");
   // And the golf text.
   const std::string golf = ProfileIO::save(kimia::builtinProfiles()[0]);
   KIMIA_REQUIRE(golf ==
@@ -194,7 +195,8 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
                 "weather 0.000000 0.000000\n"
                 "time 9.000000\n"
                 "tricks off\n"
-                "ai 0.000000\n");
+                "ai 0.000000\n"
+                "camera chase\n");
 }
 
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {

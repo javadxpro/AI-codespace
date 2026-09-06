@@ -74,6 +74,21 @@ inline constexpr f64 kAiSupportGap = 3.0;
 // Below this skill the computer players do not move at all.
 inline constexpr f64 kAiIdleSkill = 0.05;
 
+// --- Camera director (stage 28) ---
+// How fast the camera swings to follow the aim, 1/s.
+inline constexpr f64 kCameraFollowRate = 6.0;
+// A broadcast camera pulls back as the ball and player separate: this is
+// the closest it ever gets, and how much further per meter between them.
+inline constexpr f64 kCameraBroadcastNear = 7.0;
+inline constexpr f64 kCameraBroadcastPerMeter = 0.9;
+inline constexpr f64 kCameraBroadcastFar = 18.0;
+// The match clock blows a whistle at kick-off and at full time, and warns
+// when the last stretch begins.
+inline constexpr f64 kMatchFinalWhistleWarning = 30.0;
+// A broadcast shot frames the midpoint of the play, biased toward the ball
+// because that is what the viewer is watching.
+inline constexpr f64 kCameraBallBias = 0.65;
+
 // --- Weather and the clock (stage 24) ---
 inline constexpr f64 kWorldSunrise = 6.0;   // before this it is night
 inline constexpr f64 kWorldSunset = 19.0;   // from this hour it is night
@@ -466,8 +481,23 @@ public:
   // Every update() that shoots / kicks / scores / ends the round pushes one
   // event; the app drains them once per frame and plays the sounds it has.
   // Events survive until drained so a slow frame never loses one.
-  enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver };
+  enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver, Whistle, Tackle, Trick };
   std::vector<GameEvent> drainEvents();
+
+  // --- Camera director (stage 28) ---
+  // The camera style this world's profile asks for.
+  CameraStyle cameraStyle() const { return world_.profile.camera; }
+  // Where the camera should be looking. Chase and orbit watch the ball; a
+  // broadcast camera frames the play between ball and player, biased
+  // toward the ball.
+  Vec3 cameraTarget() const;
+  // How far back the camera should sit. Fixed for orbit/chase; a broadcast
+  // camera pulls back as the play spreads out, so nothing leaves the frame.
+  f64 cameraDistance(f64 restingDistance) const;
+  // The yaw the camera should ease toward, and whether it should bother.
+  // A chase camera follows the aim; a broadcast camera stays on its side
+  // of the pitch like a real touchline camera rather than spinning about.
+  bool cameraFollowsAim() const;
 
   // --- Camera hint (shot mode) ---
   // Where a chase camera should stand: behind the ball, opposite the aim,

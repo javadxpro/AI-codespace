@@ -72,6 +72,13 @@ inline constexpr f64 kProfileWetMax = 1.0;
 inline constexpr f64 kProfileHourMax = 24.0;
 inline constexpr f64 kProfileAiMax = 1.0;
 
+// How the camera follows the play (stage 28).
+//   orbit     - the plain editor orbit, parked over the action
+//   chase     - swings behind the aim: the golf/shot camera
+//   broadcast - a touchline camera that pulls back to keep ball and
+//               player both in frame, like a televised match
+enum class CameraStyle { Orbit, Chase, Broadcast };
+
 // Squad size limits: 1 = a single player (golf, sandbox), 11 = a full grass
 // football side. The ceiling keeps a typo from spawning a crowd the phone
 // cannot draw.
@@ -130,6 +137,10 @@ struct GameProfile {
   // exactly how every squad behaved until now, so an old profile plays
   // unchanged. 1 = they chase hard and hold their shape.
   f64 aiSkill = 0.0;
+  // Camera style (stage 28). A golf round wants the aim-following chase it
+  // has always had; a match wants a broadcast camera that pulls back to
+  // keep the play in frame. Sandbox keeps the plain editor orbit.
+  CameraStyle camera = CameraStyle::Orbit;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -141,6 +152,8 @@ const char* environmentName(EnvironmentKind kind);  // "grass" / "sand" / "night
 bool environmentFromName(const std::string& name, EnvironmentKind& out);
 const char* playModeName(PlayMode mode);  // "kick" / "shot"
 bool playModeFromName(const std::string& name, PlayMode& out);
+const char* cameraStyleName(CameraStyle style);  // "orbit" / "chase" / "broadcast"
+bool cameraStyleFromName(const std::string& name, CameraStyle& out);
 const char* scoringName(Scoring scoring);  // "gate" / "hole"
 bool scoringFromName(const std::string& name, Scoring& out);
 
@@ -172,6 +185,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   match 300.000000             (match length in seconds, 0 = no clock)
 //   tricks on                    (skill moves + style points: on/off)
 //   ai 0.700000                  (computer skill, 0 = statues .. 1 = sharp)
+//   camera broadcast             (orbit / chase / broadcast)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

@@ -113,6 +113,31 @@ bool playModeFromName(const std::string& name, PlayMode& out) {
   return false;
 }
 
+const char* cameraStyleName(CameraStyle style) {
+  switch (style) {
+    case CameraStyle::Chase: return "chase";
+    case CameraStyle::Broadcast: return "broadcast";
+    case CameraStyle::Orbit: break;
+  }
+  return "orbit";
+}
+
+bool cameraStyleFromName(const std::string& name, CameraStyle& out) {
+  if (name == "orbit") {
+    out = CameraStyle::Orbit;
+    return true;
+  }
+  if (name == "chase") {
+    out = CameraStyle::Chase;
+    return true;
+  }
+  if (name == "broadcast") {
+    out = CameraStyle::Broadcast;
+    return true;
+  }
+  return false;
+}
+
 const char* scoringName(Scoring scoring) { return scoring == Scoring::Hole ? "hole" : "gate"; }
 
 bool scoringFromName(const std::string& name, Scoring& out) {
@@ -146,6 +171,7 @@ std::vector<GameProfile> builtinProfiles() {
   golf.kickBase = 2.5;
   golf.kickSpeedScale = 13.5;
   golf.kickUp = 0.0;
+  golf.camera = CameraStyle::Chase;  // the aim-following shot camera
   golf.mode = PlayMode::Shot;
   golf.scoring = Scoring::Hole;
   golf.par = 3U;
@@ -170,6 +196,7 @@ std::vector<GameProfile> builtinProfiles() {
   street.teamSize = 5U;         // ۵ در برابر ۵
   street.matchSeconds = 300.0;  // ۵ دقیقه
   street.tricks = true;         // the alley is where showboating belongs
+  street.camera = CameraStyle::Broadcast;
   street.aiSkill = 0.6;         // alley opposition: keen, not professional
   // A street game after school: late afternoon, and the alley is still
   // damp from earlier rain even though it has stopped.
@@ -194,6 +221,7 @@ std::vector<GameProfile> builtinProfiles() {
   grass.kickUp = 0.8;
   grass.teamSize = 11U;        // ۱۱ در برابر ۱۱
   grass.matchSeconds = 600.0;  // ۱۰ دقیقه
+  grass.camera = CameraStyle::Broadcast;
   grass.aiSkill = 0.85;        // a serious fixture: they close you down
   // A proper evening fixture under lights, with a bit of drizzle: the
   // ball runs on off a wet pitch.
@@ -219,6 +247,7 @@ std::vector<GameProfile> builtinProfiles() {
   battleground.kickUp = 1.2;
   battleground.teamSize = 4U;         // تیم‌های ۴ نفره
   battleground.matchSeconds = 420.0;  // ۷ دقیقه
+  battleground.camera = CameraStyle::Chase;
   battleground.aiSkill = 0.7;
   battleground.hour = 20.5;  // dusk raid
   profiles.push_back(battleground);
@@ -277,6 +306,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back("time " + formatFixed6(profile.hour));
   out.push_back(std::string("tricks ") + (profile.tricks ? "on" : "off"));
   out.push_back("ai " + formatFixed6(profile.aiSkill));
+  out.push_back(std::string("camera ") + cameraStyleName(profile.camera));
   return out;
 }
 
@@ -420,6 +450,13 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 hour = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
     out.hour = clampF64(hour, 0.0, kProfileHourMax);
+    return true;
+  }
+  if (key == "camera") {
+    std::string value;
+    CameraStyle style = CameraStyle::Orbit;
+    if (!(tokens >> value) || !cameraStyleFromName(value, style)) return false;
+    out.camera = style;
     return true;
   }
   if (key == "ai") {

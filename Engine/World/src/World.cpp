@@ -605,6 +605,8 @@ void WorldEditor::update(f64 hostSeconds) {
         matchClock_ = 0.0;
         matchOver_ = true;
         screen_ = Screen::RoundEnd;
+        // The final whistle, then the end-of-round cue.
+        events_.push_back(GameEvent::Whistle);
         events_.push_back(GameEvent::RoundOver);
         SphereBody* deadBall = physics_.sphere(ballId_);
         if (deadBall != nullptr) deadBall->velocity = Vec3{0.0, 0.0, 0.0};
@@ -872,7 +874,10 @@ void WorldEditor::resetBall() {
     strokes_ = 0U;
     startRound();
   }
-  if (matchMode() && !matchOver_) kickOff();
+  if (matchMode() && !matchOver_) {
+    kickOff();
+    events_.push_back(GameEvent::Whistle);  // the restart whistle
+  }
   if (screen_ == Screen::Goal || (screen_ == Screen::RoundEnd && !matchOver_)) screen_ = Screen::Play;
 }
 
@@ -1101,7 +1106,48 @@ void WorldEditor::updateTrick(f64 seconds) {
   }
   styleScore_ += trickPoints(finished);
   lastTrick_ = finished;
-  events_.push_back(GameEvent::Kick);
+  events_.push_back(GameEvent::Trick);
+}
+
+// --- Camera director (stage 28) ---
+//
+// The app used to decide all of this inline, which meant none of it could
+// be tested. It lives here now: the app just asks where to look and how
+// far back to stand.
+
+Vec3 WorldEditor::cameraTarget() const {
+  if (placing() || movingObject()) return Vec3{ghost_.x, 0.2, ghost_.z};
+  if (!playing()) {
+    const EntityData* selected = selectedEntity();
+    if (selectingObject() && selected != nullptr) return selected->transform.position;
+    return Vec3{0.0, 0.2, 0.0};
+  }
+  const Vec3 ball = ballPosition();
+  if (world_.profile.camera != CameraStyle::Broadcast) return ball;
+  // Broadcast: frame the play between the ball and the player, weighted
+  // toward the ball because that is what the viewer is actually watching.
+  return Vec3{ball.x * kCameraBallBias + playerPos_.x * (1.0 - kCameraBallBias), ball.y,
+              ball.z * kCameraBallBias + playerPos_.z * (1.0 - kCameraBallBias)};
+}
+
+f64 WorldEditor::cameraDistance(f64 restingDistance) const {
+  if (!playing() || world_.profile.camera != CameraStyle::Broadcast) return restingDistance;
+  // Pull back as the ball and the player separate, so a long ball never
+  // leaves half the play off screen.
+  const Vec3 ball = ballPosition();
+  const f64 dx = ball.x - playerPos_.x;
+  const f64 dz = ball.z - playerPos_.z;
+  const f64 spread = std::sqrt(dx * dx + dz * dz);
+  const f64 wanted = kCameraBroadcastNear + spread * kCameraBroadcastPerMeter;
+  return std::min(kCameraBroadcastFar, std::max(kCameraBroadcastNear, wanted));
+}
+
+bool WorldEditor::cameraFollowsAim() const {
+  if (!playing() || roundOver()) return false;
+  // Only a chase camera swings around behind the aim. A broadcast camera
+  // holds its side of the pitch, like a real touchline camera: swinging it
+  // around behind the player every time they turn would be unwatchable.
+  return world_.profile.camera == CameraStyle::Chase;
 }
 
 // --- Computer players (stage 27) ---
@@ -1247,6 +1293,7 @@ void WorldEditor::updateAi(f64 seconds) {
     const f64 forward = attackDirectionZ(body->team);
     ball->velocity.x = ballDx * skill;
     ball->velocity.z = forward * kAiTacklePush * skill;
+    events_.push_back(GameEvent::Tackle);
   }
 }
 
@@ -1489,6 +1536,11 @@ std::vector<std::string> WorldEditor::hudLines() const {
     }
     lines.push_back(matchScoreText() + "  " + matchClockText());
     if (screen_ == Screen::Goal) lines.push_back("GOAL!");
+    // The closing stretch: tell the player the clock is nearly gone, the
+    // way a stadium clock turns red.
+    if (!matchOver_ && matchClock_ > 0.0 && matchClock_ <= kMatchFinalWhistleWarning) {
+      lines.push_back("LAST " + std::to_string(static_cast<i64>(std::ceil(matchClock_ - 1e-9))) + "S");
+    }
     const std::string matchWind = windHudText();
     if (!matchWind.empty()) lines.push_back(matchWind);
     {

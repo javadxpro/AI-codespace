@@ -63,7 +63,6 @@ const Vec3 kPowerFill{1.0, 0.55, 0.1};
 const Vec3 kPowerBack{0.15, 0.15, 0.15};
 constexpr i32 kHudScale = 2;   // 10x14 pixel glyphs
 constexpr i32 kHudMargin = 8;
-constexpr f64 kChaseFollowRate = 6.0;  // 1/s: how fast the camera swings behind the aim
 
 // The on-frame HUD: game lines top-left, the power meter bottom-centre.
 // Drawn into the captured frame, so it looks the same on GL and software.
@@ -108,6 +107,14 @@ void registerSounds(kimia::web::Server& server) {
       "round", AudioBuffer::concat(AudioBuffer::concat(AudioBuffer::tone(523.25, 0.15), AudioBuffer::tone(659.25, 0.15)),
                                    AudioBuffer::tone(783.99, 0.35))
                    .encodeWAV());
+  // Stage 28. A referee's whistle is a shrill held note; a tackle is a
+  // duller, lower thock than a clean kick; a completed trick is a bright
+  // little rising flourish.
+  server.registerSound("whistle", AudioBuffer::tone(2100.0, 0.30, 0.5, 2400.0).encodeWAV());
+  server.registerSound("tackle", AudioBuffer::thock(0.20, 320.0).encodeWAV());
+  server.registerSound("trick",
+                       AudioBuffer::concat(AudioBuffer::tone(880.0, 0.09), AudioBuffer::tone(1318.5, 0.16))
+                           .encodeWAV());
 }
 
 const char* soundFor(WorldEditor::GameEvent event) {
@@ -117,6 +124,9 @@ const char* soundFor(WorldEditor::GameEvent event) {
     case WorldEditor::GameEvent::Holed: return "holed";
     case WorldEditor::GameEvent::Goal: return "goal";
     case WorldEditor::GameEvent::RoundOver: return "round";
+    case WorldEditor::GameEvent::Whistle: return "whistle";
+    case WorldEditor::GameEvent::Tackle: return "tackle";
+    case WorldEditor::GameEvent::Trick: return "trick";
   }
   return "shot";
 }
@@ -237,6 +247,28 @@ void addAimIndicator(RenderScene& scene, const WorldEditor& editor, const MeshDa
     scene.objects.push_back(
         {&cube, Mat4::translation(Vec3{at.x, marker * 0.5, at.z}) * Mat4::scaling(Vec3{marker, marker, marker}),
          kGhostColor, 0.9});
+  }
+}
+
+// The squads (stage 21) were spawned in physics but never actually DRAWN,
+// which nobody noticed while they stood still. Now that stage 27 has them
+// running about, an invisible opposition makes a match unplayable. Each
+// character is a coloured box: our side in blue, theirs in red.
+void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cube) {
+  if (!editor.playing() || editor.squadCount() <= 1U) return;
+  const Vec3 ourColor{0.25, 0.45, 0.95};
+  const Vec3 theirColor{0.90, 0.25, 0.25};
+  const Vec3 keeperColor{0.95, 0.85, 0.20};  // the keeper stands out
+  for (const kimia::u32 id : editor.squadIds()) {
+    // The human is already drawn as the Player entity in the scene.
+    if (id == kimia::kPrimaryCharacter) continue;
+    const Vec3 at = editor.squadPosition(id);
+    const kimia::u32 team = editor.squadTeam(id);
+    const bool keeper = id == editor.aiKeeper(team);
+    const Vec3 color = keeper ? keeperColor : (team == 1U ? ourColor : theirColor);
+    scene.objects.push_back({&cube,
+                             Mat4::translation(at) * Mat4::scaling(Vec3{0.6, 1.0, 0.6}),
+                             color, 1.0});
   }
 }
 
@@ -378,6 +410,10 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
   kimia::OrbitCamera orbitCamera;  // arrow keys orbit, q/e zoom, c resets
+  // The distance the player chose by hand. A broadcast camera moves
+  // orbitCamera.distance around every frame, so the manual zoom is
+  // remembered here and used as the resting point to work from.
+  f64 restingCameraDistance = orbitCamera.distance;
   const auto frameStart = std::chrono::steady_clock::now();
   auto lastTime = frameStart;
   const std::chrono::microseconds frameBudget(33333);  // ~30 fps over the web
@@ -442,6 +478,7 @@ int main(int argc, char** argv) {
       if (input.pressed(Key::Q)) orbitCamera.zoom(1.0 / 1.2);
       if (input.pressed(Key::E)) orbitCamera.zoom(1.2);
       if (input.pressed(Key::C)) orbitCamera.reset();
+      restingCameraDistance = orbitCamera.distance;  // remember the hand-set zoom
     } else {
       orbitCamera.orbit(input.lookX * 0.006, input.lookY * 0.006);
     }
@@ -502,6 +539,7 @@ int main(int argc, char** argv) {
     // Ghost preview while placing, selection markers while managing, the
     // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
+    addSquads(scene, editor, cubeMesh);
     addAimIndicator(scene, editor, cubeMesh);
     addCurrentCupFlag(scene, editor, cubeMesh);
     if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
@@ -510,20 +548,19 @@ int main(int argc, char** argv) {
 
     // Camera: above the ghost while placing/moving, above the ball in play,
     // an overview of the field otherwise; the orbit offset persists.
-    Vec3 target = Vec3{0.0, 0.2, 0.0};
-    if (editor.placing() || editor.movingObject()) {
-      target = Vec3{editor.ghostPosition().x, 0.2, editor.ghostPosition().z};
-    } else if (editor.playing()) {
-      target = editor.ballPosition();
-      if (editor.chaseCameraActive()) {
-        // Chase camera: swing behind the ball, looking along the aim. A look
-        // drag still peeks around; the camera eases back behind the aim.
-        orbitCamera.yaw += angleDelta(orbitCamera.yaw, editor.aimYaw()) * std::min(1.0, kChaseFollowRate * dt);
-      }
-    } else if (editor.selectingObject() && editor.selectedEntity() != nullptr) {
-      target = editor.selectedEntity()->transform.position;
+    // The engine decides where to look and how far back to stand (stage
+    // 28), so the same framing is testable and identical on every path.
+    if (editor.cameraFollowsAim()) {
+      // Chase camera: ease around behind the aim. A look drag still peeks
+      // around; the camera settles back on its own.
+      orbitCamera.yaw +=
+          angleDelta(orbitCamera.yaw, editor.aimYaw()) * std::min(1.0, kimia::kCameraFollowRate * dt);
     }
-    orbitCamera.center = target;
+    orbitCamera.center = editor.cameraTarget();
+    // A broadcast camera pulls back as the play spreads out; ease toward it
+    // so the zoom never snaps.
+    const f64 wantedDistance = editor.cameraDistance(restingCameraDistance);
+    orbitCamera.distance += (wantedDistance - orbitCamera.distance) * std::min(1.0, kimia::kCameraFollowRate * dt);
     const Vec3 eye = orbitCamera.eye();
     scene.cameraPosition = eye;
     scene.view = Mat4::lookAt(eye, orbitCamera.target(), Vec3{0.0, 1.0, 0.0});
