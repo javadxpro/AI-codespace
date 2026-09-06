@@ -1,6 +1,8 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/Skeleton.h>
 #include <kimia/World.h>
+#include <fstream>
+#include <filesystem>
 #include <kimia/WorldIO.h>
 
 #include <algorithm>
@@ -1237,6 +1239,64 @@ void WorldEditor::updateTrick(f64 seconds) {
   styleScore_ += trickPoints(finished);
   lastTrick_ = finished;
   events_.push_back(GameEvent::Trick);
+}
+
+// --- Publishing ---
+
+bool WorldEditor::startPublished(const std::string& path, std::string& error) {
+  if (!loadWorld(path, error)) return false;
+  playOnly_ = true;
+  enterPlay();
+  return true;
+}
+
+std::string WorldEditor::publish(const std::string& folder, std::string& error) {
+  if (!hasWorld_) {
+    error = "there is no world to publish";
+    return std::string();
+  }
+  const std::string out = folder.empty() ? std::string("published") : folder;
+  // The engine only writes files it was asked to write, and only inside
+  // the folder it was given.
+  std::error_code failed;
+  std::filesystem::create_directories(out, failed);
+  if (failed) {
+    error = "cannot make the folder '" + out + "'";
+    return std::string();
+  }
+
+  // The world carries EVERYTHING — scene, rules, panels, blueprints of
+  // the objects in it — so a published game is one file plus a runner.
+  const std::string worldFile = out + "/game.kimia";
+  std::string saveError;
+  if (!saveWorld(worldFile, saveError)) {
+    error = saveError.empty() ? std::string("could not write the world") : saveError;
+    return std::string();
+  }
+
+  // A player should not have to know any of the engine's options.
+  std::ofstream runner(out + "/play.sh", std::ios::binary);
+  if (!runner) {
+    error = "cannot write the start script";
+    return std::string();
+  }
+  runner << "#!/usr/bin/env bash\n";
+  runner << "# " << world_.name << " — made with KIMIA\n";
+  runner << "# Start the game, then open http://127.0.0.1:8080 in a browser.\n";
+  runner << "cd \"$(dirname \"$0\")\"\n";
+  runner << "exec ./kimia_world --play game.kimia --port \"${1:-8080}\"\n";
+  runner.close();
+
+  std::ofstream readme(out + "/README.txt", std::ios::binary);
+  if (readme) {
+    readme << world_.name << "\n\n";
+    readme << "To play:\n";
+    readme << "  1. copy the kimia_world program into this folder\n";
+    readme << "  2. bash play.sh\n";
+    readme << "  3. open http://127.0.0.1:8080\n\n";
+    readme << "There is no editor in a published game: it opens straight into play.\n";
+  }
+  return out;
 }
 
 // --- The game's own interface ---

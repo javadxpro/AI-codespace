@@ -605,6 +605,21 @@ public:
   // component attached in the editor can respond to it with no code.
   static const char* eventTriggerName(GameEvent event);
 
+  // --- Publishing: handing the game to somebody else ---
+  //
+  // A published game opens straight into play. There is no builder, no
+  // catalog and no menus: the person you gave it to is a PLAYER, not an
+  // editor, and every editor affordance on screen is a way to break the
+  // thing you made.
+  void setPlayOnly(bool playOnly) { playOnly_ = playOnly; }
+  bool playOnly() const { return playOnly_; }
+  // Opens a world and drops straight into PLAY. Used by a published
+  // game's start-up, and by the editor's own preview.
+  bool startPublished(const std::string& path, std::string& error);
+  // Writes the game into `folder`: the world file plus a one-line script
+  // that starts it. Returns the folder written, or empty with `error` set.
+  std::string publish(const std::string& folder, std::string& error);
+
   // --- The game's own interface ---
   // A HUD the user laid out, rather than the fixed corner text the engine
   // writes for its own football match.
@@ -907,6 +922,7 @@ private:
 
   // Visual logic state.
   Library library_;
+  bool playOnly_ = false;
   std::vector<std::string> hudEvents_;
   std::string currentStage_ = "Main";
 

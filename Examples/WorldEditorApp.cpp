@@ -425,6 +425,7 @@ int main(int argc, char** argv) {
   std::string assetsDir = "assets";
   std::string profilesDir = "profiles";
   std::string brandingDir;  // empty = look in Branding, ../Branding, ../../Branding
+  std::string playWorld;    // non-empty = a published game, not the editor
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
@@ -437,6 +438,10 @@ int main(int argc, char** argv) {
       profilesDir = argv[++i];
     } else if (arg == "--branding" && i + 1 < argc) {
       brandingDir = argv[++i];
+    } else if (arg == "--play" && i + 1 < argc) {
+      // A published game: open this world and go straight into play, with
+      // no builder anywhere on screen.
+      playWorld = argv[++i];
     } else if (arg == "--no-intro") {
       brandingDir = "-";  // a folder that cannot exist: skips the film
     } else if (arg == "--version") {
@@ -455,6 +460,9 @@ int main(int argc, char** argv) {
   }
 
   WorldEditor editor;
+  // A published game opens straight into its world; the editor opens on
+  // its menu as before.
+  bool publishedGame = false;
   // The Workbench API runs on the server's accept thread while this loop
   // is updating the world, so both sides take this lock. Without it a
   // request landing mid-update would be a genuine data race.
@@ -462,6 +470,15 @@ int main(int argc, char** argv) {
   editor.setWorldPath(worldPath);
   editor.setImportDirectory(assetsDir);
   editor.setProfileDirectory(profilesDir);  // built-ins + *.kimiaprofile files
+  if (!playWorld.empty()) {
+    std::string startError;
+    if (editor.startPublished(playWorld, startError)) {
+      publishedGame = true;
+    } else {
+      std::printf("cannot open the game '%s': %s\n", playWorld.c_str(), startError.c_str());
+      return 2;
+    }
+  }
 
   EngineOptions options;
   options.headless = true;
@@ -492,10 +509,16 @@ int main(int argc, char** argv) {
       "window.addEventListener('keyup',function(e){kmd(e,false);});";
 
   engine.server()->stop();
-  engine.server()->start(options.webPort, kimia::web::makePageHtml(
-      "KIMIA World", {}, keymapJs,
-      "everything is menus: tap 1-9 for the options, arrows move, Shift = fine, r resets, b opens the menu, "
-      "Space = jump (or hold to charge a shot), hold c = dribble, hold q/e = curl, p = pass"));
+  engine.server()->start(
+      options.webPort,
+      kimia::web::makePageHtml(
+          publishedGame ? editor.world().name : std::string("KIMIA World"), {}, keymapJs,
+          publishedGame
+              ? std::string("arrows move, Space = jump, and the pads below are your controls")
+              : std::string("everything is menus: tap 1-9 for the options, arrows move, Shift = fine, "
+                            "r resets, b opens the menu, Space = jump (or hold to charge a shot), "
+                            "hold c = dribble, hold q/e = curl, p = pass"),
+          !publishedGame));
   // The intro film, if the Branding folder shipped with this build.
   const bool intro = kimia::web::loadIntroFrom(*engine.server(), brandingDir);
   std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
@@ -518,9 +541,17 @@ int main(int argc, char** argv) {
   //
   // The handler runs on the server's accept thread while the main loop is
   // updating the world, so it takes the same lock the frame loop uses.
-  engine.server()->setPage("/bench", kimia::studio::benchPage());
+  // A published game serves NO editor. Leaving /bench reachable would let
+  // anyone you gave the game to open the builder and take it apart.
+  if (!publishedGame) {
+    engine.server()->setPage("/bench", kimia::studio::benchPage());
+  }
   engine.server()->setApiHandler(
-      [&editor, &editorMutex](const std::string& path, const std::map<std::string, std::string>& params) {
+      [&editor, &editorMutex, publishedGame](const std::string& path,
+                                             const std::map<std::string, std::string>& params) {
+        // ... and no editing API either, or the page being gone would be
+        // cosmetic rather than real.
+        if (publishedGame) return std::string("{\"ok\":false,\"error\":\"published game\"}");
         std::lock_guard<std::mutex> lock(editorMutex);
         return kimia::studio::handleApi(editor, path, params);
       });

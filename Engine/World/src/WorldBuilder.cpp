@@ -544,6 +544,27 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
 }
 
 std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
+  // A published game hands out a PLAYER's controls, never the editor's.
+  // Leaving a "menu" button on screen would let anyone you gave the game
+  // to walk straight into the builder and take it apart.
+  if (playOnly_) {
+    std::vector<std::pair<std::string, std::string>> pads;
+    if (!playing()) return pads;
+    if (arenaMode()) {
+      pads.push_back({"شلیک", "f"});
+      pads.push_back({"خشاب", "r"});
+      return pads;
+    }
+    if (shotMode()) return pads;
+    pads.push_back({"پرش", "j"});
+    if (teamSize() > 1U) pads.push_back({"پاس", "p"});
+    if (tricksEnabled()) {
+      pads.push_back({"لایی", "n"});
+      pads.push_back({"رولت", "o"});
+      pads.push_back({"روپایی", "u"});
+    }
+    return pads;
+  }
   if (cameraControlled()) {
     return {{"نزدیک‌تر", "q"}, {"دورتر", "e"}, {"دوربین پیش‌فرض", "c"}};
   }

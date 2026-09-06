@@ -306,6 +306,14 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return okJson("pressed", hit);
   }
 
+  // --- Publishing: handing the game to somebody else ---
+  if (path == "/api/publish") {
+    std::string error;
+    const std::string folder = editor.publish(param(params, "folder", "published"), error);
+    if (folder.empty()) return errorJson(error.empty() ? "could not publish" : error);
+    return okJson("folder", folder);
+  }
+
   // --- Blueprints and stages ---
 
   if (path == "/api/library") {
@@ -760,6 +768,7 @@ input[type=color]{padding:2px;height:30px}
     <div style="flex:1"></div>
     <span class="hint" id="worldName">-</span>
     <button id="rulesBtn" onclick="showRules()">Rules</button>
+    <button class="go" onclick="publish()">Publish</button>
     <button onclick="location.href='/'">Play &rsaquo;</button>
   </div>
 
@@ -1451,6 +1460,13 @@ function setVar(){
     });
 }
 
+function publish(){
+  api('publish', {folder: 'published'}, function(d){
+    if (d && d.ok){
+      flash('published to ' + d.folder + '/ \u2014 copy kimia_world in and run play.sh');
+    }
+  });
+}
 function pull(){
   api('pull', {wiring: document.getElementById('pullWire').value}, function(d){
     if (!d) return;

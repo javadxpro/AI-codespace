@@ -554,7 +554,7 @@ DrainedInput Server::drain() {
 }
 
 std::string makePageHtml(const std::string& title, const std::vector<PadButton>& padButtons,
-                         const std::string& keymapJs, const std::string& hint) {
+                         const std::string& keymapJs, const std::string& hint, bool showEditorLink) {
   std::ostringstream out;
   out << "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n";
   out << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, user-scalable=no\">\n";
@@ -595,7 +595,9 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   // A way IN to the editor. Without this the Workbench existed but there
   // was no route to it from the game page, so the only way to find it was
   // to already know the address — which is no use to anybody.
-  out << "<a id=\"benchlink\" href=\"/bench\">&#9881; Workbench &mdash; ویرایشگر</a>\n";
+  if (showEditorLink) {
+    out << "<a id=\"benchlink\" href=\"/bench\">&#9881; Workbench &mdash; ویرایشگر</a>\n";
+  }
   if (!hint.empty()) out << "<div class=\"hint\">" << htmlEscape(hint) << "</div>\n";
   out << "<img id=\"frame\" alt=\"engine frame\">\n<div id=\"stats\">waiting for first frame...</div>\n";
   out << "<div id=\"menutitle\"></div>\n";

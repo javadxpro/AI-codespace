@@ -5,6 +5,8 @@
 #include <kimia/WorldIO.h>
 #include <kimia_test.h>
 
+#include <filesystem>
+#include <fstream>
 #include <cmath>
 #include <map>
 #include <string>
@@ -766,4 +768,80 @@ KIMIA_TEST(studio_the_hud_layout_survives_a_save_and_load) {
   std::string plainText;
   kimia::WorldIO::save(plain.world(), plainText);
   KIMIA_REQUIRE(plainText.find("# panel ") == std::string::npos);
+}
+
+// --- Publishing: handing the game to somebody else ---
+
+KIMIA_TEST(studio_publishes_a_folder_that_can_be_played) {
+  // Everything a person needs to run the game, and nothing they need to
+  // understand about the engine.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-rule", {{"rulename", "score"}, {"trigger", "key"}, {"subject", "space"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "score"}, {"number", "1"}});
+  ask(editor, "/api/set-panel", {{"panel", "hud"}, {"kind", "label"}, {"text", "SCORE {score}"}});
+
+  const std::string folder = "/tmp/kimia_publish_test";
+  std::error_code ignored;
+  std::filesystem::remove_all(folder, ignored);
+  KIMIA_REQUIRE(has(ask(editor, "/api/publish", {{"folder", folder}}), "\"ok\":true"));
+
+  // The game itself, plus a way to start it without knowing any options.
+  KIMIA_REQUIRE(std::filesystem::exists(folder + "/game.kimia"));
+  KIMIA_REQUIRE(std::filesystem::exists(folder + "/play.sh"));
+  KIMIA_REQUIRE(std::filesystem::exists(folder + "/README.txt"));
+
+  // The world file carries the WHOLE game — rules and screen included —
+  // so a published game is one file plus a runner.
+  std::ifstream saved(folder + "/game.kimia", std::ios::binary);
+  const std::string body((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(body.find("# rule ") != std::string::npos);
+  KIMIA_REQUIRE(body.find("# panel ") != std::string::npos);
+
+  // The runner starts it in play mode, not in the editor.
+  std::ifstream script(folder + "/play.sh", std::ios::binary);
+  const std::string runner((std::istreambuf_iterator<char>(script)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(runner.find("--play game.kimia") != std::string::npos);
+
+  std::filesystem::remove_all(folder, ignored);
+}
+
+KIMIA_TEST(studio_a_published_game_opens_in_play_with_no_editor) {
+  // The person you gave the game to is a PLAYER. Every editor control on
+  // screen is a way for them to break what you made.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/add-rule", {{"rulename", "score"}, {"trigger", "key"}, {"subject", "space"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "score"}, {"number", "1"}});
+
+  const std::string folder = "/tmp/kimia_publish_play";
+  std::error_code ignored;
+  std::filesystem::remove_all(folder, ignored);
+  ask(editor, "/api/publish", {{"folder", folder}});
+
+  // Open it the way the runner does.
+  WorldEditor game;
+  std::string error;
+  KIMIA_REQUIRE(game.startPublished(folder + "/game.kimia", error));
+  KIMIA_REQUIRE(game.playOnly());
+  // Straight into the game, not onto a menu.
+  KIMIA_REQUIRE(game.playing());
+
+  // No route back into the builder anywhere on the pads.
+  for (const auto& pad : game.tapPad()) {
+    KIMIA_REQUIRE(pad.second != "b");
+  }
+  // And the rules the author wrote really came along.
+  game.setLogicKeys({"space"}, {});
+  game.update(1.0 / 60.0);
+  KIMIA_REQUIRE(game.logic().numberOf("score") == 1.0);
+
+  // A missing file is refused with a reason rather than opening blank.
+  WorldEditor missing;
+  std::string why;
+  KIMIA_REQUIRE(!missing.startPublished(folder + "/nope.kimia", why));
+  KIMIA_REQUIRE(!why.empty());
+  KIMIA_REQUIRE(!missing.playOnly());
+
+  std::filesystem::remove_all(folder, ignored);
 }

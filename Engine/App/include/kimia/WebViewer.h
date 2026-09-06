@@ -38,8 +38,13 @@ struct DrainedInput {
 };
 
 // Generates the touch-pad control page served on "/".
+// `showEditorLink` is false for a published game: the person you gave it
+// to is a player, and a route into the builder is a way to break it.
+// `showEditorLink` is false for a published game: the person you gave it
+// to is a player, and a route into the builder is a way to break it.
 std::string makePageHtml(const std::string& title, const std::vector<PadButton>& padButtons,
-                         const std::string& keymapJs, const std::string& hint);
+                         const std::string& keymapJs, const std::string& hint,
+                         bool showEditorLink = true);
 
 // Tiny HTTP server on plain POSIX sockets + threads (no external HTTP lib).
 // Routes:
