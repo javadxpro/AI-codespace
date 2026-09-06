@@ -172,7 +172,7 @@ F بازی. جزئیات در [Documentation/Golf.md](Documentation/Golf.md).
 ## خط لولهٔ دارایی
 
 ```bash
-./build/kimia_assets_cli model.fbx texture.png sound.mp3
+./build/bin/kimia_assets_cli model.fbx texture.png sound.mp3
 ```
 
 فرمت‌های پشتیبانی‌شده: **OBJ، FBX** (مش) — **PNG، JPG** (تصویر) — **WAV، MP3**

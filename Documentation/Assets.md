@@ -96,7 +96,7 @@
 ## ابزار خط فرمان
 
 ```bash
-./build/kimia_assets_cli model.fbx model.obj sound.ogg tone.flac
+./build/bin/kimia_assets_cli model.fbx model.obj sound.ogg tone.flac
 ```
 
 گزارش هر مش حالا متریال‌ها را هم فهرست می‌کند (نام، رنگ، تکسچر) و برای FBX
