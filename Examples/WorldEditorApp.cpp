@@ -16,12 +16,14 @@
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
+#include <kimia/Studio.h>
 #include <kimia/Version.h>
 #include <kimia/World.h>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
@@ -358,6 +360,10 @@ int main(int argc, char** argv) {
   }
 
   WorldEditor editor;
+  // The Workbench API runs on the server's accept thread while this loop
+  // is updating the world, so both sides take this lock. Without it a
+  // request landing mid-update would be a genuine data race.
+  std::mutex editorMutex;
   editor.setWorldPath(worldPath);
   editor.setImportDirectory(assetsDir);
   editor.setProfileDirectory(profilesDir);  // built-ins + *.kimiaprofile files
@@ -409,6 +415,21 @@ int main(int argc, char** argv) {
   }
   registerSounds(*engine.server());
 
+  // --- KIMIA Workbench (stage 32) ---
+  // The editor page and the API behind it. The server hands requests to
+  // the studio layer, which asks the WorldEditor real questions — so
+  // every decision stays in the engine where it is tested, and the page
+  // is only ever a view of it.
+  //
+  // The handler runs on the server's accept thread while the main loop is
+  // updating the world, so it takes the same lock the frame loop uses.
+  engine.server()->setPage("/bench", kimia::studio::benchPage());
+  engine.server()->setApiHandler(
+      [&editor, &editorMutex](const std::string& path, const std::map<std::string, std::string>& params) {
+        std::lock_guard<std::mutex> lock(editorMutex);
+        return kimia::studio::handleApi(editor, path, params);
+      });
+
   const MeshData cubeMesh = kimia::makeCube(1.0);
   const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
   const MeshData sphereMesh = kimia::makeSphere(16, 8);
@@ -437,6 +458,12 @@ int main(int argc, char** argv) {
     kimia::InputState& input = engine.input();
 
     if (input.pressed(Key::Escape)) break;
+
+    // Guards the world while this frame reads and steps it. It is released
+    // before the server is touched below: the server takes its own lock,
+    // and the API handler takes this one, so holding both at once here
+    // would be a lock-order inversion. It deadlocked the first time it ran.
+    std::unique_lock<std::mutex> editorLock(editorMutex);
     if (input.pressed(Key::Num1)) editor.choose(0);
     if (input.pressed(Key::Num2)) editor.choose(1);
     if (input.pressed(Key::Num3)) editor.choose(2);
@@ -625,7 +652,9 @@ int main(int argc, char** argv) {
     for (const auto& pad : editor.holdPad()) menu.holds.push_back({pad.first, pad.second});
     for (const auto& pad : editor.tapPad()) menu.taps.push_back({pad.first, pad.second});
 
-    engine.server()->publishFrame(std::move(png), editor.statsLine());
+    const std::string stats = editor.statsLine();
+    editorLock.unlock();  // never hold the world lock while calling the server
+    engine.server()->publishFrame(std::move(png), stats);
     engine.server()->setMenu(menu);
     engine.endFrame();
 

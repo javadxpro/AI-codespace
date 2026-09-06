@@ -258,6 +258,8 @@ struct Server::Impl {
   f64 lookY = 0.0;
   f64 zoom = 0.0;
   std::string page;
+  std::map<std::string, std::string> extraPages;  // path -> html (stage 32)
+  Server::ApiHandler api;                         // /api/* handler, may be null
   Menu menu;
   std::map<std::string, std::vector<u8>> sounds;
   std::vector<u8> intro;    // the mp4 film, empty = no intro
@@ -336,7 +338,34 @@ void handleConnection(int fd, Server::Impl* impl) {
   }
 
   std::string response;
-  if (path == "/") {
+  // --- Studio API and extra pages (stage 32) ---
+  if (path.rfind("/api/", 0) == 0) {
+    // Copy the handler out and release the lock BEFORE calling it. The
+    // handler takes the app's own lock, and the app takes the server's
+    // lock when it publishes a frame — holding both here would be a
+    // lock-order inversion, and it deadlocked the first time it ran.
+    Server::ApiHandler handler;
+    {
+      std::lock_guard<std::mutex> lock(impl->mutex);
+      handler = impl->api;
+    }
+    if (handler) {
+      const std::string body = handler(path, parseQuery(query));
+      response = httpResponse(statusLine(200), "application/json; charset=utf-8", body);
+    } else {
+      response = httpResponse(statusLine(404), "application/json; charset=utf-8", "{\"error\":\"no api\"}");
+    }
+  }
+  if (response.empty()) {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    const auto extra = impl->extraPages.find(path);
+    if (extra != impl->extraPages.end()) {
+      response = httpResponse(statusLine(200), "text/html; charset=utf-8", extra->second);
+    }
+  }
+  if (!response.empty()) {
+    // Already answered by the API or an extra page.
+  } else if (path == "/") {
     response = httpResponse(statusLine(200), "text/html; charset=utf-8", impl->page);
   } else if (path == "/frame.png") {
     std::lock_guard<std::mutex> lock(impl->mutex);
@@ -480,6 +509,16 @@ void Server::setIntro(std::vector<u8> mp4Bytes, std::vector<u8> logoPngBytes) {
 bool Server::hasIntro() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   return !impl_->intro.empty();
+}
+
+void Server::setApiHandler(ApiHandler handler) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->api = std::move(handler);
+}
+
+void Server::setPage(const std::string& path, const std::string& html) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->extraPages[path] = html;
 }
 
 void Server::registerSound(const std::string& name, std::vector<u8> wavBytes) {

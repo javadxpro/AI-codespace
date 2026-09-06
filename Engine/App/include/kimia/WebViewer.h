@@ -3,6 +3,8 @@
 #include <kimia/Types.h>
 
 #include <map>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -79,6 +81,21 @@ public:
   // build with no branding files behaves exactly as it always did.
   void setIntro(std::vector<u8> mp4Bytes, std::vector<u8> logoPngBytes);
   bool hasIntro() const;
+
+  // --- Studio API (stage 32) ---
+  //
+  // The editor page needs to ask the engine real questions ("what is in
+  // this world?") and give it real commands ("make that object solid").
+  // The server stays dumb: it hands the path and the query to a handler
+  // the app installs, and sends whatever JSON comes back. That keeps every
+  // decision about the world in the World layer, where it is testable.
+  //
+  // Called on the accept thread, so the handler must do its own locking.
+  using ApiHandler = std::function<std::string(const std::string& path,
+                                               const std::map<std::string, std::string>& params)>;
+  void setApiHandler(ApiHandler handler);
+  // Extra pages served alongside the main one, e.g. "/studio".
+  void setPage(const std::string& path, const std::string& html);
 
   void registerSound(const std::string& name, std::vector<u8> wavBytes);
   void playSound(const std::string& name);
