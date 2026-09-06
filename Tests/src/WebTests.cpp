@@ -386,7 +386,13 @@ KIMIA_TEST(web_page_carries_the_skippable_splash) {
   KIMIA_REQUIRE(page.find("id=\"splash\"") != std::string::npos);
   KIMIA_REQUIRE(page.find("id=\"introfilm\"") != std::string::npos);
   KIMIA_REQUIRE(page.find("/intro.mp4") != std::string::npos);
-  KIMIA_REQUIRE(page.find("poster=\"/logo.png\"") != std::string::npos);
+  // Deliberately NO poster image: a still poster is impossible to tell
+  // apart from a video that failed to decode, which is exactly how the
+  // «it is only a picture» bug looked to the user.
+  KIMIA_REQUIRE(page.find("poster=") == std::string::npos);
+  // And a watchdog gives up when the film never actually advances.
+  KIMIA_REQUIRE(page.find("currentTime") != std::string::npos);
+  KIMIA_REQUIRE(page.find("stalls") != std::string::npos);
   // The splash starts hidden and is only revealed when /intro.mp4 answers,
   // so a build with no branding never shows a black box.
   KIMIA_REQUIRE(page.find("#splash{position:fixed;inset:0;background:#000;display:none") != std::string::npos);
@@ -494,4 +500,58 @@ KIMIA_TEST(web_shipped_intro_film_is_streamable_from_the_first_byte) {
   // The index must come first, and right near the front of the file.
   KIMIA_REQUIRE(moovAt < mdatAt);
   KIMIA_REQUIRE(moovAt < 100000U);
+}
+
+KIMIA_TEST(web_shipped_intro_film_is_decodable_on_a_phone) {
+  // The film once played sound with a frozen picture on a real phone: the
+  // encode was High profile at 6.8 Mb/s in a 1270x726 frame, which mobile
+  // hardware decoders refuse. This pins the safe shape of the shipped file.
+  std::ifstream file("Branding/kimia-intro.mp4", std::ios::binary);
+  if (!file) {
+    std::printf("SKIP: Branding/kimia-intro.mp4 not next to the test runner\n");
+    return;
+  }
+  const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(bytes.size() > 1024U);
+  const auto byteAt = [&bytes](kimia::usize i) { return static_cast<kimia::u8>(bytes[i]); };
+
+  // Find the avcC box: it carries the H.264 profile the decoder must accept.
+  kimia::usize avcc = 0U;
+  for (kimia::usize i = 0; i + 12U < bytes.size(); ++i) {
+    if (bytes[i] == 'a' && bytes[i + 1U] == 'v' && bytes[i + 2U] == 'c' && bytes[i + 3U] == 'C') {
+      avcc = i;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(avcc != 0U);
+  // avcC layout: [configurationVersion][AVCProfileIndication][compat][level]
+  const kimia::u8 profile = byteAt(avcc + 5U);
+  const kimia::u8 level = byteAt(avcc + 7U);
+  // 66 = Baseline. Anything higher (77 Main, 100 High) is what broke.
+  KIMIA_REQUIRE(profile == 66U);
+  KIMIA_REQUIRE(level <= 41U);  // level 4.1 or below: every phone handles it
+
+  // The frame size lives in the avc1 SAMPLE ENTRY. Note "avc1" also appears
+  // as a compatible-brand string inside ftyp at the very top of the file,
+  // so skip anything before the moov box we are really interested in.
+  kimia::usize avc1 = 0U;
+  for (kimia::usize i = 64U; i + 40U < bytes.size(); ++i) {
+    if (bytes[i] == 'a' && bytes[i + 1U] == 'v' && bytes[i + 2U] == 'c' && bytes[i + 3U] == '1') {
+      avc1 = i;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(avc1 != 0U);
+  // Sample entry: 8 reserved, 2 data_ref_idx, 16 pre_defined/reserved, then
+  // width and height as u16 — 28 bytes past the type tag.
+  const kimia::u32 width = static_cast<kimia::u32>((byteAt(avc1 + 28U) << 8) | byteAt(avc1 + 29U));
+  const kimia::u32 height = static_cast<kimia::u32>((byteAt(avc1 + 30U) << 8) | byteAt(avc1 + 31U));
+  KIMIA_REQUIRE(width == 1280U);
+  KIMIA_REQUIRE(height == 720U);
+  // Macroblock-aligned: the odd 1270x726 was part of the original problem.
+  KIMIA_REQUIRE(width % 16U == 0U);
+  KIMIA_REQUIRE(height % 8U == 0U);
+
+  // And it must stay small enough to stream off a phone in a moment.
+  KIMIA_REQUIRE(bytes.size() < 5000000U);
 }

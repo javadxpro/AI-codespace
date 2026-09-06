@@ -541,7 +541,11 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
          "border:1px solid #55555f;border-radius:10px;background:rgba(20,20,26,.85);color:#e8e8ec;"
          "cursor:pointer}\n";
   out << "</style>\n</head>\n<body>\n";
-  out << "<div id=\"splash\"><video id=\"introfilm\" playsinline autoplay muted poster=\"/logo.png\">"
+  // No poster attribute on purpose: a still poster frame is impossible to
+  // tell apart from a video that failed to decode ("it is only a picture").
+  // With no poster, a broken decode shows black and the watchdog below
+  // gives up quickly instead of leaving a frozen image on screen.
+  out << "<div id=\"splash\"><video id=\"introfilm\" playsinline autoplay muted preload=\"auto\">"
          "<source src=\"/intro.mp4\" type=\"video/mp4\"></video>"
          "<div id=\"skip\">رد کردن / SKIP</div></div>\n";
   out << "<h1>" << htmlEscape(title) << "</h1>\n";
@@ -637,6 +641,18 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "    splash.addEventListener('click',function(e){if(e.target!==skip){film.muted=false;"
          "film.play().catch(function(){});}});\n";
   out << "    film.play().catch(function(){});\n";
+  // Watchdog: some phones accept the file but never actually decode it —
+  // the picture freezes while the sound plays. If the clock has not moved
+  // after 3 seconds, give up and start the game rather than showing the
+  // user a still frame.
+  out << "    var last=-1;\n";
+  out << "    var stalls=0;\n";
+  out << "    var watch=setInterval(function(){\n";
+  out << "      if(splash.style.display==='none'){clearInterval(watch);return;}\n";
+  out << "      var now=film.currentTime;\n";
+  out << "      if(now>last+0.02){last=now;stalls=0;return;}\n";
+  out << "      if(++stalls>=6){clearInterval(watch);done();}\n";
+  out << "    },500);\n";
   out << "  }).catch(function(){});\n";
   out << "})();\n";
   out << "setInterval(function(){fetch('/stats').then(function(r){return r.text();}).then(function(t){"
