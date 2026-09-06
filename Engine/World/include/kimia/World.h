@@ -33,6 +33,28 @@ inline constexpr f64 kWorldDribbleSpeed = 1.15;
 // (rad/s). Positive curls to the right of the aim.
 inline constexpr f64 kWorldMaxCurl = 14.0;
 
+// --- Skill moves (stage 26) ---
+// A trick takes real time: you are committed the moment you start one, and
+// a defender can take the ball off you while you are showing off. That is
+// what makes it a risk and not a free win.
+inline constexpr f64 kTrickNutmegTime = 0.45;   // knock it through their legs
+inline constexpr f64 kTrickRouletteTime = 0.70; // spin away with the ball
+inline constexpr f64 kTrickJuggleTime = 0.55;   // flick it up and keep it up
+// How far in front the ball is pushed by a nutmeg, in meters.
+inline constexpr f64 kTrickNutmegPush = 3.2;
+// A roulette turns the player this far (radians) — a half turn away.
+inline constexpr f64 kTrickRouletteTurn = 3.14159265358979323846;
+// Upward speed of a juggle flick, m/s.
+inline constexpr f64 kTrickJuggleLift = 4.5;
+// Style points, awarded only when the trick COMPLETES.
+inline constexpr u32 kTrickNutmegPoints = 50U;
+inline constexpr u32 kTrickRoulettePoints = 30U;
+inline constexpr u32 kTrickJugglePoints = 10U;
+// A nutmeg only counts against an opponent within this range.
+inline constexpr f64 kTrickNutmegRange = 2.5;
+// Get the ball this far from your feet mid-trick and the move is lost.
+inline constexpr f64 kTrickLoseBall = 2.0;
+
 // --- Weather and the clock (stage 24) ---
 inline constexpr f64 kWorldSunrise = 6.0;   // before this it is night
 inline constexpr f64 kWorldSunset = 19.0;   // from this hour it is night
@@ -353,6 +375,30 @@ public:
   bool dribbling() const { return dribbling_; }
   // Ball spin right now, radians/second (0 when there is no ball).
   Vec3 ballSpin() const;
+  // --- Skill moves (stage 26) ---
+  // Which trick the player is performing right now.
+  enum class Trick { None, Nutmeg, Roulette, Juggle };
+
+  // Starts a trick. It only works when the profile allows tricks, the ball
+  // is at the player's feet, and no other trick is already running — you
+  // cannot cancel out of a trick to dodge the risk. False when refused.
+  bool startTrick(Trick trick);
+  Trick currentTrick() const { return trick_; }
+  bool trickActive() const { return trick_ != Trick::None; }
+  // How far through the current trick, 0..1 (0 when none is running).
+  f64 trickProgress() const;
+  // Style points banked so far this round. Only COMPLETED tricks score.
+  u32 styleScore() const { return styleScore_; }
+  // The last trick that completed, for the HUD flash.
+  Trick lastTrick() const { return lastTrick_; }
+  // Name for the HUD/tests: "NUTMEG" / "ROULETTE" / "JUGGLE" / "".
+  static const char* trickName(Trick trick);
+  // HUD line: "NUTMEG!" while a trick runs, else "STYLE 80" once anything
+  // has been scored. Empty when tricks are off or nothing has happened.
+  std::string trickHudText() const;
+  // True when this world's profile has skill moves switched on.
+  bool tricksEnabled() const { return world_.profile.tricks; }
+
   // Pass the ball to a team-mate: the nearest one in front of the aim, at
   // the speed that arrives at their feet. False when nobody is available.
   bool pass();
@@ -412,6 +458,10 @@ private:
   void spawnSquads();  // formation for the current profile's «team N»
   void kickOff();      // ball to the center spot, squads back to formation
   Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
+  void updateTrick(f64 seconds);  // advance and finish the running trick
+  f64 trickDuration(Trick trick) const;
+  u32 trickPoints(Trick trick) const;
+  bool opponentInFront(f64 range) const;  // is there someone to nutmeg?
   void applyEnvironmentToScene();
   void beginPlace();      // ghost to the origin, enter Place
   void confirmPlace();    // create/update the pending object at the ghost
@@ -445,6 +495,11 @@ private:
   f64 curl_ = 0.0;
   bool dribbling_ = false;
   bool dribbleHeld_ = false;
+  Trick trick_ = Trick::None;
+  Trick lastTrick_ = Trick::None;
+  f64 trickTimer_ = 0.0;    // counts down while a trick runs
+  f64 trickLength_ = 0.0;   // how long the running trick lasts
+  u32 styleScore_ = 0U;
   f64 power_ = 0.0;
   bool charging_ = false;
   bool shootHeld_ = false;

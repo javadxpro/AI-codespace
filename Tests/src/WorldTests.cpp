@@ -2766,3 +2766,209 @@ KIMIA_TEST(world_sky_hud_line_says_what_the_weather_is) {
   }
   KIMIA_REQUIRE(found);
 }
+
+// --- Stage 26: skill moves ---
+
+// Street with a ball at the player's feet, already in PLAY.
+namespace {
+void streetAtTheFeet(WorldEditor& editor) {
+  createWorldFor(editor, "street");
+  editor.choose(0);  // catalog
+  editor.choose(1);  // ball
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.3, editor.world().ball.radius, 0.0});
+}
+}  // namespace
+
+KIMIA_TEST(world_tricks_are_a_street_thing_and_grass_says_no) {
+  // The alley allows showboating.
+  WorldEditor street;
+  streetAtTheFeet(street);
+  KIMIA_REQUIRE(street.tricksEnabled());
+  KIMIA_REQUIRE(street.profile().tricks);
+
+  // A serious fixture does not, and refuses to start one at all.
+  WorldEditor grass;
+  createWorldFor(grass, "grass");
+  KIMIA_REQUIRE(!grass.tricksEnabled());
+  KIMIA_REQUIRE(!grass.profile().tricks);
+  KIMIA_REQUIRE(!grass.startTrick(WorldEditor::Trick::Juggle));
+  KIMIA_REQUIRE(!grass.trickActive());
+  KIMIA_REQUIRE(grass.styleScore() == 0U);
+  // Golf, with no opponents at all, is off too.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(!golf.tricksEnabled());
+}
+
+KIMIA_TEST(world_trick_needs_the_ball_and_cannot_be_double_started) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+
+  // The ball is far away: there is nothing to flick.
+  editor.setBallPosition(Vec3{6.0, editor.world().ball.radius, 0.0});
+  KIMIA_REQUIRE(!editor.startTrick(WorldEditor::Trick::Juggle));
+
+  // Back at the feet it works.
+  editor.setBallPosition(Vec3{0.3, editor.world().ball.radius, 0.0});
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Juggle));
+  KIMIA_REQUIRE(editor.trickActive());
+  KIMIA_REQUIRE(editor.currentTrick() == WorldEditor::Trick::Juggle);
+  // You are committed: no starting a second one to wriggle out of it.
+  KIMIA_REQUIRE(!editor.startTrick(WorldEditor::Trick::Roulette));
+  KIMIA_REQUIRE(editor.currentTrick() == WorldEditor::Trick::Juggle);
+  // And Trick::None is never a move.
+  KIMIA_REQUIRE(!editor.startTrick(WorldEditor::Trick::None));
+}
+
+KIMIA_TEST(world_juggle_flicks_the_ball_up_and_scores_only_at_the_end) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Juggle));
+  KIMIA_REQUIRE(editor.styleScore() == 0U);
+
+  // Half way through: still running, still nothing banked.
+  editor.update(kimia::kTrickJuggleTime * 0.5);
+  KIMIA_REQUIRE(editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == 0U);
+  const f64 progress = editor.trickProgress();
+  KIMIA_REQUIRE(progress > 0.3 && progress < 0.7);
+
+  // Finish it: the ball goes UP and the points land.
+  editor.update(kimia::kTrickJuggleTime * 0.6);
+  KIMIA_REQUIRE(!editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == kimia::kTrickJugglePoints);
+  KIMIA_REQUIRE(editor.lastTrick() == WorldEditor::Trick::Juggle);
+  KIMIA_REQUIRE(editor.trickProgress() == 0.0);
+  // The flick really lifted it off the deck.
+  KIMIA_REQUIRE(editor.ballVelocity().y > 1.0);
+}
+
+KIMIA_TEST(world_nutmeg_needs_an_opponent_in_front_of_you) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  // Street fields squads on the far (-Z) half. Stand at the near end and
+  // face AWAY from all of them: there are no legs to put the ball through,
+  // so the move must be refused outright.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 7.0});
+  editor.setAimYaw(3.14159265358979323846);  // look up-field, away from them
+  KIMIA_REQUIRE(!editor.startTrick(WorldEditor::Trick::Nutmeg));
+  KIMIA_REQUIRE(!editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == 0U);
+
+  // Put an opponent right in front and try again.
+  WorldEditor second;
+  streetAtTheFeet(second);
+  u32 opponent = 0U;
+  for (const u32 id : second.squadIds()) {
+    if (second.squadTeam(id) == 2U) {
+      opponent = id;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(opponent != 0U);  // street really does field an opposition
+  // Stand right behind them, facing their way (-Z is aim yaw 0).
+  const Vec3 them = second.squadPosition(opponent);
+  second.setPlayerPosition(Vec3{them.x, 0.5, them.z + 1.5});
+  second.setBallPosition(Vec3{them.x, second.world().ball.radius, them.z + 1.5});
+  second.setAimYaw(0.0);
+  KIMIA_REQUIRE(second.startTrick(WorldEditor::Trick::Nutmeg));
+
+  // Complete it: the ball is knocked forward, along the ground.
+  second.update(kimia::kTrickNutmegTime + 0.01);
+  KIMIA_REQUIRE(!second.trickActive());
+  KIMIA_REQUIRE(second.styleScore() == kimia::kTrickNutmegPoints);
+  // A nutmeg is worth more than the flashy-but-safe juggle.
+  KIMIA_REQUIRE(kimia::kTrickNutmegPoints > kimia::kTrickJugglePoints);
+}
+
+KIMIA_TEST(world_roulette_turns_the_player_around) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  const f64 before = editor.aimYaw();
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Roulette));
+  editor.update(kimia::kTrickRouletteTime + 0.01);
+  KIMIA_REQUIRE(!editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == kimia::kTrickRoulettePoints);
+  // A roulette is a half turn away from where you were facing.
+  KIMIA_REQUIRE(near(editor.aimYaw() - before, kimia::kTrickRouletteTurn, 1e-9));
+}
+
+KIMIA_TEST(world_trick_is_cancelled_when_the_ball_is_lost) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Roulette));
+  KIMIA_REQUIRE(editor.trickActive());
+  // Someone takes it off you mid-trick. (Down the length of the pitch: a
+  // street court is only a few meters wide, so sideways would be clamped.)
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 6.0});
+  editor.update(0.05);
+  // The move dies and pays nothing: that is the risk of showing off.
+  KIMIA_REQUIRE(!editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == 0U);
+  KIMIA_REQUIRE(editor.lastTrick() == WorldEditor::Trick::None);
+}
+
+KIMIA_TEST(world_trick_hud_shows_the_move_then_the_running_total) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  // Nothing to say before anything has happened.
+  KIMIA_REQUIRE(editor.trickHudText().empty());
+
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Juggle));
+  KIMIA_REQUIRE(editor.trickHudText() == "JUGGLE!");
+  editor.update(kimia::kTrickJuggleTime + 0.01);
+  KIMIA_REQUIRE(editor.trickHudText() == "STYLE 10");
+
+  // Style accumulates across moves.
+  editor.setBallPosition(Vec3{0.3, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(editor.startTrick(WorldEditor::Trick::Roulette));
+  editor.update(kimia::kTrickRouletteTime + 0.01);
+  KIMIA_REQUIRE(editor.styleScore() == kimia::kTrickJugglePoints + kimia::kTrickRoulettePoints);
+  KIMIA_REQUIRE(editor.trickHudText() == "STYLE 40");
+  // And it reaches the actual HUD the app draws.
+  const std::vector<std::string> lines = editor.hudLines();
+  bool found = false;
+  for (const std::string& line : lines) {
+    if (line == "STYLE 40") found = true;
+  }
+  KIMIA_REQUIRE(found);
+
+  // The names are the ones the HUD and the tests agree on.
+  KIMIA_REQUIRE(std::string(WorldEditor::trickName(WorldEditor::Trick::Nutmeg)) == "NUTMEG");
+  KIMIA_REQUIRE(std::string(WorldEditor::trickName(WorldEditor::Trick::Roulette)) == "ROULETTE");
+  KIMIA_REQUIRE(std::string(WorldEditor::trickName(WorldEditor::Trick::Juggle)) == "JUGGLE");
+  KIMIA_REQUIRE(std::string(WorldEditor::trickName(WorldEditor::Trick::None)).empty());
+}
+
+KIMIA_TEST(world_trick_pads_appear_only_for_the_games_that_allow_them) {
+  WorldEditor street;
+  streetAtTheFeet(street);
+  const auto streetPads = street.tapPad();
+  bool hasNutmeg = false;
+  for (const auto& pad : streetPads) {
+    if (pad.second == "n") hasNutmeg = true;
+  }
+  KIMIA_REQUIRE(hasNutmeg);
+
+  // Grass plays the same sport with the same engine and gets no trick pads.
+  WorldEditor grass;
+  createWorldFor(grass, "grass");
+  grass.choose(0);
+  grass.choose(1);
+  grass.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  grass.choose(0);
+  exitPlace(grass);
+  grass.choose(3);
+  for (const auto& pad : grass.tapPad()) {
+    KIMIA_REQUIRE(pad.second != "n");
+    KIMIA_REQUIRE(pad.second != "o");
+    KIMIA_REQUIRE(pad.second != "u");
+  }
+}

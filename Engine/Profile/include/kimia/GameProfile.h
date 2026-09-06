@@ -121,6 +121,10 @@ struct GameProfile {
   // every world played until now. A profile only becomes a match when it has
   // BOTH a squad (teamSize > 1) and a clock.
   f64 matchSeconds = 0.0;
+  // Showboating (stage 26). Skill moves are a STREET thing: the alley is
+  // where a nutmeg is worth more than a goal. A serious grass fixture turns
+  // them off, so the same engine plays two different games.
+  bool tricks = false;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -161,6 +165,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   wind 0.000000 0.000000       (speed m/s^2 0..20, direction radians)
 //   team 5                       (players per side, 1..16; 1 = single player)
 //   match 300.000000             (match length in seconds, 0 = no clock)
+//   tricks on                    (skill moves + style points: on/off)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

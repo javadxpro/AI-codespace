@@ -544,9 +544,20 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
   }
   if (!playing() || screen_ == Screen::RoundEnd) return {};
   if (shotMode()) return {{"توپ از نو", "r"}, {"منو", "b"}};
+  // Skill moves (stage 26) are tap moves: you commit to them, so they are
+  // one press, not something you hold. Only the games that allow them.
+  std::vector<std::pair<std::string, std::string>> pads;
+  pads.push_back({"پرش", "j"});
   // A pass only makes sense when there is a team to pass to.
-  if (teamSize() > 1U) return {{"پرش", "j"}, {"پاس", "p"}, {"توپ از نو", "r"}, {"منو", "b"}};
-  return {{"پرش", "j"}, {"توپ از نو", "r"}, {"منو", "b"}};
+  if (teamSize() > 1U) pads.push_back({"پاس", "p"});
+  if (tricksEnabled()) {
+    pads.push_back({"لایی", "n"});
+    pads.push_back({"رولت", "o"});
+    pads.push_back({"روپایی", "u"});
+  }
+  pads.push_back({"توپ از نو", "r"});
+  pads.push_back({"منو", "b"});
+  return pads;
 }
 
 // --- Option handling (the builder state machine) ---

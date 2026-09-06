@@ -169,6 +169,7 @@ std::vector<GameProfile> builtinProfiles() {
   street.kickUp = 2.0;
   street.teamSize = 5U;         // ۵ در برابر ۵
   street.matchSeconds = 300.0;  // ۵ دقیقه
+  street.tricks = true;         // the alley is where showboating belongs
   // A street game after school: late afternoon, and the alley is still
   // damp from earlier rain even though it has stopped.
   street.hour = 17.0;
@@ -271,6 +272,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back("match " + formatFixed6(profile.matchSeconds));
   out.push_back("weather " + formatFixed6(profile.rain) + ' ' + formatFixed6(profile.wetness));
   out.push_back("time " + formatFixed6(profile.hour));
+  out.push_back(std::string("tricks ") + (profile.tricks ? "on" : "off"));
   return out;
 }
 
@@ -414,6 +416,13 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 hour = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
     out.hour = clampF64(hour, 0.0, kProfileHourMax);
+    return true;
+  }
+  if (key == "tricks") {
+    std::string value;
+    if (!(tokens >> value)) return false;
+    if (value != "on" && value != "off") return false;
+    out.tricks = value == "on";
     return true;
   }
   if (key == "team") {

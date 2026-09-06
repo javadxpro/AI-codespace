@@ -419,6 +419,12 @@ int main(int argc, char** argv) {
     if (input.down(Key::E)) curl += 1.0;
     if (curl != 0.0) editor.setCurl(curl);
     if (input.pressed(Key::P)) editor.pass();
+    // Skill moves (stage 26): tap N to nutmeg, O to roulette, U to juggle.
+    // They are taps because you commit to them — there is no holding back
+    // half way through a nutmeg.
+    if (input.pressed(Key::N)) editor.startTrick(WorldEditor::Trick::Nutmeg);
+    if (input.pressed(Key::O)) editor.startTrick(WorldEditor::Trick::Roulette);
+    if (input.pressed(Key::U)) editor.startTrick(WorldEditor::Trick::Juggle);
 
     f64 moveX = 0.0;
     f64 moveZ = 0.0;

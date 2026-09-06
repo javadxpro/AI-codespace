@@ -686,7 +686,9 @@ void WorldEditor::update(f64 hostSeconds) {
       // control instead of running away on the first touch.
       const f64 dribbleDistance = world_.ball.radius + kWorldDribbleReach;
       const bool slowEnough = ball->velocity.length() < kKickMaxSpeed;
-      dribbling_ = dribbleHeld_ && moving && slowEnough && distance < dribbleDistance &&
+      // While a skill move is running it owns the ball: no ordinary dribble
+      // touch and no accidental kick can interrupt the animation.
+      dribbling_ = !trickActive() && dribbleHeld_ && moving && slowEnough && distance < dribbleDistance &&
                    ball->position.y <= world_.ball.radius + 1e-3;
       if (dribbling_) {
         const f64 pace = world_.player.speed * kWorldDribbleSpeed;
@@ -700,7 +702,7 @@ void WorldEditor::update(f64 hostSeconds) {
           ball->velocity.x = toX / toLength * push;
           ball->velocity.z = toZ / toLength * push;
         }
-      } else {
+      } else if (!trickActive()) {
         const f64 kickDistance = world_.ball.radius + kWorldKickReach;
         if (moving && distance < kickDistance && slowEnough) {
           ball->velocity = direction * kickSpeed() + Vec3{0.0, world_.profile.kickUp, 0.0};
@@ -709,6 +711,11 @@ void WorldEditor::update(f64 hostSeconds) {
         }
       }
     }
+
+    // Skill moves run on the same clock as everything else, after the
+    // ball has been moved and clamped, so a trick that finishes this frame
+    // launches the ball from where it actually is.
+    updateTrick(hostSeconds);
 
     // Dynamic crates: keep them on the floor area; the player can shove
     // them by walking into them and kick them like the ball. Crates collide
@@ -955,6 +962,152 @@ bool WorldEditor::pass() {
   return true;
 }
 
+// --- Skill moves (stage 26) ---
+
+const char* WorldEditor::trickName(Trick trick) {
+  switch (trick) {
+    case Trick::Nutmeg: return "NUTMEG";
+    case Trick::Roulette: return "ROULETTE";
+    case Trick::Juggle: return "JUGGLE";
+    case Trick::None: break;
+  }
+  return "";
+}
+
+f64 WorldEditor::trickDuration(Trick trick) const {
+  switch (trick) {
+    case Trick::Nutmeg: return kTrickNutmegTime;
+    case Trick::Roulette: return kTrickRouletteTime;
+    case Trick::Juggle: return kTrickJuggleTime;
+    case Trick::None: break;
+  }
+  return 0.0;
+}
+
+u32 WorldEditor::trickPoints(Trick trick) const {
+  switch (trick) {
+    case Trick::Nutmeg: return kTrickNutmegPoints;
+    case Trick::Roulette: return kTrickRoulettePoints;
+    case Trick::Juggle: return kTrickJugglePoints;
+    case Trick::None: break;
+  }
+  return 0U;
+}
+
+// Is there an opponent close enough, and in front, to nutmeg? Without one
+// there are no legs to put the ball through.
+bool WorldEditor::opponentInFront(f64 range) const {
+  const Vec3 aim = aimDirection();
+  for (const u32 id : physics_.characterIds()) {
+    if (id == kPrimaryCharacter) continue;
+    const CharacterBody* other = physics_.characterById(id);
+    if (other == nullptr || other->team == 1U) continue;  // only the other side
+    const f64 dx = other->position.x - playerPos_.x;
+    const f64 dz = other->position.z - playerPos_.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    if (distance < kMoveEpsilon || distance > range) continue;
+    // Roughly ahead of us: past 45 degrees off the aim they are beside us,
+    // and you cannot nutmeg someone you are not facing.
+    if ((dx / distance) * aim.x + (dz / distance) * aim.z < 0.70710678) continue;
+    return true;
+  }
+  return false;
+}
+
+bool WorldEditor::startTrick(Trick trick) {
+  if (trick == Trick::None) return false;
+  // A serious fixture has no time for showboating.
+  if (!world_.profile.tricks) return false;
+  if (!playing() || roundOver()) return false;
+  // You cannot start a second trick to escape the first: committing is the
+  // whole risk.
+  if (trick_ != Trick::None) return false;
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return false;
+  // The ball has to be at your feet — you cannot nutmeg thin air.
+  const f64 dx = ball->position.x - playerPos_.x;
+  const f64 dz = ball->position.z - playerPos_.z;
+  const f64 reach = world_.ball.radius + kWorldDribbleReach;
+  if (std::sqrt(dx * dx + dz * dz) > reach) return false;
+  // A nutmeg needs someone to nutmeg.
+  if (trick == Trick::Nutmeg && !opponentInFront(kTrickNutmegRange)) return false;
+
+  trick_ = trick;
+  trickLength_ = trickDuration(trick);
+  trickTimer_ = trickLength_;
+  return true;
+}
+
+f64 WorldEditor::trickProgress() const {
+  if (trick_ == Trick::None || trickLength_ <= 0.0) return 0.0;
+  const f64 done = (trickLength_ - trickTimer_) / trickLength_;
+  return done < 0.0 ? 0.0 : (done > 1.0 ? 1.0 : done);
+}
+
+// Runs the clock on the trick and pays out when it finishes. The payoff
+// happens at the END: start one and lose the ball, and you get nothing.
+void WorldEditor::updateTrick(f64 seconds) {
+  if (trick_ == Trick::None) return;
+  SphereBody* ball = physics_.sphere(ballId_);
+  // Losing the ball mid-trick cancels it, with no points. This is the risk.
+  if (ball != nullptr) {
+    const f64 dx = ball->position.x - playerPos_.x;
+    const f64 dz = ball->position.z - playerPos_.z;
+    const f64 lost = world_.ball.radius + kWorldDribbleReach + kTrickLoseBall;
+    if (std::sqrt(dx * dx + dz * dz) > lost) {
+      trick_ = Trick::None;
+      trickTimer_ = 0.0;
+      trickLength_ = 0.0;
+      return;
+    }
+  }
+
+  trickTimer_ -= seconds;
+  if (trickTimer_ > 0.0) return;
+
+  // --- The trick lands ---
+  const Trick finished = trick_;
+  trick_ = Trick::None;
+  trickTimer_ = 0.0;
+  trickLength_ = 0.0;
+
+  const Vec3 aim = aimDirection();
+  if (ball != nullptr) {
+    switch (finished) {
+      case Trick::Nutmeg:
+        // Knock it through and past them, along the aim, staying on the deck.
+        ball->velocity = Vec3{aim.x * kTrickNutmegPush, 0.0, aim.z * kTrickNutmegPush};
+        break;
+      case Trick::Roulette:
+        // Spin away: the player turns and takes the ball with them, so the
+        // ball leaves along the NEW facing, gently, still under control.
+        aimYaw_ += kTrickRouletteTurn;
+        {
+          const Vec3 turned = aimDirection();
+          const f64 pace = world_.player.speed * kWorldDribbleSpeed;
+          ball->velocity = Vec3{turned.x * pace, 0.0, turned.z * pace};
+        }
+        break;
+      case Trick::Juggle:
+        // Flick it up and keep it there — pure style, no ground gained.
+        ball->velocity = Vec3{ball->velocity.x * 0.5, kTrickJuggleLift, ball->velocity.z * 0.5};
+        break;
+      case Trick::None: break;
+    }
+  }
+  styleScore_ += trickPoints(finished);
+  lastTrick_ = finished;
+  events_.push_back(GameEvent::Kick);
+}
+
+std::string WorldEditor::trickHudText() const {
+  if (!world_.profile.tricks) return std::string();
+  // A trick in progress is the more urgent thing to show.
+  if (trick_ != Trick::None) return std::string(trickName(trick_)) + "!";
+  if (styleScore_ == 0U) return std::string();
+  return "STYLE " + std::to_string(styleScore_);
+}
+
 // Hole capture: within kWorldHoleCapture of a cup centre (horizontally) and
 // slower than kWorldHoleCaptureSpeed — a fast ball rolls over the cup. The
 // ball is parked in the cup so the render shows it there.
@@ -1172,6 +1325,8 @@ std::vector<std::string> WorldEditor::hudLines() const {
     {
       const std::string sky = skyHudText();
       if (!sky.empty()) lines.push_back(sky);
+      const std::string trick = trickHudText();
+      if (!trick.empty()) lines.push_back(trick);
     }
     return lines;
   }
@@ -1189,6 +1344,8 @@ std::vector<std::string> WorldEditor::hudLines() const {
     {
       const std::string sky = skyHudText();
       if (!sky.empty()) lines.push_back(sky);
+      const std::string trick = trickHudText();
+      if (!trick.empty()) lines.push_back(trick);
     }
     return lines;
   }
@@ -1199,6 +1356,8 @@ std::vector<std::string> WorldEditor::hudLines() const {
   {
     const std::string sky = skyHudText();
     if (!sky.empty()) lines.push_back(sky);
+    const std::string trick = trickHudText();
+    if (!trick.empty()) lines.push_back(trick);
   }
   return lines;
 }
