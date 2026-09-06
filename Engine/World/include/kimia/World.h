@@ -112,6 +112,10 @@ struct WorldData {
   // the world file so a personal record survives closing the game. 0 = no
   // round finished yet. A round only counts when every cup was holed.
   u32 bestRound = 0U;
+  // Match mode (stage 22): goals per side, saved with the world so a match
+  // in progress survives a save/load. Team 1 is the human's side.
+  u32 scoreTeam1 = 0U;
+  u32 scoreTeam2 = 0U;
 
   f64 halfLength() const { return profile.halfLength(); }  // Z
   f64 halfWidth() const { return profile.halfWidth(); }    // X
@@ -237,6 +241,21 @@ public:
   std::vector<u32> squadIds() const { return physics_.characterIds(); }
   Vec3 squadPosition(u32 id) const;  // origin when the id is unknown
   u32 squadTeam(u32 id) const;       // 0 when the id is unknown
+
+  // --- Match (stage 22) ---
+  // A profile is a match when it fields squads AND runs a clock. The two
+  // goals become team property: the one on -Z is team 2's, the one on +Z is
+  // team 1's, and a ball crossing a goal line scores for the OTHER side.
+  bool matchMode() const { return world_.profile.teamSize > 1U && world_.profile.matchSeconds > 0.0; }
+  u32 teamScore(u32 team) const;      // 0 for any team but 1 and 2
+  f64 matchClock() const { return matchClock_; }  // seconds left (counts down)
+  bool matchOver() const { return matchOver_; }
+  u32 matchWinner() const;            // 1, 2, or 0 for a draw / unfinished
+  std::string matchClockText() const; // "5:00", "0:07"
+  std::string matchScoreText() const; // "MA 2 - 1 ANHA"
+  // Hand a goal to a side directly. The goal lines call this themselves; it
+  // is public so a referee (or a test) can award one.
+  void creditGoal(u32 team);
   Vec3 ballPosition() const;
   Vec3 ballVelocity() const;
   u32 score() const { return world_.score; }
@@ -346,6 +365,7 @@ private:
   void resetBallToCenter();
   void enterPlay();
   void spawnSquads();  // formation for the current profile's «team N»
+  void kickOff();      // ball to the center spot, squads back to formation
   void applyEnvironmentToScene();
   void beginPlace();      // ghost to the origin, enter Place
   void confirmPlace();    // create/update the pending object at the ghost
@@ -371,6 +391,8 @@ private:
   bool fine_ = false;
   bool jumpQueued_ = false;
   f64 goalTimer_ = 0.0;
+  f64 matchClock_ = 0.0;
+  bool matchOver_ = false;
 
   // Shot mode state.
   f64 aimYaw_ = 0.0;

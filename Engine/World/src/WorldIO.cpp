@@ -38,6 +38,11 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
   stream << "# ball type " << ballTypeName(world.ball.type) << '\n';
   stream << "# env " << environmentName(world.environment) << '\n';
   stream << "# score " << world.score << '\n';
+  // Match score: only written for a match in progress, so no existing world
+  // file grew a line.
+  if (world.scoreTeam1 > 0U || world.scoreTeam2 > 0U) {
+    stream << "# match " << world.scoreTeam1 << ' ' << world.scoreTeam2 << '\n';
+  }
   // The personal record on this course (hole scoring). Written only once a
   // round has been finished, so files of worlds that were never played stay
   // byte-identical to the ones older versions wrote.
@@ -113,6 +118,14 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         const unsigned long long value = std::stoull(token, &consumed);
         if (consumed == token.size()) out.score = static_cast<u32>(value);
       } catch (...) {
+      }
+    } else if (line.rfind("# match ", 0) == 0) {
+      std::istringstream tokens(line.substr(8U));
+      unsigned long long first = 0ULL;
+      unsigned long long second = 0ULL;
+      if (tokens >> first >> second) {
+        out.scoreTeam1 = static_cast<u32>(first);
+        out.scoreTeam2 = static_cast<u32>(second);
       }
     } else if (line.rfind("# best ", 0) == 0) {
       const std::string token = line.substr(7U);

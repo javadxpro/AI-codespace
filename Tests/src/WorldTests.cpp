@@ -2273,3 +2273,177 @@ KIMIA_TEST(world_profile_team_key_round_trips_and_clamps) {
   KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\n", out, error));
   KIMIA_REQUIRE(out.teamSize == 1U);
 }
+
+// --- Stage 22: the match ---
+
+KIMIA_TEST(world_match_mode_needs_a_squad_and_a_clock) {
+  // street: 5 a side, 5 minutes -> a match.
+  WorldEditor street;
+  createWorldFor(street, "street");
+  KIMIA_REQUIRE(street.matchMode());
+  KIMIA_REQUIRE(near(street.profile().matchSeconds, 300.0));
+  // golf: one player, no clock -> never a match.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(!golf.matchMode());
+  KIMIA_REQUIRE(near(golf.profile().matchSeconds, 0.0));
+  // A squad with the clock switched off is still just a kickabout.
+  WorldEditor endless;
+  createWorldFor(endless, "street");
+  kimia::GameProfile noClock = endless.profile();
+  noClock.matchSeconds = 0.0;
+  endless.createWorld(noClock);
+  KIMIA_REQUIRE(!endless.matchMode());
+}
+
+KIMIA_TEST(world_match_clock_counts_down_and_blows_full_time) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  kimia::GameProfile quick = editor.profile();
+  quick.matchSeconds = 10.0;  // a ten second match, so the test is quick
+  editor.createWorld(quick);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.matchMode());
+  KIMIA_REQUIRE(near(editor.matchClock(), 10.0));
+  KIMIA_REQUIRE(editor.matchClockText() == "0:10");
+  KIMIA_REQUIRE(!editor.matchOver());
+  // Four seconds gone: six left, and the clock rounds UP while any time
+  // remains (5.5 s left still reads 0:06).
+  for (i32 i = 0; i < 240; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(near(editor.matchClock(), 6.0, 1e-9));
+  KIMIA_REQUIRE(editor.matchClockText() == "0:06");
+  editor.update(0.5);
+  KIMIA_REQUIRE(editor.matchClockText() == "0:06");
+  // Run it out: full time, the clock reads 0:00 and PLAY is over.
+  for (i32 i = 0; i < 600; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.matchOver());
+  KIMIA_REQUIRE(near(editor.matchClock(), 0.0));
+  KIMIA_REQUIRE(editor.matchClockText() == "0:00");
+  const std::vector<std::string> hud = editor.hudLines();
+  KIMIA_REQUIRE(hud.size() >= 2U);
+  KIMIA_REQUIRE(hud[0] == "FULL TIME  MA 0 - 0 ANHA");
+  KIMIA_REQUIRE(hud[1] == "DRAW");
+  KIMIA_REQUIRE(editor.matchWinner() == 0U);
+  // A five minute street match formats with minutes.
+  WorldEditor full;
+  createWorldFor(full, "street");
+  addGolfBall(full, Vec3{0.0, 0.0, 0.0});
+  exitPlace(full);
+  full.choose(3);
+  KIMIA_REQUIRE(full.matchClockText() == "5:00");
+}
+
+KIMIA_TEST(world_match_goal_scores_for_the_attacking_side_and_kicks_off_again) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  addGoal(editor, 1, Vec3{0.0, 0.0, -2.0});  // the far net: team 2's goal
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.teamScore(1U) == 0U);
+  KIMIA_REQUIRE(editor.teamScore(2U) == 0U);
+  KIMIA_REQUIRE(editor.matchScoreText() == "MA 0 - 0 ANHA");
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.6});
+  editor.setMoveInput(0.0, -1.0);
+  editor.update(0.0);  // kick it toward -Z
+  bool scored = false;
+  for (i32 i = 0; i < 600; ++i) {
+    editor.update(1.0 / 60.0);
+    if (editor.celebrating()) {
+      scored = true;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(scored);
+  // Shooting into the -Z net is OUR goal.
+  KIMIA_REQUIRE(editor.teamScore(1U) == 1U);
+  KIMIA_REQUIRE(editor.teamScore(2U) == 0U);
+  KIMIA_REQUIRE(editor.teamScore(0U) == 0U);  // there is no team 0 score
+  KIMIA_REQUIRE(editor.matchScoreText() == "MA 1 - 0 ANHA");
+  KIMIA_REQUIRE(editor.matchWinner() == 1U);
+  KIMIA_REQUIRE(editor.statsLine().find("| match 1-0 |") != std::string::npos);
+  KIMIA_REQUIRE(editor.hudLines()[1] == "GOAL!");
+  // The celebration ends in a kick-off: ball on the spot, both squads back.
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(!editor.celebrating());
+  // street plays the fantasy ball, so the center spot sits at its radius.
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kWorldFantasyRadius, 0.0}, 1e-6));
+  KIMIA_REQUIRE(editor.squadCount() == 10U);
+  // And the score survived the kick-off.
+  KIMIA_REQUIRE(editor.teamScore(1U) == 1U);
+}
+
+KIMIA_TEST(world_match_own_goal_scores_for_the_other_side) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  addGoal(editor, 1, Vec3{0.0, 0.0, 2.0});  // OUR net, on the +Z half
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  // Kick the ball backwards into our own net.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, -0.6});
+  editor.setMoveInput(0.0, 1.0);
+  editor.update(0.0);
+  bool scored = false;
+  for (i32 i = 0; i < 600; ++i) {
+    editor.update(1.0 / 60.0);
+    if (editor.celebrating()) {
+      scored = true;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(scored);
+  KIMIA_REQUIRE(editor.teamScore(1U) == 0U);
+  KIMIA_REQUIRE(editor.teamScore(2U) == 1U);
+  KIMIA_REQUIRE(editor.matchScoreText() == "MA 0 - 1 ANHA");
+  KIMIA_REQUIRE(editor.matchWinner() == 2U);
+}
+
+KIMIA_TEST(world_match_score_is_saved_with_the_world) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);
+  editor.creditGoal(1U);
+  editor.creditGoal(1U);
+  editor.creditGoal(2U);
+  KIMIA_REQUIRE(editor.matchScoreText() == "MA 2 - 1 ANHA");
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  KIMIA_REQUIRE(text.find("# match 2 1\n") != std::string::npos);
+  kimia::WorldData loaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, loaded, error));
+  KIMIA_REQUIRE(loaded.scoreTeam1 == 2U);
+  KIMIA_REQUIRE(loaded.scoreTeam2 == 1U);
+  std::string again;
+  KIMIA_REQUIRE(kimia::WorldIO::save(loaded, again));
+  KIMIA_REQUIRE(again == text);
+  // A world with no match line loads 0-0: no old file changed meaning.
+  kimia::WorldData old;
+  KIMIA_REQUIRE(kimia::WorldIO::load(
+      "# KIMIA scene v1\ne \"Ground\" mesh plane pos 0 0 0 scale 20 1 20 color 0.2 0.4 0.2 rough 0.9\n", old, error));
+  KIMIA_REQUIRE(old.scoreTeam1 == 0U);
+  KIMIA_REQUIRE(old.scoreTeam2 == 0U);
+}
+
+KIMIA_TEST(world_profile_match_key_round_trips_and_clamps) {
+  kimia::GameProfile out;
+  std::string error;
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nmatch 90.5\n", out, error));
+  KIMIA_REQUIRE(near(out.matchSeconds, 90.5));
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nmatch 99999\n", out, error));
+  KIMIA_REQUIRE(near(out.matchSeconds, kimia::kProfileMatchMax));
+  KIMIA_REQUIRE(near(out.matchSeconds, 3600.0));
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\nmatch -5\n", out, error));
+  KIMIA_REQUIRE(near(out.matchSeconds, 0.0));
+  // No match line = no clock.
+  KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\n", out, error));
+  KIMIA_REQUIRE(near(out.matchSeconds, 0.0));
+}

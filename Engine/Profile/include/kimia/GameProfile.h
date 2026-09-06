@@ -66,6 +66,9 @@ inline constexpr f64 kProfileWindMax = 20.0;  // matches kMaxWindAcceleration
 inline constexpr u32 kProfileTeamMin = 1U;
 inline constexpr u32 kProfileTeamMax = 16U;
 
+// Match clock limits: a street game is minutes, never more than an hour.
+inline constexpr f64 kProfileMatchMax = 3600.0;
+
 // Field size limits (meters). Small enough to stay inside the 20-unit
 // inspector clamp era, large enough for a 40 x 40 battleground map.
 inline constexpr f64 kProfileFieldMin = 4.0;
@@ -100,6 +103,10 @@ struct GameProfile {
   // spawns teamSize - 1 team-mates plus teamSize opponents when a world
   // asks for a match; a profile of 1 keeps the single-player behaviour.
   u32 teamSize = 1U;
+  // Match length in seconds (stage 22). 0 = no clock: the endless kickabout
+  // every world played until now. A profile only becomes a match when it has
+  // BOTH a squad (teamSize > 1) and a clock.
+  f64 matchSeconds = 0.0;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -139,6 +146,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   par 3                        (hole scoring: rated strokes per cup, 1..20)
 //   wind 0.000000 0.000000       (speed m/s^2 0..20, direction radians)
 //   team 5                       (players per side, 1..16; 1 = single player)
+//   match 300.000000             (match length in seconds, 0 = no clock)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <iomanip>
 #include <sstream>
 
 namespace kimia {
@@ -12,6 +13,13 @@ namespace kimia {
 namespace {
 
 constexpr f64 kGoalCelebration = 2.0;  // seconds after a goal (or a holed ball)
+
+// Which side owns a goal, and therefore which side is punished by it. The
+// goal on the far half (-Z) is team 2's net, so scoring there is team 1's
+// goal; the one on the player's half (+Z) is team 1's net. A goal exactly on
+// the halfway line (z == 0) counts for team 1: the classic single-goal
+// kickabout every world built so far shoots toward -Z.
+u32 scoringTeamForGoalZ(f64 goalZ) { return goalZ <= 0.0 ? 1U : 2U; }
 constexpr f64 kKickMaxSpeed = 8.0;     // a ball rolling faster is not re-kicked
 constexpr f64 kMoveEpsilon = 1e-6;
 constexpr f64 kPlayerMargin = 0.6;  // keep the player inside the floor
@@ -403,6 +411,55 @@ void WorldEditor::spawnSquads() {
   }
 }
 
+u32 WorldEditor::teamScore(u32 team) const {
+  if (team == 1U) return world_.scoreTeam1;
+  if (team == 2U) return world_.scoreTeam2;
+  return 0U;
+}
+
+u32 WorldEditor::matchWinner() const {
+  if (world_.scoreTeam1 > world_.scoreTeam2) return 1U;
+  if (world_.scoreTeam2 > world_.scoreTeam1) return 2U;
+  return 0U;  // a draw
+}
+
+std::string WorldEditor::matchClockText() const {
+  // Always mm:ss, rounded UP so the clock only shows 0:00 when time is gone.
+  const f64 left = matchClock_ > 0.0 ? matchClock_ : 0.0;
+  const i64 total = static_cast<i64>(std::ceil(left - 1e-9));
+  const i64 minutes = total / 60;
+  const i64 seconds = total % 60;
+  std::ostringstream text;
+  text << minutes << ':' << std::setfill('0') << std::setw(2) << seconds;
+  return text.str();
+}
+
+std::string WorldEditor::matchScoreText() const {
+  return "MA " + std::to_string(world_.scoreTeam1) + " - " + std::to_string(world_.scoreTeam2) + " ANHA";
+}
+
+// One goal for a side. «score» stays the plain goal counter every non-match
+// world has always used, so nothing about a kickabout changed.
+void WorldEditor::creditGoal(u32 team) {
+  ++world_.score;
+  if (!matchMode()) return;
+  if (team == 1U) ++world_.scoreTeam1;
+  if (team == 2U) ++world_.scoreTeam2;
+}
+
+// Kick-off: the ball on the center spot, both squads back in formation and
+// the human on his resting mark. Used at the start and after every goal.
+void WorldEditor::kickOff() {
+  resetBallToCenter();
+  playerPos_ = playerRest();
+  physics_.resetCharacter(playerPos_);
+  // Drop everyone but the player, then lay the formation out again.
+  for (const u32 id : physics_.characterIds()) {
+    if (id != kPrimaryCharacter) physics_.removeCharacter(id);
+  }
+  spawnSquads();
+}
+
 void WorldEditor::enterPlay() {
   playerPos_ = playerRest();
   physics_.resetCharacter(playerPos_);  // feet on the ground, velocity zero
@@ -420,6 +477,14 @@ void WorldEditor::enterPlay() {
   // placed spots and velocities.
   rebuildPhysics();
   spawnSquads();
+  // A match starts 0-0 with a full clock; an endless kickabout has neither.
+  matchOver_ = false;
+  matchClock_ = world_.profile.matchSeconds;
+  if (matchMode()) {
+    world_.scoreTeam1 = 0U;
+    world_.scoreTeam2 = 0U;
+    world_.score = 0U;
+  }
   lastError_.clear();
   screen_ = Screen::Play;
 }
@@ -511,9 +576,13 @@ void WorldEditor::update(f64 hostSeconds) {
       for (const auto& entry : goals) {
         const GoalGroup& goal = entry.second;
         if (!goal.valid()) continue;
-        if (previous.z >= goal.z() && position.z < goal.z() && std::abs(position.x - goal.x()) < goal.width() * 0.5 &&
+        // A ball crosses a goal line from either side: -Z through a far
+        // goal, +Z through the player's own net (an own goal).
+        const bool crossedToward = previous.z >= goal.z() && position.z < goal.z();
+        const bool crossedBack = matchMode() && previous.z <= goal.z() && position.z > goal.z();
+        if ((crossedToward || crossedBack) && std::abs(position.x - goal.x()) < goal.width() * 0.5 &&
             position.y < goal.height()) {
-          ++world_.score;
+          creditGoal(scoringTeamForGoalZ(goal.z()));
           screen_ = Screen::Goal;
           goalTimer_ = kGoalCelebration;
           events_.push_back(GameEvent::Goal);
@@ -525,6 +594,20 @@ void WorldEditor::update(f64 hostSeconds) {
     return;
   }
   if (screen == 15) {  // Play
+    // The match clock. It only runs while the ball is in play, never during
+    // the goal celebration, and full time waits for the ball to be dead.
+    if (matchMode() && !matchOver_) {
+      matchClock_ -= hostSeconds;
+      if (matchClock_ <= 0.0) {
+        matchClock_ = 0.0;
+        matchOver_ = true;
+        screen_ = Screen::RoundEnd;
+        events_.push_back(GameEvent::RoundOver);
+        SphereBody* deadBall = physics_.sphere(ballId_);
+        if (deadBall != nullptr) deadBall->velocity = Vec3{0.0, 0.0, 0.0};
+        return;
+      }
+    }
     Vec3 direction = moveInput_;
     const f64 length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
     if (length > 1.0) {
@@ -668,9 +751,11 @@ void WorldEditor::update(f64 hostSeconds) {
     for (const auto& entry : goals) {
       const GoalGroup& goal = entry.second;
       if (!goal.valid()) continue;
-      if (previous.z >= goal.z() && position.z < goal.z() && std::abs(position.x - goal.x()) < goal.width() * 0.5 &&
+      const bool crossedToward = previous.z >= goal.z() && position.z < goal.z();
+      const bool crossedBack = matchMode() && previous.z <= goal.z() && position.z > goal.z();
+      if ((crossedToward || crossedBack) && std::abs(position.x - goal.x()) < goal.width() * 0.5 &&
           position.y < goal.height()) {
-        ++world_.score;
+        creditGoal(scoringTeamForGoalZ(goal.z()));
         screen_ = Screen::Goal;
         goalTimer_ = kGoalCelebration;
         events_.push_back(GameEvent::Goal);
@@ -714,7 +799,18 @@ void WorldEditor::update(f64 hostSeconds) {
         screen_ = Screen::Play;
         return;
       }
-      resetBallToCenter();
+      // A match restarts from the center spot with the squads reset; an
+      // endless kickabout just puts the ball back.
+      if (matchMode()) {
+        kickOff();
+        if (matchOver_) {
+          screen_ = Screen::RoundEnd;
+          events_.push_back(GameEvent::RoundOver);
+          return;
+        }
+      } else {
+        resetBallToCenter();
+      }
       screen_ = Screen::Play;
     }
     return;
@@ -739,7 +835,8 @@ void WorldEditor::resetBall() {
     strokes_ = 0U;
     startRound();
   }
-  if (screen_ == Screen::Goal || screen_ == Screen::RoundEnd) screen_ = Screen::Play;
+  if (matchMode() && !matchOver_) kickOff();
+  if (screen_ == Screen::Goal || (screen_ == Screen::RoundEnd && !matchOver_)) screen_ = Screen::Play;
 }
 
 // --- Shot mode ---
@@ -937,6 +1034,19 @@ std::vector<std::string> WorldEditor::hudLines() const {
     if (!wind.empty()) lines.push_back(wind);
     return lines;
   }
+  if (matchMode()) {
+    if (screen_ == Screen::RoundEnd) {
+      const u32 winner = matchWinner();
+      lines.push_back("FULL TIME  " + matchScoreText());
+      lines.push_back(winner == 0U ? "DRAW" : (winner == 1U ? "MA BORDIM" : "ANHA BORDAND"));
+      return lines;
+    }
+    lines.push_back(matchScoreText() + "  " + matchClockText());
+    if (screen_ == Screen::Goal) lines.push_back("GOAL!");
+    const std::string matchWind = windHudText();
+    if (!matchWind.empty()) lines.push_back(matchWind);
+    return lines;
+  }
   lines.push_back("SCORE " + std::to_string(world_.score));
   if (screen_ == Screen::Goal) lines.push_back("GOAL!");
   const std::string wind = windHudText();
@@ -963,6 +1073,9 @@ std::string WorldEditor::statsLine() const {
     const usize cups = holeCount();
     line << " | hole " << std::min(currentHole_ + 1U, cups) << "/" << cups << " | total " << totalStrokes()
          << " | par " << par() << " | best " << world_.bestRound;
+  }
+  if (matchMode()) {
+    line << " | match " << world_.scoreTeam1 << "-" << world_.scoreTeam2 << " | clock " << matchClockText();
   }
   if (windActive()) {
     line << " | wind " << static_cast<i32>(std::llround(world_.profile.windSpeed));
