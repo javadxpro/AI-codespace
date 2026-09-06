@@ -71,6 +71,7 @@ inline constexpr f64 kProfileWetMax = 1.0;
 // what every game did before this stage existed).
 inline constexpr f64 kProfileHourMax = 24.0;
 inline constexpr f64 kProfileAiMax = 1.0;
+inline constexpr f64 kProfileStaminaMax = 1.0;
 
 // How the camera follows the play (stage 28).
 //   orbit     - the plain editor orbit, parked over the action
@@ -141,6 +142,13 @@ struct GameProfile {
   // has always had; a match wants a broadcast camera that pulls back to
   // keep the play in frame. Sandbox keeps the plain editor orbit.
   CameraStyle camera = CameraStyle::Orbit;
+  // The laws of the game (stage 29). Off everywhere except grass: an alley
+  // kickabout has no linesman, and stopping a street game for a throw-in
+  // would ruin it. A real fixture wants them.
+  bool rules = false;
+  // How quickly a sprinting player tires, 0 = never (the endless runner
+  // every game had until now).
+  f64 stamina = 0.0;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -186,6 +194,8 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   tricks on                    (skill moves + style points: on/off)
 //   ai 0.700000                  (computer skill, 0 = statues .. 1 = sharp)
 //   camera broadcast             (orbit / chase / broadcast)
+//   rules on                     (throw-ins, offside and fouls: on/off)
+//   stamina 0.600000             (how fast a runner tires, 0 = never)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

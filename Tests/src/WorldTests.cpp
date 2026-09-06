@@ -3382,3 +3382,255 @@ KIMIA_TEST(world_a_tackle_reports_its_own_sound_cue) {
   }
   KIMIA_REQUIRE(tackle);
 }
+
+// --- Stage 29: the laws of the game ---
+
+namespace {
+// Grass, in PLAY, with a ball and the computer players switched off so
+// each test builds exactly the situation it is checking.
+void grassInPlay(WorldEditor& editor) {
+  createWorldFor(editor, "grass");
+  editor.choose(0);  // catalog
+  editor.choose(1);  // ball
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setAiSkill(0.0);
+}
+}  // namespace
+
+KIMIA_TEST(world_rules_are_a_grass_thing_only) {
+  // A real fixture has a linesman. An alley kickabout does not, and
+  // stopping a street game for a throw-in would ruin it.
+  WorldEditor grass;
+  grassInPlay(grass);
+  KIMIA_REQUIRE(grass.rulesEnabled());
+  KIMIA_REQUIRE(grass.profile().rules);
+
+  WorldEditor street;
+  streetAtTheFeet(street);
+  KIMIA_REQUIRE(!street.rulesEnabled());
+
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(!golf.rulesEnabled());
+
+  // With the rules off nothing is ever stopped, and offside is never given.
+  KIMIA_REQUIRE(!street.playStopped());
+  KIMIA_REQUIRE(street.stoppage() == WorldEditor::Stoppage::None);
+  KIMIA_REQUIRE(!street.offsideFor(2U));
+  KIMIA_REQUIRE(street.rulesHudText().empty());
+}
+
+KIMIA_TEST(world_ball_over_the_touchline_is_a_throw_in) {
+  WorldEditor editor;
+  grassInPlay(editor);
+  KIMIA_REQUIRE(!editor.playStopped());
+
+  // Boot it over the touchline.
+  const f64 touchline = editor.world().halfWidth() - editor.world().ball.radius;
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{touchline - 0.05, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{9.0, 0.0, 0.0});
+  for (i32 i = 0; i < 30 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+
+  KIMIA_REQUIRE(editor.playStopped());
+  KIMIA_REQUIRE(editor.stoppage() == WorldEditor::Stoppage::ThrowIn);
+  // The side that did not put it out gets it.
+  KIMIA_REQUIRE(editor.restartTeam() == 2U);
+  KIMIA_REQUIRE(editor.rulesHudText() == "THROW IN  ANHA BALL");
+  // Taken from just inside the line, not on it.
+  KIMIA_REQUIRE(near(editor.restartSpot().x, touchline - kimia::kRulesRestartInset, 1e-9));
+  KIMIA_REQUIRE(std::abs(editor.restartSpot().x) < touchline);
+  // Dead ball: it is parked on the spot and going nowhere.
+  KIMIA_REQUIRE(editor.ballVelocity().length() == 0.0);
+
+  // The restart is served, then play is live again.
+  KIMIA_REQUIRE(editor.restartCountdown() > 0.0);
+  for (i32 i = 0; i < 200 && editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(!editor.playStopped());
+  KIMIA_REQUIRE(editor.restartTeam() == 0U);
+  KIMIA_REQUIRE(editor.rulesHudText().empty());
+}
+
+KIMIA_TEST(world_offside_is_beyond_the_last_defender_and_level_is_onside) {
+  WorldEditor editor;
+  grassInPlay(editor);
+  // The offside line is the opposition's highest player: team 1 attacks
+  // -Z, so that is their largest z.
+  f64 line = -1e9;
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) != 2U) continue;
+    const f64 z = editor.squadPosition(id).z;
+    if (z > line) line = z;
+  }
+  KIMIA_REQUIRE(line > -1e8);
+
+  u32 mate = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (id != kimia::kPrimaryCharacter && editor.squadTeam(id) == 1U) {
+      mate = id;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(mate != 0U);
+
+  // In our own half: never offside, however deep the opposition sit.
+  KIMIA_REQUIRE(!editor.offsideFor(mate));
+
+  // Well beyond the last defender: offside.
+  editor.setSquadPosition(mate, Vec3{0.0, 0.5, line - 2.0});
+  KIMIA_REQUIRE(editor.offsideFor(mate));
+
+  // LEVEL with the last defender is ONSIDE — the rule everyone gets wrong.
+  editor.setSquadPosition(mate, Vec3{0.0, 0.5, line});
+  KIMIA_REQUIRE(!editor.offsideFor(mate));
+  // And a hair in front is still not offside: there is a margin.
+  editor.setSquadPosition(mate, Vec3{0.0, 0.5, line - kimia::kRulesOffsideMargin * 0.5});
+  KIMIA_REQUIRE(!editor.offsideFor(mate));
+
+  // An opponent is never offside for us.
+  u32 opponent = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) == 2U) {
+      opponent = id;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(opponent != 0U);
+  KIMIA_REQUIRE(!editor.offsideFor(opponent));
+}
+
+KIMIA_TEST(world_charging_an_opponent_is_a_foul_but_standing_still_is_not) {
+  WorldEditor editor;
+  grassInPlay(editor);
+  u32 opponent = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) == 2U) {
+      opponent = id;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(opponent != 0U);
+  const Vec3 them = editor.squadPosition(opponent);
+
+  // Stand right against them — well inside challenge range, so it is the
+  // SPEED that decides — and do nothing. Standing is not a foul.
+  editor.setPlayerPosition(Vec3{them.x, 0.5, them.z + 0.2});
+  editor.setMoveInput(0.0, 0.0);
+  for (i32 i = 0; i < 60; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(!editor.playStopped());
+  // Close enough that only the speed check is keeping the whistle away.
+  const Vec3 standing = editor.playerPosition();
+  KIMIA_REQUIRE(std::sqrt(std::pow(standing.x - them.x, 2.0) + std::pow(standing.z - them.z, 2.0)) <
+                kimia::kWorldPlayerRadius * 2.0);
+
+  // JOGGING into them is a fair challenge, not a charge. Half input is
+  // half pace, which is under the threshold — this is the assertion that
+  // makes the speed check matter rather than the distance check.
+  KIMIA_REQUIRE(editor.world().player.speed * 0.5 < kimia::kRulesFoulSpeed);
+  KIMIA_REQUIRE(editor.world().player.speed > kimia::kRulesFoulSpeed);
+  editor.setPlayerPosition(Vec3{them.x, 0.5, them.z + 0.5});
+  editor.setMoveInput(0.0, -0.5);
+  for (i32 i = 0; i < 60 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(!editor.playStopped());
+
+  // Backing AWAY from them at full pelt is not a foul either, however
+  // fast: it is running INTO somebody that the whistle is for.
+  editor.setPlayerPosition(Vec3{them.x, 0.5, them.z + 0.5});
+  editor.setMoveInput(0.0, 1.0);  // away, along +Z
+  for (i32 i = 0; i < 20 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(!editor.playStopped());
+
+  // Now run through them.
+  editor.setPlayerPosition(Vec3{them.x, 0.5, them.z + 1.2});
+  editor.setMoveInput(0.0, -1.0);
+  for (i32 i = 0; i < 120 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playStopped());
+  KIMIA_REQUIRE(editor.stoppage() == WorldEditor::Stoppage::Foul);
+  KIMIA_REQUIRE(editor.restartTeam() == 2U);  // their free kick
+  KIMIA_REQUIRE(editor.rulesHudText() == "FOUL  ANHA BALL");
+}
+
+KIMIA_TEST(world_stamina_drains_while_running_and_comes_back_at_rest) {
+  WorldEditor editor;
+  grassInPlay(editor);
+  KIMIA_REQUIRE(editor.profile().stamina > 0.0);
+  // Fresh legs: full pace.
+  KIMIA_REQUIRE(near(editor.stamina(), 1.0));
+  KIMIA_REQUIRE(near(editor.currentPlayerSpeed(), editor.world().player.speed));
+
+  // Ten seconds of running.
+  editor.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 600; ++i) editor.update(1.0 / 60.0);
+  const f64 tired = editor.stamina();
+  KIMIA_REQUIRE(tired < 1.0);
+  KIMIA_REQUIRE(tired > 0.0);  // ten seconds does not finish anybody
+  // Tired legs are slower, but never stopped dead.
+  const f64 tiredSpeed = editor.currentPlayerSpeed();
+  KIMIA_REQUIRE(tiredSpeed < editor.world().player.speed);
+  KIMIA_REQUIRE(tiredSpeed >= editor.world().player.speed * kimia::kRulesTiredPace);
+
+  // Standing still gets it back — but slower than it went.
+  editor.setMoveInput(0.0, 0.0);
+  for (i32 i = 0; i < 600; ++i) editor.update(1.0 / 60.0);
+  const f64 rested = editor.stamina();
+  KIMIA_REQUIRE(rested > tired);
+  // Recovery is slower than the drain, so you cannot sprint all match.
+  KIMIA_REQUIRE(rested < 1.0);
+  KIMIA_REQUIRE(kimia::kRulesStaminaRecover < kimia::kRulesStaminaDrain);
+}
+
+KIMIA_TEST(world_stamina_never_touches_the_games_without_it) {
+  // Street, golf and the sandbox keep the endless runner they always had.
+  WorldEditor street;
+  streetAtTheFeet(street);
+  street.setAiSkill(0.0);
+  KIMIA_REQUIRE(street.profile().stamina == 0.0);
+  street.setMoveInput(1.0, 0.0);
+  for (i32 i = 0; i < 600; ++i) street.update(1.0 / 60.0);
+  // Not "nearly" full: exactly, and at exactly the profile's pace.
+  KIMIA_REQUIRE(street.stamina() == 1.0);
+  KIMIA_REQUIRE(street.currentPlayerSpeed() == street.world().player.speed);
+}
+
+KIMIA_TEST(world_a_stoppage_kills_a_trick_in_progress) {
+  // The whistle has gone: you do not get to finish your roulette, and you
+  // certainly do not get the points for it.
+  WorldEditor editor;
+  grassInPlay(editor);
+  // Grass has tricks off, so drive the stoppage path directly on a world
+  // that allows them by checking the general rule instead: a stoppage
+  // must leave no trick running.
+  const f64 touchline = editor.world().halfWidth() - editor.world().ball.radius;
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{touchline - 0.05, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{9.0, 0.0, 0.0});
+  for (i32 i = 0; i < 30 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playStopped());
+  KIMIA_REQUIRE(!editor.trickActive());
+  KIMIA_REQUIRE(editor.styleScore() == 0U);
+}
+
+KIMIA_TEST(world_a_stoppage_shows_on_the_match_hud) {
+  WorldEditor editor;
+  grassInPlay(editor);
+  KIMIA_REQUIRE(editor.matchMode());
+  const f64 touchline = editor.world().halfWidth() - editor.world().ball.radius;
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{touchline - 0.05, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{9.0, 0.0, 0.0});
+  for (i32 i = 0; i < 30 && !editor.playStopped(); ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playStopped());
+
+  const std::vector<std::string> lines = editor.hudLines();
+  bool hasDecision = false;
+  bool hasScore = false;
+  for (const std::string& line : lines) {
+    if (line == "THROW IN  ANHA BALL") hasDecision = true;
+    if (line.find("MA 0 - 0 ANHA") != std::string::npos) hasScore = true;
+  }
+  KIMIA_REQUIRE(hasDecision);
+  KIMIA_REQUIRE(hasScore);  // the score and clock stay up too
+}

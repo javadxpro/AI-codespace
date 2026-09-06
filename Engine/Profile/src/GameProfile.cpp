@@ -222,6 +222,8 @@ std::vector<GameProfile> builtinProfiles() {
   grass.teamSize = 11U;        // ۱۱ در برابر ۱۱
   grass.matchSeconds = 600.0;  // ۱۰ دقیقه
   grass.camera = CameraStyle::Broadcast;
+  grass.rules = true;     // a real fixture: throw-ins, offside, fouls
+  grass.stamina = 0.55;   // 90 minutes tells on the legs
   grass.aiSkill = 0.85;        // a serious fixture: they close you down
   // A proper evening fixture under lights, with a bit of drizzle: the
   // ball runs on off a wet pitch.
@@ -307,6 +309,8 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back(std::string("tricks ") + (profile.tricks ? "on" : "off"));
   out.push_back("ai " + formatFixed6(profile.aiSkill));
   out.push_back(std::string("camera ") + cameraStyleName(profile.camera));
+  out.push_back(std::string("rules ") + (profile.rules ? "on" : "off"));
+  out.push_back("stamina " + formatFixed6(profile.stamina));
   return out;
 }
 
@@ -450,6 +454,20 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 hour = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
     out.hour = clampF64(hour, 0.0, kProfileHourMax);
+    return true;
+  }
+  if (key == "rules") {
+    std::string value;
+    if (!(tokens >> value)) return false;
+    if (value != "on" && value != "off") return false;
+    out.rules = value == "on";
+    return true;
+  }
+  if (key == "stamina") {
+    std::string value;
+    f64 stamina = 0.0;
+    if (!(tokens >> value) || !parseF64Token(value, stamina)) return false;
+    out.stamina = clampF64(stamina, 0.0, kProfileStaminaMax);
     return true;
   }
   if (key == "camera") {

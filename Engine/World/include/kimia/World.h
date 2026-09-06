@@ -82,6 +82,27 @@ inline constexpr f64 kCameraFollowRate = 6.0;
 inline constexpr f64 kCameraBroadcastNear = 7.0;
 inline constexpr f64 kCameraBroadcastPerMeter = 0.9;
 inline constexpr f64 kCameraBroadcastFar = 18.0;
+// --- The laws of the game (stage 29) ---
+// How long play is stopped for a restart (throw-in, free kick) before the
+// ball is live again, in seconds.
+inline constexpr f64 kRulesRestartPause = 1.2;
+// A throw-in is taken from where the ball left, pulled this far back
+// inside the touchline so it restarts in play rather than on the line.
+inline constexpr f64 kRulesRestartInset = 0.3;
+// Running into an opponent faster than this is a foul, not a fair
+// challenge. A tackle is legal; a charge is not.
+inline constexpr f64 kRulesFoulSpeed = 3.4;
+// An attacker must be at least this far beyond the last defender before
+// the flag goes up: level is onside, and a hair's breadth is not offside.
+inline constexpr f64 kRulesOffsideMargin = 0.5;
+// Sprinting drains stamina this fast at profile stamina 1.0, per second;
+// standing still recovers at this rate.
+inline constexpr f64 kRulesStaminaDrain = 0.10;
+inline constexpr f64 kRulesStaminaRecover = 0.06;
+// A completely spent player still runs at this share of full pace: you
+// tire, you do not stop dead.
+inline constexpr f64 kRulesTiredPace = 0.55;
+
 // The match clock blows a whistle at kick-off and at full time, and warns
 // when the last stretch begins.
 inline constexpr f64 kMatchFinalWhistleWarning = 30.0;
@@ -397,6 +418,10 @@ public:
   // Overrides the profile's computer skill for this world. Setting 0 puts
   // the squads back to statues, which is how tests isolate everything that
   // is not the AI.
+  // Places a squad member. Tests use it to build the exact situation they
+  // are checking (an offside line, a challenge) instead of waiting for the
+  // computer players to wander into one.
+  void setSquadPosition(u32 id, const Vec3& position);
   void setAiSkill(f64 skill) { world_.profile.aiSkill = skill < 0.0 ? 0.0 : (skill > 1.0 ? 1.0 : skill); }
 
   // --- Ball control (stage 23) ---
@@ -484,6 +509,33 @@ public:
   enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver, Whistle, Tackle, Trick };
   std::vector<GameEvent> drainEvents();
 
+  // --- The laws of the game (stage 29) ---
+  // Why play is currently stopped, if it is.
+  enum class Stoppage { None, ThrowIn, Offside, Foul };
+
+  bool rulesEnabled() const { return world_.profile.rules; }
+  Stoppage stoppage() const { return stoppage_; }
+  bool playStopped() const { return stoppage_ != Stoppage::None; }
+  // Seconds left before the restart is taken (0 when play is live).
+  f64 restartCountdown() const { return restartTimer_ > 0.0 ? restartTimer_ : 0.0; }
+  // Which side restarts the game (0 when play is live).
+  u32 restartTeam() const { return restartTeam_; }
+  // Where the restart is taken from.
+  Vec3 restartSpot() const { return restartSpot_; }
+  // Name for the HUD/tests: "THROW IN" / "OFFSIDE" / "FOUL" / "".
+  static const char* stoppageName(Stoppage stoppage);
+  // HUD line like "OFFSIDE  ANHA BALL", empty when play is live.
+  std::string rulesHudText() const;
+  // Would a pass to `id` be offside right now? Only meaningful with the
+  // rules on; a team-mate level with the last defender is ONSIDE.
+  bool offsideFor(u32 id) const;
+
+  // How much running the player has left, 1 = fresh .. 0 = spent. Always 1
+  // when the profile has no stamina, so nothing changes for other games.
+  f64 stamina() const { return stamina_; }
+  // The pace the player actually runs at right now, after tiredness.
+  f64 currentPlayerSpeed() const;
+
   // --- Camera director (stage 28) ---
   // The camera style this world's profile asks for.
   CameraStyle cameraStyle() const { return world_.profile.camera; }
@@ -527,6 +579,9 @@ private:
   Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
   void updateTrick(f64 seconds);  // advance and finish the running trick
   void updateAi(f64 seconds);     // drive every computer player one step
+  void updateStamina(f64 seconds, bool running);
+  void updateRules(f64 seconds, const Vec3& previousBall);
+  void awardRestart(Stoppage reason, u32 team, const Vec3& spot);
   f64 trickDuration(Trick trick) const;
   u32 trickPoints(Trick trick) const;
   bool opponentInFront(f64 range) const;  // is there someone to nutmeg?
@@ -563,6 +618,11 @@ private:
   f64 curl_ = 0.0;
   bool dribbling_ = false;
   bool dribbleHeld_ = false;
+  Stoppage stoppage_ = Stoppage::None;
+  f64 restartTimer_ = 0.0;
+  u32 restartTeam_ = 0U;
+  Vec3 restartSpot_{0.0, 0.0, 0.0};
+  f64 stamina_ = 1.0;
   Trick trick_ = Trick::None;
   Trick lastTrick_ = Trick::None;
   f64 trickTimer_ = 0.0;    // counts down while a trick runs
