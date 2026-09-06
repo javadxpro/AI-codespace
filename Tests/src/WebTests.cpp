@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,63 @@ HttpResponse request(u16 port, const std::string& method, const std::string& tar
   }
   ::close(fd);
 
+  const usize headerEnd = raw.find("\r\n\r\n");
+  if (headerEnd == std::string::npos) return response;
+  const usize firstLineEnd = raw.find("\r\n");
+  if (firstLineEnd == std::string::npos) return response;
+  response.status = std::atoi(raw.substr(9, 3).c_str());
+  usize lineStart = firstLineEnd + 2U;
+  while (lineStart < headerEnd) {
+    const usize lineEnd = raw.find("\r\n", lineStart);
+    if (lineEnd == std::string::npos || lineEnd >= headerEnd) break;
+    const std::string line = raw.substr(lineStart, lineEnd - lineStart);
+    const usize colon = line.find(':');
+    if (colon != std::string::npos) {
+      std::string name = line.substr(0, colon);
+      for (char& c : name) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+      }
+      response.headers[name] = line.substr(colon + 2U);
+    }
+    lineStart = lineEnd + 2U;
+  }
+  response.body = raw.substr(headerEnd + 4U);
+  return response;
+}
+
+// Same as request(), plus a Range header — exactly what a browser sends
+// when it streams a video.
+HttpResponse rangeRequest(u16 port, const std::string& target, const std::string& range) {
+  HttpResponse response;
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return response;
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  ::inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+  if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    ::close(fd);
+    return response;
+  }
+  const std::string requestText = "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1\r\nRange: " + range +
+                                  "\r\nConnection: close\r\n\r\n";
+  usize sent = 0;
+  while (sent < requestText.size()) {
+    const ssize_t n = ::send(fd, requestText.data() + sent, requestText.size() - sent, 0);
+    if (n <= 0) {
+      ::close(fd);
+      return response;
+    }
+    sent += static_cast<usize>(n);
+  }
+  std::string raw;
+  char buffer[4096];
+  for (;;) {
+    const ssize_t n = ::recv(fd, buffer, sizeof(buffer), 0);
+    if (n <= 0) break;
+    raw.append(buffer, static_cast<usize>(n));
+  }
+  ::close(fd);
   const usize headerEnd = raw.find("\r\n\r\n");
   if (headerEnd == std::string::npos) return response;
   const usize firstLineEnd = raw.find("\r\n");
@@ -349,4 +407,91 @@ KIMIA_TEST(web_load_intro_from_folder_finds_the_shipped_film) {
   KIMIA_REQUIRE(!kimia::web::loadIntroFrom(server, "-"));
   KIMIA_REQUIRE(!server.hasIntro());
   server.stop();
+}
+
+KIMIA_TEST(web_intro_film_answers_byte_range_requests) {
+  // A phone streams video with Range requests. Without 206 support it gets
+  // the sound but a frozen picture, which is exactly the bug this guards.
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  std::vector<kimia::u8> film(1000U);
+  for (kimia::usize i = 0; i < film.size(); ++i) {
+    film[i] = static_cast<kimia::u8>(i % 251U);  // a pattern we can verify
+  }
+  server.setIntro(film, std::vector<kimia::u8>{});
+
+  // A whole-file GET still works and advertises that ranges are welcome.
+  const HttpResponse whole = request(server.port(), "GET", "/intro.mp4");
+  KIMIA_REQUIRE(whole.status == 200);
+  KIMIA_REQUIRE(whole.body.size() == 1000U);
+  KIMIA_REQUIRE(whole.headers.count("accept-ranges") == 1U);
+  KIMIA_REQUIRE(whole.headers.at("accept-ranges") == "bytes");
+
+  // The opening chunk: 206, the exact bytes, and an honest Content-Range.
+  const HttpResponse head = rangeRequest(server.port(), "/intro.mp4", "bytes=0-99");
+  KIMIA_REQUIRE(head.status == 206);
+  KIMIA_REQUIRE(head.body.size() == 100U);
+  KIMIA_REQUIRE(head.headers.at("content-range") == "bytes 0-99/1000");
+  for (kimia::usize i = 0; i < 100U; ++i) {
+    KIMIA_REQUIRE(static_cast<kimia::u8>(head.body[i]) == film[i]);
+  }
+
+  // A chunk from the middle lands on the right offset.
+  const HttpResponse middle = rangeRequest(server.port(), "/intro.mp4", "bytes=500-509");
+  KIMIA_REQUIRE(middle.status == 206);
+  KIMIA_REQUIRE(middle.body.size() == 10U);
+  KIMIA_REQUIRE(middle.headers.at("content-range") == "bytes 500-509/1000");
+  KIMIA_REQUIRE(static_cast<kimia::u8>(middle.body[0]) == film[500]);
+  KIMIA_REQUIRE(static_cast<kimia::u8>(middle.body[9]) == film[509]);
+
+  // Open-ended "from here to the end".
+  const HttpResponse tail = rangeRequest(server.port(), "/intro.mp4", "bytes=990-");
+  KIMIA_REQUIRE(tail.status == 206);
+  KIMIA_REQUIRE(tail.body.size() == 10U);
+  KIMIA_REQUIRE(tail.headers.at("content-range") == "bytes 990-999/1000");
+  KIMIA_REQUIRE(static_cast<kimia::u8>(tail.body[9]) == film[999]);
+
+  // A range running past the end is clamped, not an error.
+  const HttpResponse over = rangeRequest(server.port(), "/intro.mp4", "bytes=995-99999");
+  KIMIA_REQUIRE(over.status == 206);
+  KIMIA_REQUIRE(over.headers.at("content-range") == "bytes 995-999/1000");
+  KIMIA_REQUIRE(over.body.size() == 5U);
+
+  // Nonsense falls back to the whole file rather than failing.
+  const HttpResponse junk = rangeRequest(server.port(), "/intro.mp4", "kilograms=3");
+  KIMIA_REQUIRE(junk.status == 200);
+  KIMIA_REQUIRE(junk.body.size() == 1000U);
+  server.stop();
+}
+
+KIMIA_TEST(web_shipped_intro_film_is_streamable_from_the_first_byte) {
+  // An mp4 whose index (moov) sits at the END cannot start playing until the
+  // whole file has arrived — the phone shows a frozen frame with sound. The
+  // shipped film must be «faststart»: moov before mdat.
+  std::ifstream file("Branding/kimia-intro.mp4", std::ios::binary);
+  if (!file) {
+    std::printf("SKIP: Branding/kimia-intro.mp4 not next to the test runner\n");
+    return;
+  }
+  const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  KIMIA_REQUIRE(bytes.size() > 64U);
+  // Walk the top-level boxes and record where moov and mdat begin.
+  kimia::usize moovAt = 0U;
+  kimia::usize mdatAt = 0U;
+  kimia::usize offset = 0U;
+  while (offset + 8U <= bytes.size()) {
+    const auto byteAt = [&bytes](kimia::usize i) { return static_cast<kimia::u64>(static_cast<kimia::u8>(bytes[i])); };
+    kimia::u64 size = (byteAt(offset) << 24) | (byteAt(offset + 1U) << 16) | (byteAt(offset + 2U) << 8) |
+                      byteAt(offset + 3U);
+    const std::string type(bytes.data() + offset + 4U, 4U);
+    if (type == "moov" && moovAt == 0U) moovAt = offset + 1U;  // +1: 0 means «not seen»
+    if (type == "mdat" && mdatAt == 0U) mdatAt = offset + 1U;
+    if (size == 0U) break;
+    offset += static_cast<kimia::usize>(size);
+  }
+  KIMIA_REQUIRE(moovAt != 0U);
+  KIMIA_REQUIRE(mdatAt != 0U);
+  // The index must come first, and right near the front of the file.
+  KIMIA_REQUIRE(moovAt < mdatAt);
+  KIMIA_REQUIRE(moovAt < 100000U);
 }

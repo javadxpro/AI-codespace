@@ -51,7 +51,7 @@
 pkg install -y git clang cmake ninja
 git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
-bash Tools/termux_build.sh          # ابزار → cmake → build → 248/248 → دستور بعدی
+bash Tools/termux_build.sh          # ابزار → cmake → build → 250/250 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
 ```
 
@@ -79,7 +79,7 @@ bash Tools/package_release.sh --game=golf     # → release/kimia-golf-0.3.0.tar
 ```bash
 cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
-./build/bin/kimia_tests      # 248/248 tests passed
+./build/bin/kimia_tests      # 250/250 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -98,7 +98,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 248/248 tests passed
+./build-nosdl/bin/kimia_tests    # 250/250 tests passed
 ```
 
 ## هدف: چهار بازی روی یک موتور

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <thread>
@@ -121,10 +122,63 @@ std::string httpResponse(const std::string& status, const std::string& contentTy
   out << "HTTP/1.1 " << status << "\r\n";
   out << "Content-Type: " << contentType << "\r\n";
   out << "Content-Length: " << body.size() << "\r\n";
+  out << "Accept-Ranges: bytes\r\n";
   out << "Cache-Control: no-store\r\n";
   out << "Connection: close\r\n\r\n";
   out << body;
   return out.str();
+}
+
+// A partial response to a "Range: bytes=a-b" request. Browsers stream video
+// this way: without it a phone gets audio but a frozen picture, because it
+// never manages to pull the frames it wants.
+std::string httpRangeResponse(const std::string& contentType, const std::string& body, usize first, usize last) {
+  std::ostringstream out;
+  out << "HTTP/1.1 206 Partial Content\r\n";
+  out << "Content-Type: " << contentType << "\r\n";
+  out << "Content-Range: bytes " << first << '-' << last << '/' << body.size() << "\r\n";
+  out << "Content-Length: " << (last - first + 1U) << "\r\n";
+  out << "Accept-Ranges: bytes\r\n";
+  out << "Cache-Control: no-store\r\n";
+  out << "Connection: close\r\n\r\n";
+  out.write(body.data() + static_cast<std::ptrdiff_t>(first), static_cast<std::streamsize>(last - first + 1U));
+  return out.str();
+}
+
+// Parses "Range: bytes=<first>-<last>" out of the raw request. `last` is
+// inclusive and may be absent ("bytes=500-"), which means "to the end".
+// Returns false when there is no usable range header.
+bool parseRangeHeader(const std::string& request, usize size, usize& first, usize& last) {
+  if (size == 0U) return false;
+  usize headerAt = std::string::npos;
+  for (const char* name : {"\r\nRange:", "\r\nrange:"}) {
+    const usize found = request.find(name);
+    if (found != std::string::npos) {
+      headerAt = found + std::strlen(name);
+      break;
+    }
+  }
+  if (headerAt == std::string::npos) return false;
+  const usize lineEnd = request.find("\r\n", headerAt);
+  std::string value = request.substr(headerAt, lineEnd == std::string::npos ? std::string::npos : lineEnd - headerAt);
+  const usize equals = value.find('=');
+  if (equals == std::string::npos) return false;
+  if (value.find("bytes") == std::string::npos) return false;
+  value = value.substr(equals + 1U);
+  const usize dash = value.find('-');
+  if (dash == std::string::npos) return false;
+  const std::string firstText = value.substr(0, dash);
+  const std::string lastText = value.substr(dash + 1U);
+  // Multi-range ("0-1,5-9") is legal but nobody needs it here: serve whole.
+  if (lastText.find(',') != std::string::npos) return false;
+  try {
+    first = firstText.empty() ? 0U : static_cast<usize>(std::stoull(firstText));
+    last = lastText.empty() ? size - 1U : static_cast<usize>(std::stoull(lastText));
+  } catch (...) {
+    return false;
+  }
+  if (last >= size) last = size - 1U;
+  return first <= last;
 }
 
 std::string statusLine(int code) {
@@ -311,7 +365,14 @@ void handleConnection(int fd, Server::Impl* impl) {
     const std::vector<u8>& bytes = wantsFilm ? impl->intro : impl->logo;
     if (!bytes.empty()) {
       const std::string body(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-      response = httpResponse(statusLine(200), wantsFilm ? "video/mp4" : "image/png", body);
+      const char* type = wantsFilm ? "video/mp4" : "image/png";
+      usize first = 0U;
+      usize last = 0U;
+      if (parseRangeHeader(request, body.size(), first, last)) {
+        response = httpRangeResponse(type, body, first, last);
+      } else {
+        response = httpResponse(statusLine(200), type, body);
+      }
     } else {
       response = httpResponse(statusLine(404), "text/plain; charset=utf-8", "no branding");
     }
