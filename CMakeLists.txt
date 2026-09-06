@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # literal lives in Engine/Core/include/kimia/Version.h; the configure step
 # below and a unit test keep the two identical. Bump both + add the entry at
 # the top of CHANGELOG.md per release.
-project(KIMIA VERSION 0.14.0 LANGUAGES C CXX)
+project(KIMIA VERSION 0.15.0 LANGUAGES C CXX)
 file(STRINGS Engine/Core/include/kimia/Version.h KIMIA_VERSION_LINE REGEX "#define KIMIA_ENGINE_VERSION \"")
 string(REGEX REPLACE ".*\"([0-9.]+)\".*" "\\1" KIMIA_HEADER_VERSION "${KIMIA_VERSION_LINE}")
 if(NOT KIMIA_HEADER_VERSION STREQUAL PROJECT_VERSION)
@@ -334,4 +334,7 @@ if(KIMIA_WERROR)
 endif()
 
 include(CTest)
-add_test(NAME kimia_tests COMMAND kimia_tests)
+# Run from the source tree: several tests read real files out of
+# Tests/assets, and ctest would otherwise start them in the build folder
+# where those files do not exist.
+add_test(NAME kimia_tests COMMAND kimia_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

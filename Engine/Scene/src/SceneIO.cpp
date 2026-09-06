@@ -57,6 +57,24 @@ std::vector<std::string> tokenizeLine(const std::string& line) {
   return tokens;
 }
 
+const char* bodyKindName(BodyKind kind) {
+  switch (kind) {
+    case BodyKind::Static: return "static";
+    case BodyKind::Dynamic: return "dynamic";
+    case BodyKind::Sphere: return "sphere";
+    case BodyKind::None: break;
+  }
+  return "none";
+}
+
+std::optional<BodyKind> bodyKindFromName(const std::string& name) {
+  if (name == "none") return BodyKind::None;
+  if (name == "static") return BodyKind::Static;
+  if (name == "dynamic") return BodyKind::Dynamic;
+  if (name == "sphere") return BodyKind::Sphere;
+  return std::nullopt;
+}
+
 bool parseF64(const std::string& token, f64& out) {
   if (token.empty()) return false;
   try {
@@ -128,7 +146,24 @@ bool SceneIO::save(const Scene& scene, std::string& out) {
     stream << " pos " << format(t.position.x) << ' ' << format(t.position.y) << ' ' << format(t.position.z);
     stream << " scale " << format(t.scale.x) << ' ' << format(t.scale.y) << ' ' << format(t.scale.z);
     stream << " color " << format(entity.color.x) << ' ' << format(entity.color.y) << ' ' << format(entity.color.z);
-    stream << " rough " << format(entity.roughness) << '\n';
+    stream << " rough " << format(entity.roughness);
+    // Components (stage 31). Each is optional, so a scene that uses none
+    // of them saves byte-identically to before they existed.
+    for (const std::string& tag : entity.tags) stream << " tag " << quoteName(tag);
+    if (entity.body.has_value()) {
+      const BodyComponent& b = *entity.body;
+      stream << " body " << bodyKindName(b.kind) << ' ' << format(b.mass) << ' ' << format(b.friction) << ' '
+             << format(b.restitution) << ' ' << format(b.radius);
+    }
+    for (const AnimationComponent& clip : entity.animations) {
+      stream << " anim " << quoteName(clip.clip) << ' ' << quoteName(clip.trigger) << ' '
+             << (clip.loop ? "loop" : "once") << ' ' << format(clip.speed);
+    }
+    for (const SoundComponent& sound : entity.sounds) {
+      stream << " sound " << quoteName(sound.sound) << ' ' << quoteName(sound.trigger) << ' '
+             << format(sound.volume);
+    }
+    stream << '\n';
   });
   if (scene.demoShot.has_value()) {
     stream << "# demo " << format(scene.demoShot->aim) << ' ' << format(scene.demoShot->power) << '\n';
@@ -189,6 +224,75 @@ bool SceneIO::load(const std::string& text, Scene& out, std::string& error) {
       if (keyword == "meshfile" && i + 1U < tokens.size()) {
         entity.meshFile = tokens[i + 1U];
         i += 2U;
+        continue;
+      }
+      if (keyword == "tag" && i + 1U < tokens.size()) {
+        entity.addTag(tokens[i + 1U]);
+        i += 2U;
+        continue;
+      }
+      if (keyword == "body") {
+        // body <kind> <mass> <friction> <restitution> <radius> — all of it
+        // or none, like every other multi-value line in the project.
+        if (i + 5U >= tokens.size()) {
+          complete = false;
+          break;
+        }
+        const auto kind = bodyKindFromName(tokens[i + 1U]);
+        BodyComponent component;
+        f64 mass = 0.0;
+        f64 friction = 0.0;
+        f64 restitution = 0.0;
+        f64 radius = 0.0;
+        if (!kind.has_value() || !parseF64(tokens[i + 2U], mass) || !parseF64(tokens[i + 3U], friction) ||
+            !parseF64(tokens[i + 4U], restitution) || !parseF64(tokens[i + 5U], radius)) {
+          complete = false;
+          break;
+        }
+        component.kind = *kind;
+        component.mass = mass;
+        component.friction = friction;
+        component.restitution = restitution;
+        component.radius = radius;
+        entity.body = component;
+        i += 6U;
+        continue;
+      }
+      if (keyword == "anim") {
+        if (i + 4U >= tokens.size()) {
+          complete = false;
+          break;
+        }
+        AnimationComponent clip;
+        f64 speed = 1.0;
+        if (!parseF64(tokens[i + 4U], speed)) {
+          complete = false;
+          break;
+        }
+        clip.clip = tokens[i + 1U];
+        clip.trigger = tokens[i + 2U];
+        clip.loop = tokens[i + 3U] == "loop";
+        clip.speed = speed;
+        entity.animations.push_back(clip);
+        i += 5U;
+        continue;
+      }
+      if (keyword == "sound") {
+        if (i + 3U >= tokens.size()) {
+          complete = false;
+          break;
+        }
+        SoundComponent sound;
+        f64 volume = 1.0;
+        if (!parseF64(tokens[i + 3U], volume)) {
+          complete = false;
+          break;
+        }
+        sound.sound = tokens[i + 1U];
+        sound.trigger = tokens[i + 2U];
+        sound.volume = volume;
+        entity.sounds.push_back(sound);
+        i += 4U;
         continue;
       }
       if (keyword == "pos") {

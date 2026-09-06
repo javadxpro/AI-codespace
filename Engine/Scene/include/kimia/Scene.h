@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace kimia {
 
@@ -22,6 +23,51 @@ struct Transform {
 // real mesh assets.
 enum class MeshKind { cube, plane, sphere };
 
+// --- Components and tags (stage 31) ---
+//
+// Until now an entity was a shape and a colour, and everything it could DO
+// was decided by its name: "Ball" bounced, "Goal*" scored, "Crate_*" was
+// pushable. That works for four built-in games and for nothing else — you
+// could not import a model and make it a solid, animated, noisy thing.
+//
+// An entity now carries optional components instead. The name still works
+// (every existing world loads unchanged), but a component overrides it.
+
+// How an entity takes part in the simulation.
+enum class BodyKind {
+  None,     // decoration: drawn, never collided with
+  Static,   // immovable solid: walls, cover, scenery
+  Dynamic,  // pushed around: crates, props
+  Sphere,   // rolling body: balls
+};
+
+// Physics component. Attached to anything that should be solid.
+struct BodyComponent {
+  BodyKind kind = BodyKind::None;
+  f64 mass = 1.0;
+  f64 friction = 0.4;
+  f64 restitution = 0.3;   // bounciness, 0 = dead, 1 = perfectly elastic
+  f64 radius = 0.0;        // Sphere only; 0 = derive from the transform
+};
+
+// Animation component: a clip from the entity's model, and the input that
+// plays it. `trigger` is a key name ("j", "space") or one of the built-in
+// events ("walk", "idle", "kick") the game drives itself.
+struct AnimationComponent {
+  std::string clip;     // clip name inside the FBX
+  std::string trigger;  // key name or built-in event
+  bool loop = true;
+  f64 speed = 1.0;
+};
+
+// Sound component: a registered sound name, played on the same kind of
+// trigger as an animation.
+struct SoundComponent {
+  std::string sound;    // name registered with the server (/sfx/<name>)
+  std::string trigger;
+  f64 volume = 1.0;
+};
+
 struct EntityData {
   std::string name;
   Transform transform;
@@ -32,6 +78,34 @@ struct EntityData {
   std::string meshFile;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
+
+  // --- Components (stage 31) ---
+  // Free-form labels. A tag is how one object refers to a GROUP of others
+  // without knowing their names: "goal", "cover", "enemy". The editor and
+  // the game rules both look things up this way.
+  std::vector<std::string> tags;
+  // Optional components. Absent means "this entity does not do that".
+  std::optional<BodyComponent> body;
+  std::vector<AnimationComponent> animations;
+  std::vector<SoundComponent> sounds;
+
+  bool hasTag(const std::string& tag) const {
+    for (const std::string& own : tags) {
+      if (own == tag) return true;
+    }
+    return false;
+  }
+  void addTag(const std::string& tag) {
+    if (!tag.empty() && !hasTag(tag)) tags.push_back(tag);
+  }
+  bool removeTag(const std::string& tag) {
+    for (usize i = 0; i < tags.size(); ++i) {
+      if (tags[i] != tag) continue;
+      tags.erase(tags.begin() + static_cast<std::ptrdiff_t>(i));
+      return true;
+    }
+    return false;
+  }
 };
 
 // Player-authored demo shot stored in scene files as "# demo <aim> <power>".

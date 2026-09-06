@@ -1,3 +1,4 @@
+#include <kimia/AssetPipeline.h>
 #include <kimia/World.h>
 #include <kimia/WorldIO.h>
 
@@ -217,6 +218,48 @@ void WorldEditor::rebuildPhysics() {
   std::map<std::string, GoalGroup> goals;
   scanGoals(world_.scene, goals);
   world_.scene.forEach([this](EntityHandle, const EntityData& entity) {
+    // A body COMPONENT wins over the name (stage 31). Until now what an
+    // object did was decided entirely by what it was called: "Crate_*" was
+    // pushable, "Block_*" was solid, and an imported model was scenery you
+    // could walk through. A component lets any entity — including one you
+    // imported yourself — be solid, pushable or a rolling ball.
+    if (entity.body.has_value()) {
+      const BodyComponent& body = *entity.body;
+      const Vec3 half = entity.transform.scale * 0.5;
+      switch (body.kind) {
+        case BodyKind::Static:
+          physics_.addBox(entity.transform.position, half);
+          return;
+        case BodyKind::Dynamic: {
+          DynamicBox box;
+          box.position = entity.transform.position;
+          box.halfExtents = half;
+          box.mass = body.mass;
+          box.restitution = body.restitution;
+          box.friction = body.friction;
+          box.rollingFriction = body.friction;
+          const u32 id = physics_.addDynamicBox(box);
+          crateIds_[entity.name] = id;
+          crateBodyIds_.push_back(id);
+          return;
+        }
+        case BodyKind::Sphere: {
+          SphereBody sphere;
+          sphere.position = entity.transform.position;
+          // A radius of 0 means "work it out from the transform", so the
+          // editor does not have to keep two numbers in step.
+          sphere.radius = body.radius > 0.0 ? body.radius : std::max(half.x, std::max(half.y, half.z));
+          sphere.mass = body.mass;
+          sphere.restitution = body.restitution;
+          sphere.friction = body.friction;
+          sphere.rollingFriction = body.friction;
+          physics_.addSphere(sphere);
+          return;
+        }
+        case BodyKind::None:
+          return;  // explicitly decoration: drawn, never collided with
+      }
+    }
     const ObjectKind kind = objectKindForName(entity.name);
     if (kind == ObjectKind::Block || kind == ObjectKind::Wall) {
       physics_.addBox(entity.transform.position, entity.transform.scale * 0.5);
@@ -756,6 +799,9 @@ void WorldEditor::update(f64 hostSeconds) {
       }
     }
 
+    // Triggered clips age out (stage 31).
+    updateTriggers(hostSeconds);
+
     // Arena mode (stage 30): weapons, reloads and respawns. The football
     // rules below still run — the pitch, the walls and the characters are
     // shared — but nothing here depends on the ball.
@@ -1162,6 +1208,245 @@ void WorldEditor::updateTrick(f64 seconds) {
   styleScore_ += trickPoints(finished);
   lastTrick_ = finished;
   events_.push_back(GameEvent::Trick);
+}
+
+// --- Components, tags and triggers (stage 31) ---
+//
+// This is the layer the editor talks to. Everything is addressed by entity
+// NAME so a user interface can stay stringly-typed and never needs to know
+// about handles, physics ids or the scene's internals.
+
+std::vector<std::string> WorldEditor::entityNames() const {
+  std::vector<std::string> names;
+  world_.scene.forEach([&names](EntityHandle, const EntityData& entity) { names.push_back(entity.name); });
+  return names;
+}
+
+std::vector<std::string> WorldEditor::entitiesWithTag(const std::string& tag) const {
+  std::vector<std::string> names;
+  if (tag.empty()) return names;
+  world_.scene.forEach([&names, &tag](EntityHandle, const EntityData& entity) {
+    if (entity.hasTag(tag)) names.push_back(entity.name);
+  });
+  return names;
+}
+
+std::vector<std::string> WorldEditor::allTags() const {
+  std::vector<std::string> tags;
+  world_.scene.forEach([&tags](EntityHandle, const EntityData& entity) {
+    for (const std::string& tag : entity.tags) {
+      bool seen = false;
+      for (const std::string& known : tags) {
+        if (known == tag) seen = true;
+      }
+      if (!seen) tags.push_back(tag);
+    }
+  });
+  std::sort(tags.begin(), tags.end());
+  return tags;
+}
+
+const EntityData* WorldEditor::entity(const std::string& name) const {
+  return world_.scene.get(world_.scene.find(name));
+}
+
+bool WorldEditor::setEntityTransform(const std::string& name, const Vec3& position, const Vec3& scale) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->transform.position = position;
+  target->transform.scale = scale;
+  rebuildPhysics();  // an editor shows you the result, it does not ask you to restart
+  return true;
+}
+
+bool WorldEditor::setEntityColor(const std::string& name, const Vec3& color) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->color = color;
+  return true;
+}
+
+bool WorldEditor::addEntityTag(const std::string& name, const std::string& tag) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr || tag.empty()) return false;
+  target->addTag(tag);
+  return true;
+}
+
+bool WorldEditor::removeEntityTag(const std::string& name, const std::string& tag) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  return target->removeTag(tag);
+}
+
+bool WorldEditor::setEntityBody(const std::string& name, const BodyComponent& body) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->body = body;
+  rebuildPhysics();  // solid immediately, not after a reload
+  return true;
+}
+
+bool WorldEditor::clearEntityBody(const std::string& name) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr || !target->body.has_value()) return false;
+  target->body.reset();
+  rebuildPhysics();
+  return true;
+}
+
+bool WorldEditor::addEntityAnimation(const std::string& name, const AnimationComponent& clip) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr || clip.clip.empty()) return false;
+  target->animations.push_back(clip);
+  return true;
+}
+
+bool WorldEditor::addEntitySound(const std::string& name, const SoundComponent& sound) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr || sound.sound.empty()) return false;
+  target->sounds.push_back(sound);
+  return true;
+}
+
+bool WorldEditor::clearEntityAnimations(const std::string& name) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->animations.clear();
+  return true;
+}
+
+bool WorldEditor::clearEntitySounds(const std::string& name) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->sounds.clear();
+  return true;
+}
+
+std::string WorldEditor::importModel(const std::string& file, f64 size, std::string& error) {
+  if (!hasWorld_) {
+    error = "no world open";
+    return std::string();
+  }
+  if (file.empty()) {
+    error = "no file given";
+    return std::string();
+  }
+  std::string loadError;
+  auto loaded = assets::loadMesh(file, loadError);
+  if (!loaded.has_value()) {
+    error = loadError;
+    return std::string();
+  }
+
+  EntityData model;
+  // A unique name, so importing the same file twice gives two objects.
+  u32 index = 1U;
+  std::string name = "Model_1";
+  while (world_.scene.find(name) != kNullEntity) {
+    ++index;
+    name = "Model_" + std::to_string(index);
+  }
+  model.name = name;
+  model.meshFile = file;
+  model.mesh = MeshKind::cube;  // fallback shape while the mesh loads
+  model.transform.position = Vec3{0.0, 0.0, 0.0};
+
+  // Fit the model's largest dimension to the requested size, so any file
+  // becomes a prop of a predictable size whatever units it was authored in.
+  if (!loaded->mesh.positions.empty()) {
+    Vec3 lo = loaded->mesh.positions[0];
+    Vec3 hi = loaded->mesh.positions[0];
+    for (const Vec3& point : loaded->mesh.positions) {
+      lo.x = std::min(lo.x, point.x);
+      lo.y = std::min(lo.y, point.y);
+      lo.z = std::min(lo.z, point.z);
+      hi.x = std::max(hi.x, point.x);
+      hi.y = std::max(hi.y, point.y);
+      hi.z = std::max(hi.z, point.z);
+    }
+    const f64 largest = std::max(hi.x - lo.x, std::max(hi.y - lo.y, hi.z - lo.z));
+    if (largest > 1e-6 && size > 0.0) {
+      const f64 fit = size / largest;
+      model.transform.scale = Vec3{fit, fit, fit};
+    }
+  }
+  world_.scene.create(model);
+  rebuildPhysics();
+  return name;
+}
+
+bool WorldEditor::deleteEntity(const std::string& name) {
+  const EntityHandle handle = world_.scene.find(name);
+  if (handle == kNullEntity) return false;
+  world_.scene.destroy(handle);
+  rebuildPhysics();
+  refreshManaged();
+  return true;
+}
+
+u32 WorldEditor::fireTrigger(const std::string& trigger) {
+  if (trigger.empty()) return 0U;
+  u32 fired = 0U;
+  world_.scene.forEach([this, &trigger, &fired](EntityHandle, const EntityData& entity) {
+    for (const AnimationComponent& clip : entity.animations) {
+      if (clip.trigger != trigger) continue;
+      // Restart rather than stack: pressing a button twice should replay
+      // the move, not run two copies of it on the same model.
+      bool replaced = false;
+      for (PlayingClip& playing : playingClips_) {
+        if (playing.entity != entity.name || playing.clip != clip.clip) continue;
+        playing.timeLeft = kTriggerClipSeconds / std::max(clip.speed, 0.01);
+        playing.loop = clip.loop;
+        replaced = true;
+        break;
+      }
+      if (!replaced) {
+        PlayingClip playing;
+        playing.entity = entity.name;
+        playing.clip = clip.clip;
+        playing.timeLeft = kTriggerClipSeconds / std::max(clip.speed, 0.01);
+        playing.loop = clip.loop;
+        playingClips_.push_back(playing);
+      }
+      ++fired;
+    }
+    for (const SoundComponent& sound : entity.sounds) {
+      if (sound.trigger != trigger) continue;
+      triggeredSounds_.push_back(sound.sound);
+      ++fired;
+    }
+  });
+  return fired;
+}
+
+std::vector<std::string> WorldEditor::drainTriggeredSounds() {
+  std::vector<std::string> drained;
+  drained.swap(triggeredSounds_);
+  return drained;
+}
+
+std::vector<std::string> WorldEditor::playingAnimations() const {
+  std::vector<std::string> playing;
+  playing.reserve(playingClips_.size());
+  for (const PlayingClip& clip : playingClips_) {
+    playing.push_back(clip.entity + ":" + clip.clip);
+  }
+  return playing;
+}
+
+void WorldEditor::updateTriggers(f64 seconds) {
+  if (seconds <= 0.0 || playingClips_.empty()) return;
+  for (usize i = playingClips_.size(); i > 0U; --i) {
+    PlayingClip& clip = playingClips_[i - 1U];
+    clip.timeLeft -= seconds;
+    if (clip.timeLeft > 0.0) continue;
+    if (clip.loop) {
+      clip.timeLeft = kTriggerClipSeconds;  // a looping clip runs until stopped
+      continue;
+    }
+    playingClips_.erase(playingClips_.begin() + static_cast<std::ptrdiff_t>(i - 1U));
+  }
 }
 
 // --- Arena mode (stage 30) ---
@@ -2353,6 +2638,22 @@ std::vector<std::string> WorldEditor::hudLines() const {
     if (!trick.empty()) lines.push_back(trick);
   }
   return lines;
+}
+
+// Built-in events are trigger names too (stage 31): attach an animation to
+// "goal" in the editor and it plays when a goal is scored, with no code.
+const char* WorldEditor::eventTriggerName(GameEvent event) {
+  switch (event) {
+    case GameEvent::Shot: return "shot";
+    case GameEvent::Kick: return "kick";
+    case GameEvent::Holed: return "holed";
+    case GameEvent::Goal: return "goal";
+    case GameEvent::RoundOver: return "roundover";
+    case GameEvent::Whistle: return "whistle";
+    case GameEvent::Tackle: return "tackle";
+    case GameEvent::Trick: return "trick";
+  }
+  return "";
 }
 
 std::vector<WorldEditor::GameEvent> WorldEditor::drainEvents() {

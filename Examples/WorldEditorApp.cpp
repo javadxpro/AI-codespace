@@ -498,7 +498,14 @@ int main(int argc, char** argv) {
     }
 
     editor.update(dt);
-    for (const WorldEditor::GameEvent event : editor.drainEvents()) engine.server()->playSound(soundFor(event));
+    for (const WorldEditor::GameEvent event : editor.drainEvents()) {
+      engine.server()->playSound(soundFor(event));
+      // A component bound to "goal" or "kick" in the editor fires here,
+      // without any game code knowing that component exists (stage 31).
+      editor.fireTrigger(WorldEditor::eventTriggerName(event));
+    }
+    // Sounds queued by those components.
+    for (const std::string& sound : editor.drainTriggeredSounds()) engine.server()->playSound(sound);
 
     // --- Build the frame ---
     const kimia::EnvironmentColors colors = kimia::environmentColors(editor.world().environment);

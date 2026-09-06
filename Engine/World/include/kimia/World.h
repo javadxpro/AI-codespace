@@ -141,6 +141,11 @@ inline constexpr f64 kRulesStaminaRecover = 0.06;
 // tire, you do not stop dead.
 inline constexpr f64 kRulesTiredPace = 0.55;
 
+// How long a triggered animation clip runs before it retires, in seconds.
+// Real clip lengths arrive with the skeleton work; this keeps a triggered
+// move visible for a sensible beat in the meantime.
+inline constexpr f64 kTriggerClipSeconds = 0.8;
+
 // --- Arena mode (stage 30) ---
 // A shot leaves the muzzle at about chest height, not from the floor.
 inline constexpr f64 kArenaMuzzleHeight = 0.35;
@@ -364,6 +369,7 @@ public:
   usize goalCount() const;    // goal groups (legacy trios count as one)
   usize objectCount() const;  // all entities except the ground
   usize physicsBoxCount() const { return physics_.boxCount(); }
+  usize physicsDynamicCount() const { return physics_.dynamicBoxCount(); }
   usize dynamicBoxCount() const { return physics_.dynamicBoxCount(); }
   // A crate's position: the physics body while playing, the placed entity
   // position while building (crates reset to their placed spots on PLAY).
@@ -576,6 +582,58 @@ public:
   // Events survive until drained so a slow frame never loses one.
   enum class GameEvent { Shot, Kick, Holed, Goal, RoundOver, Whistle, Tackle, Trick };
   std::vector<GameEvent> drainEvents();
+  // The trigger name a built-in event fires ("goal", "kick", ...), so a
+  // component attached in the editor can respond to it with no code.
+  static const char* eventTriggerName(GameEvent event);
+
+  // --- Components, tags and triggers (stage 31) ---
+  //
+  // Everything the editor UI needs to inspect and change a world without
+  // knowing anything about the engine's internals.
+
+  // Entity names in scene order, for the hierarchy panel.
+  std::vector<std::string> entityNames() const;
+  // Every entity carrying a tag: how one thing refers to a GROUP of others
+  // ("goal", "cover", "enemy") rather than to a hard-coded name.
+  std::vector<std::string> entitiesWithTag(const std::string& tag) const;
+  // Every tag used anywhere in the world, sorted and de-duplicated.
+  std::vector<std::string> allTags() const;
+
+  // Read an entity by name (nullptr when there is no such thing).
+  const EntityData* entity(const std::string& name) const;
+
+  // --- Editing, all by entity name so the UI can stay stringly-typed ---
+  bool setEntityTransform(const std::string& name, const Vec3& position, const Vec3& scale);
+  bool setEntityColor(const std::string& name, const Vec3& color);
+  bool addEntityTag(const std::string& name, const std::string& tag);
+  bool removeEntityTag(const std::string& name, const std::string& tag);
+  // Attaches or replaces the physics component, then rebuilds the world so
+  // the change takes effect immediately — the point of an editor is that
+  // you see the result, not that you restart.
+  bool setEntityBody(const std::string& name, const BodyComponent& body);
+  bool clearEntityBody(const std::string& name);
+  bool addEntityAnimation(const std::string& name, const AnimationComponent& clip);
+  bool addEntitySound(const std::string& name, const SoundComponent& sound);
+  bool clearEntityAnimations(const std::string& name);
+  bool clearEntitySounds(const std::string& name);
+  // Creates an entity from a mesh file, sized to fit `size`. This is the
+  // "import a model" the editor offers. Returns the name it was given,
+  // or an empty string with `error` set.
+  std::string importModel(const std::string& file, f64 size, std::string& error);
+  bool deleteEntity(const std::string& name);
+
+  // --- Triggers: what connects a component to a button ---
+  // Fires every animation and sound whose trigger matches `trigger`, on
+  // every entity that has one. The app calls this when a key is pressed
+  // and when the game raises a built-in event ("kick", "goal", "walk").
+  // Returns how many components fired.
+  u32 fireTrigger(const std::string& trigger);
+  // The sounds queued by fireTrigger, drained by the app once a frame.
+  std::vector<std::string> drainTriggeredSounds();
+  // Animation clips currently playing, as "<entity>:<clip>" — the app and
+  // the tests both read this to see what a button actually did.
+  std::vector<std::string> playingAnimations() const;
+
 
   // --- Arena mode (stage 30) ---
   // The third-person shooter the battleground profile asks for. Off
@@ -679,6 +737,7 @@ private:
   void updateTrick(f64 seconds);  // advance and finish the running trick
   void updateAi(f64 seconds);     // drive every computer player one step
   void updateArena(f64 seconds);  // weapons, reloads, respawns
+  void updateTriggers(f64 seconds);  // advance and retire playing clips
   void arenaReset();              // full health and ammo for everyone
   bool arenaShoot(u32 id, const Vec3& aim);  // one fighter pulls the trigger
   Vec3 aiSeparation(u32 id) const;  // push away from crowding team-mates
@@ -727,6 +786,16 @@ private:
   Vec3 restartSpot_{0.0, 0.0, 0.0};
   f64 stamina_ = 1.0;
   bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
+
+  // Trigger state (stage 31).
+  struct PlayingClip {
+    std::string entity;
+    std::string clip;
+    f64 timeLeft = 0.0;
+    bool loop = false;
+  };
+  std::vector<PlayingClip> playingClips_;
+  std::vector<std::string> triggeredSounds_;
 
   // Arena state, kept per character id.
   std::map<u32, u32> arenaHealth_;

@@ -4156,3 +4156,282 @@ KIMIA_TEST(world_arena_hud_and_pads_replace_the_football_ones) {
   KIMIA_REQUIRE(hasHealth);
   KIMIA_REQUIRE(hasKills);
 }
+
+// --- Stage 31: components, tags and triggers ---
+
+KIMIA_TEST(world_import_a_model_and_make_it_solid_with_a_component) {
+  // The thing the player asked for and could not do: bring in your own
+  // file, give it physics, and have it actually collide.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  const kimia::usize before = editor.entityNames().size();
+
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 2.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  KIMIA_REQUIRE(error.empty());
+  KIMIA_REQUIRE(editor.entityNames().size() == before + 1U);
+
+  const EntityData* model = editor.entity(name);
+  KIMIA_REQUIRE(model != nullptr);
+  KIMIA_REQUIRE(model->meshFile == "Tests/assets/spider.obj");
+  // Sized to fit: whatever units the file used, it is 2 units across now.
+  KIMIA_REQUIRE(model->transform.scale.x > 0.0);
+
+  // With no body component it is scenery — nothing solid was added.
+  KIMIA_REQUIRE(!model->body.has_value());
+  const kimia::usize bare = editor.physicsBoxCount();
+
+  // Give it one, and the physics world gains a solid immediately: an
+  // editor shows you the result rather than asking you to restart.
+  kimia::BodyComponent body;
+  body.kind = kimia::BodyKind::Static;
+  KIMIA_REQUIRE(editor.setEntityBody(name, body));
+  KIMIA_REQUIRE(editor.entity(name)->body.has_value());
+  KIMIA_REQUIRE(editor.physicsBoxCount() == bare + 1U);
+
+  // Take it away again and the solid goes with it.
+  KIMIA_REQUIRE(editor.clearEntityBody(name));
+  KIMIA_REQUIRE(editor.physicsBoxCount() == bare);
+  // A missing file is refused with a reason rather than half-importing.
+  std::string failure;
+  KIMIA_REQUIRE(editor.importModel("Tests/assets/nope.obj", 1.0, failure).empty());
+  KIMIA_REQUIRE(!failure.empty());
+}
+
+KIMIA_TEST(world_a_body_component_beats_the_name_based_rules) {
+  // Until now an object's behaviour came from its NAME: "Crate_*" was
+  // pushable, everything else was not. A component has to override that,
+  // or you can never make your own object behave like anything.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  // The name says "Model_1", which no rule has ever cared about.
+  KIMIA_REQUIRE(kimia::objectKindForName(name) == kimia::ObjectKind::Model);
+
+  const kimia::usize boxes = editor.physicsBoxCount();
+  const kimia::usize dynamics = editor.physicsDynamicCount();
+
+  kimia::BodyComponent pushable;
+  pushable.kind = kimia::BodyKind::Dynamic;
+  pushable.mass = 3.0;
+  KIMIA_REQUIRE(editor.setEntityBody(name, pushable));
+  // It became a pushable body despite its name, and did NOT become a wall.
+  KIMIA_REQUIRE(editor.physicsDynamicCount() == dynamics + 1U);
+  KIMIA_REQUIRE(editor.physicsBoxCount() == boxes);
+
+  // Switching the component switches the behaviour.
+  kimia::BodyComponent wall;
+  wall.kind = kimia::BodyKind::Static;
+  KIMIA_REQUIRE(editor.setEntityBody(name, wall));
+  KIMIA_REQUIRE(editor.physicsBoxCount() == boxes + 1U);
+  KIMIA_REQUIRE(editor.physicsDynamicCount() == dynamics);
+
+  // And BodyKind::None is explicit decoration: drawn, never collided with.
+  kimia::BodyComponent decoration;
+  decoration.kind = kimia::BodyKind::None;
+  KIMIA_REQUIRE(editor.setEntityBody(name, decoration));
+  KIMIA_REQUIRE(editor.physicsBoxCount() == boxes);
+  KIMIA_REQUIRE(editor.physicsDynamicCount() == dynamics);
+}
+
+KIMIA_TEST(world_tags_group_objects_without_naming_them) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string a = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  const std::string b = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(a != b);  // importing twice gives two distinct objects
+
+  KIMIA_REQUIRE(editor.addEntityTag(a, "enemy"));
+  KIMIA_REQUIRE(editor.addEntityTag(b, "enemy"));
+  KIMIA_REQUIRE(editor.addEntityTag(a, "destructible"));
+
+  // One tag reaches a GROUP without either name being written down.
+  const std::vector<std::string> enemies = editor.entitiesWithTag("enemy");
+  KIMIA_REQUIRE(enemies.size() == 2U);
+  KIMIA_REQUIRE(editor.entitiesWithTag("destructible").size() == 1U);
+  KIMIA_REQUIRE(editor.entitiesWithTag("nothing-has-this").empty());
+
+  // The full tag list is what an editor's dropdown shows: sorted, unique.
+  const std::vector<std::string> tags = editor.allTags();
+  KIMIA_REQUIRE(tags.size() == 2U);
+  KIMIA_REQUIRE(tags[0] == "destructible");
+  KIMIA_REQUIRE(tags[1] == "enemy");
+
+  // Adding the same tag twice does not duplicate it.
+  KIMIA_REQUIRE(editor.addEntityTag(a, "enemy"));
+  KIMIA_REQUIRE(editor.entity(a)->tags.size() == 2U);
+  // Removing works, and removing something absent reports so.
+  KIMIA_REQUIRE(editor.removeEntityTag(a, "enemy"));
+  KIMIA_REQUIRE(editor.entitiesWithTag("enemy").size() == 1U);
+  KIMIA_REQUIRE(!editor.removeEntityTag(a, "enemy"));
+}
+
+KIMIA_TEST(world_an_animation_can_be_connected_to_a_button) {
+  // "Connect an animation to a button" — with no code, from data alone.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+
+  kimia::AnimationComponent clip;
+  clip.clip = "Bend";
+  clip.trigger = "k";
+  clip.loop = false;
+  KIMIA_REQUIRE(editor.addEntityAnimation(name, clip));
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+
+  // A trigger nothing is bound to does nothing at all.
+  KIMIA_REQUIRE(editor.fireTrigger("z") == 0U);
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+
+  // The bound one plays.
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  const std::vector<std::string> playing = editor.playingAnimations();
+  KIMIA_REQUIRE(playing.size() == 1U);
+  KIMIA_REQUIRE(playing[0] == name + ":Bend");
+
+  // Pressing again REPLAYS rather than stacking a second copy.
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  KIMIA_REQUIRE(editor.playingAnimations().size() == 1U);
+
+  // A one-shot clip retires on its own.
+  editor.choose(3);  // PLAY, so update() runs the world
+  for (i32 f = 0; f < 120; ++f) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+}
+
+KIMIA_TEST(world_a_sound_can_be_connected_to_a_button_and_to_an_event) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+
+  kimia::SoundComponent onKey;
+  onKey.sound = "kick";
+  onKey.trigger = "k";
+  KIMIA_REQUIRE(editor.addEntitySound(name, onKey));
+  // A built-in game event is a trigger name too, so a component can hang
+  // off "goal" with no engine code knowing it exists.
+  kimia::SoundComponent onGoal;
+  onGoal.sound = "whistle";
+  onGoal.trigger = "goal";
+  KIMIA_REQUIRE(editor.addEntitySound(name, onGoal));
+
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  std::vector<std::string> queued = editor.drainTriggeredSounds();
+  KIMIA_REQUIRE(queued.size() == 1U);
+  KIMIA_REQUIRE(queued[0] == "kick");
+  // Draining empties the queue.
+  KIMIA_REQUIRE(editor.drainTriggeredSounds().empty());
+
+  // The event name really is the trigger name.
+  KIMIA_REQUIRE(std::string(WorldEditor::eventTriggerName(WorldEditor::GameEvent::Goal)) == "goal");
+  KIMIA_REQUIRE(editor.fireTrigger(WorldEditor::eventTriggerName(WorldEditor::GameEvent::Goal)) == 1U);
+  queued = editor.drainTriggeredSounds();
+  KIMIA_REQUIRE(queued.size() == 1U);
+  KIMIA_REQUIRE(queued[0] == "whistle");
+}
+
+KIMIA_TEST(world_components_survive_a_save_and_load) {
+  // Anything the editor sets has to still be there next time, or the
+  // editor is a toy.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 2.0, error);
+  KIMIA_REQUIRE(!name.empty());
+
+  kimia::BodyComponent body;
+  body.kind = kimia::BodyKind::Sphere;
+  body.mass = 2.5;
+  body.friction = 0.33;
+  body.restitution = 0.66;
+  body.radius = 0.4;
+  editor.setEntityBody(name, body);
+  editor.addEntityTag(name, "enemy");
+  editor.addEntityTag(name, "loud");
+  kimia::AnimationComponent clip;
+  clip.clip = "Bend";
+  clip.trigger = "k";
+  clip.loop = true;
+  clip.speed = 1.5;
+  editor.addEntityAnimation(name, clip);
+  kimia::SoundComponent sound;
+  sound.sound = "kick";
+  sound.trigger = "goal";
+  sound.volume = 0.8;
+  editor.addEntitySound(name, sound);
+
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  WorldData reloaded;
+  std::string loadError;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, loadError));
+
+  const EntityData* back = reloaded.scene.get(reloaded.scene.find(name));
+  KIMIA_REQUIRE(back != nullptr);
+  KIMIA_REQUIRE(back->meshFile == "Tests/assets/spider.obj");
+  KIMIA_REQUIRE(back->tags.size() == 2U);
+  KIMIA_REQUIRE(back->hasTag("enemy"));
+  KIMIA_REQUIRE(back->hasTag("loud"));
+  KIMIA_REQUIRE(back->body.has_value());
+  KIMIA_REQUIRE(back->body->kind == kimia::BodyKind::Sphere);
+  KIMIA_REQUIRE(near(back->body->mass, 2.5));
+  KIMIA_REQUIRE(near(back->body->friction, 0.33));
+  KIMIA_REQUIRE(near(back->body->restitution, 0.66));
+  KIMIA_REQUIRE(near(back->body->radius, 0.4));
+  KIMIA_REQUIRE(back->animations.size() == 1U);
+  KIMIA_REQUIRE(back->animations[0].clip == "Bend");
+  KIMIA_REQUIRE(back->animations[0].trigger == "k");
+  KIMIA_REQUIRE(back->animations[0].loop);
+  KIMIA_REQUIRE(near(back->animations[0].speed, 1.5));
+  KIMIA_REQUIRE(back->sounds.size() == 1U);
+  KIMIA_REQUIRE(back->sounds[0].sound == "kick");
+  KIMIA_REQUIRE(back->sounds[0].trigger == "goal");
+
+  // A world with no components at all still saves exactly as it used to,
+  // so every existing .kimia file is untouched by this.
+  WorldEditor plain;
+  createWorldFor(plain, "street");
+  std::string plainText;
+  kimia::WorldIO::save(plain.world(), plainText);
+  KIMIA_REQUIRE(plainText.find(" tag ") == std::string::npos);
+  KIMIA_REQUIRE(plainText.find(" body ") == std::string::npos);
+  KIMIA_REQUIRE(plainText.find(" anim ") == std::string::npos);
+}
+
+KIMIA_TEST(world_editor_can_move_recolour_and_delete_by_name) {
+  // The rest of what an inspector panel needs.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+
+  KIMIA_REQUIRE(editor.setEntityTransform(name, Vec3{1.0, 2.0, 3.0}, Vec3{2.0, 2.0, 2.0}));
+  KIMIA_REQUIRE(near3(editor.entity(name)->transform.position, Vec3{1.0, 2.0, 3.0}));
+  KIMIA_REQUIRE(near3(editor.entity(name)->transform.scale, Vec3{2.0, 2.0, 2.0}));
+
+  KIMIA_REQUIRE(editor.setEntityColor(name, Vec3{0.2, 0.4, 0.6}));
+  KIMIA_REQUIRE(near3(editor.entity(name)->color, Vec3{0.2, 0.4, 0.6}));
+
+  // The hierarchy panel's list.
+  const std::vector<std::string> names = editor.entityNames();
+  bool found = false;
+  for (const std::string& each : names) {
+    if (each == name) found = true;
+  }
+  KIMIA_REQUIRE(found);
+
+  KIMIA_REQUIRE(editor.deleteEntity(name));
+  KIMIA_REQUIRE(editor.entity(name) == nullptr);
+  // Everything refuses politely when the name is wrong, rather than crashing.
+  KIMIA_REQUIRE(!editor.deleteEntity(name));
+  KIMIA_REQUIRE(!editor.setEntityColor("no-such-thing", Vec3{1.0, 1.0, 1.0}));
+  KIMIA_REQUIRE(!editor.addEntityTag("no-such-thing", "x"));
+  KIMIA_REQUIRE(!editor.setEntityBody("no-such-thing", kimia::BodyComponent{}));
+}
