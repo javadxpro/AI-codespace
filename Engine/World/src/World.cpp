@@ -987,6 +987,8 @@ bool WorldEditor::pass() {
   const f64 wanted = std::sqrt(std::max(2.0 * decel * distance * 1.15, 1e-6));
   ball->velocity = Vec3{dx / distance * wanted, 0.0, dz / distance * wanted};
   ball->spin = takeCurlSpin();
+  // The linesman only watches balls the player actually plays.
+  humanPassedBall_ = true;
   events_.push_back(GameEvent::Kick);
   return true;
 }
@@ -1268,12 +1270,19 @@ void WorldEditor::updateRules(f64 seconds, const Vec3& previousBall) {
   // Flagged when the ball is played to a team-mate who was beyond the last
   // defender. Checked against the pass target, which is who the ball is
   // actually going to.
-  const u32 target = passTarget();
-  if (target != 0U && offsideFor(target) && ball->velocity.length() > 1.0) {
-    const CharacterBody* mate = physics_.characterById(target);
-    if (mate != nullptr) {
-      awardRestart(Stoppage::Offside, 2U, Vec3{mate->position.x, 0.0, mate->position.z});
-      return;
+  // Only when the HUMAN actually plays the ball. This used to run every
+  // frame against whoever happened to be furthest forward, so once the
+  // computer players started making runs the flag went up 44 times a
+  // minute and the match was stopped 95% of the time.
+  if (humanPassedBall_) {
+    humanPassedBall_ = false;
+    const u32 target = passTarget();
+    if (target != 0U && offsideFor(target)) {
+      const CharacterBody* mate = physics_.characterById(target);
+      if (mate != nullptr) {
+        awardRestart(Stoppage::Offside, 2U, Vec3{mate->position.x, 0.0, mate->position.z});
+        return;
+      }
     }
   }
 
@@ -1443,6 +1452,34 @@ bool WorldEditor::aiHasPossession(u32 team) const {
   return true;
 }
 
+// The net this side is attacking. Team 1 shoots at the -Z goal, team 2 at
+// the +Z one (matching scoringTeamForGoalZ).
+Vec3 WorldEditor::aiGoalMouth(u32 team) const {
+  const f64 forward = attackDirectionZ(team);
+  // Default: the middle of the far goal line, in case no goal was built.
+  Vec3 mouth{0.0, 0.0, forward * world_.halfLength()};
+  f64 half = kWorldGoalMedium * 0.5;
+  std::map<std::string, GoalGroup> goals;
+  scanGoals(world_.scene, goals);
+  for (const auto& entry : goals) {
+    const GoalGroup& goal = entry.second;
+    if (!goal.valid()) continue;
+    // The one we are shooting AT is on their side of halfway.
+    if (forward > 0.0 ? goal.z() <= 0.0 : goal.z() > 0.0) continue;
+    mouth = Vec3{goal.x(), 0.0, goal.z()};
+    half = goal.width() * 0.5;
+    break;
+  }
+  // Aim at a POST, not the middle. The keeper stands on the centre of its
+  // line, so a side that always shoots down the middle is saved every
+  // time — which is exactly why one team could never score. Each side
+  // favours a different corner so the two are not mirror images.
+  const SphereBody* ball = physics_.sphere(ballId_);
+  const f64 side = ball != nullptr && ball->position.x > mouth.x ? 1.0 : -1.0;
+  mouth.x += side * half * kAiGoalCorner;
+  return mouth;
+}
+
 WorldEditor::AiRole WorldEditor::aiRole(u32 id) const {
   if (!aiActive() || id == kPrimaryCharacter) return AiRole::Idle;
   const CharacterBody* body = physics_.characterById(id);
@@ -1508,7 +1545,6 @@ Vec3 WorldEditor::aiTargetFor(u32 id) const {
 
   const f64 boundX = world_.halfWidth() - kPlayerMargin;
   const f64 limit = world_.halfLength() - kPlayerMargin;
-  const f64 theirGoalZ = forward * world_.halfLength();
 
   // --- The player on the ball ---
   if (id == aiChaser(team)) {
@@ -1520,22 +1556,31 @@ Vec3 WorldEditor::aiTargetFor(u32 id) const {
     // standing over it. This is the difference between a game and a scrum:
     // somebody has to actually take the ball somewhere.
     if (range < world_.ball.radius + kAiTackleReach + kAiApproachOffset) {
-      // A ball pinned against a wall is the classic deadlock: the attacker
-      // stands on it, its target is where it already is, and the match
-      // stops. Peel back toward the middle of the pitch instead.
-      const f64 wallZ = world_.halfLength() - world_.ball.radius;
+      // Run AT the goal. This used to stop short: the "trapped ball" rule
+      // counted the END wall as trouble, but that is exactly where the net
+      // is, so the attacker turned back every time it got close and the
+      // score stayed 0-0 forever.
+      //
+      // Only the SIDE walls trap a ball. A ball in the corner gets taken
+      // back infield; a ball near the goal line gets put in the net.
       const f64 wallX = world_.halfWidth() - world_.ball.radius;
-      const bool onEndWall = std::abs(ball->position.z) > wallZ - kAiWallEscape;
-      const bool onSideWall = std::abs(ball->position.x) > wallX - kAiWallEscape;
-      if (onEndWall || onSideWall) {
-        return Vec3{onSideWall ? 0.0 : ball->position.x, body->position.y,
-                    onEndWall ? 0.0 : ball->position.z};
+      if (std::abs(ball->position.x) > wallX - kAiWallEscape) {
+        return Vec3{0.0, body->position.y, ball->position.z};
       }
-      const f64 driveX = ball->position.x * 0.6;  // cut infield toward the posts
-      const f64 aheadZ = ball->position.z + forward * kAiShootRange;
-      return Vec3{std::min(boundX, std::max(-boundX, driveX)), body->position.y,
-                  std::min(limit, std::max(-limit, forward > 0.0 ? std::min(aheadZ, theirGoalZ)
-                                                                 : std::max(aheadZ, theirGoalZ)))};
+      const Vec3 mouth = aiGoalMouth(team);
+      // Run THROUGH the ball toward the goal, not at the goal directly.
+      // Heading straight for the net meant the player could end up on the
+      // wrong side of the ball and drag it backwards, which made it
+      // judder on the spot instead of advancing.
+      const f64 toGoalX = mouth.x - ball->position.x;
+      const f64 toGoalZ = mouth.z - ball->position.z;
+      const f64 toGoal = std::sqrt(toGoalX * toGoalX + toGoalZ * toGoalZ);
+      if (toGoal < kMoveEpsilon) return Vec3{mouth.x, body->position.y, mouth.z};
+      // A point a stride beyond the ball, on the line from ball to goal.
+      const f64 stepX = ball->position.x + toGoalX / toGoal * kAiGoalAim;
+      const f64 stepZ = ball->position.z + toGoalZ / toGoal * kAiGoalAim;
+      return Vec3{std::min(boundX, std::max(-boundX, stepX)), body->position.y,
+                  std::min(limit, std::max(-limit, stepZ))};
     }
 
     // DEFEND / close down: approach the ball from our OWN goal side, not
@@ -1564,7 +1609,13 @@ Vec3 WorldEditor::aiTargetFor(u32 id) const {
   // Spread the supporting players evenly across the width instead of
   // stacking them: (slot + 1) / (mates + 1) maps to the whole pitch.
   const f64 t = static_cast<f64>(slot + 1U) / static_cast<f64>(mates + 1U);
-  const f64 lane = -boundX + 2.0 * boundX * t;
+  f64 lane = -boundX + 2.0 * boundX * t;
+  // Keep out of the ball carrier's way. A lane that happens to run through
+  // the ball turns the support player into a second attacker and they end
+  // up jostling over it, which is the pile-up all over again.
+  if (std::abs(lane - ball->position.x) < kAiPersonalSpace) {
+    lane += lane < ball->position.x ? -kAiPersonalSpace : kAiPersonalSpace;
+  }
 
   // With the ball, push UP in support so there is an option ahead; without
   // it, drop goal-side and defend. A team that only ever sits behind the
@@ -1665,13 +1716,21 @@ void WorldEditor::updateAi(f64 seconds) {
       const f64 ballDx = ball->position.x - body->position.x;
       const f64 ballDz = ball->position.z - body->position.z;
       if (std::sqrt(ballDx * ballDx + ballDz * ballDz) < world_.ball.radius + kAiTackleReach + kAiApproachOffset) {
-        const Vec3 want = aiTargetFor(id);
+        // Push it at the NET. Pushing it toward the player's own waypoint
+        // sent it sideways or backwards, because that waypoint is a spot
+        // beside the ball rather than somewhere to take it.
+        const Vec3 want = aiGoalMouth(body->team);
         const f64 towardX = want.x - ball->position.x;
         const f64 towardZ = want.z - ball->position.z;
         const f64 towardLength = std::sqrt(towardX * towardX + towardZ * towardZ);
         if (towardLength > kMoveEpsilon) {
-          ball->velocity.x = towardX / towardLength * kAiDribblePush * skill;
-          ball->velocity.z = towardZ / towardLength * kAiDribblePush * skill;
+          // Close to the net: hit it. Dribbling all the way in gave the
+          // defence time to get back every single time.
+          const bool shooting = towardLength < kAiShootFrom;
+          const f64 push = shooting ? kAiShootSpeed : kAiDribblePush;
+          ball->velocity.x = towardX / towardLength * push * skill;
+          ball->velocity.z = towardZ / towardLength * push * skill;
+          if (shooting) events_.push_back(GameEvent::Kick);
         }
       }
     }
@@ -1684,14 +1743,42 @@ void WorldEditor::updateAi(f64 seconds) {
     // Only a DEFENDER tackles. This used to fire for the attacker too, so
     // the side in possession booted its own ball goal-ward every frame —
     // straight into the end wall, where it stuck and the match froze.
-    if (ball == nullptr || body->team == 1U) continue;
+    //
+    // BOTH sides tackle. This was once limited to team 2, back when team 2
+    // meant "the human's opponents" — but the player's own side is run by
+    // the computer too, so that quietly made every match one-way: team 1
+    // could hold the ball all game and never be able to win it back or
+    // clear it, and finished 0-22.
+    if (ball == nullptr) continue;
     if (aiRole(id) != AiRole::Defend) continue;
     const f64 ballDx = ball->position.x - body->position.x;
     const f64 ballDz = ball->position.z - body->position.z;
     if (std::sqrt(ballDx * ballDx + ballDz * ballDz) > world_.ball.radius + kAiTackleReach) continue;
-    const f64 forward = attackDirectionZ(body->team);
-    ball->velocity.x = ballDx * skill;
-    ball->velocity.z = forward * kAiTacklePush * skill;
+    // A tackle CLEARS the ball away from the tackler, it does not fire it
+    // up the pitch. Sending it toward the tackler's attacking end meant
+    // every challenge nudged the ball the same way; with one side holding
+    // an extra body, that bias piled up until the ball spent 92% of the
+    // match in one half and only one team could ever score.
+    const f64 awayLength = std::sqrt(ballDx * ballDx + ballDz * ballDz);
+    if (awayLength > kMoveEpsilon) {
+      // Clear it away, but bend the clearance back INFIELD. A defender on
+      // the touchline otherwise hammers the ball straight out for a
+      // throw-in every time, which on a narrow pitch stopped play almost
+      // continuously.
+      const f64 infield = -ball->position.x / std::max(world_.halfWidth(), 1e-6);
+      f64 outX = ballDx / awayLength + infield;
+      f64 outZ = ballDz / awayLength;
+      const f64 outLength = std::sqrt(outX * outX + outZ * outZ);
+      if (outLength > kMoveEpsilon) {
+        outX /= outLength;
+        outZ /= outLength;
+      }
+      ball->velocity.x = outX * kAiTacklePush * skill;
+      ball->velocity.z = outZ * kAiTacklePush * skill;
+    } else {
+      // Dead on top of it: clear it toward the tackler's own attacking end.
+      ball->velocity.z = attackDirectionZ(body->team) * kAiTacklePush * skill;
+    }
     events_.push_back(GameEvent::Tackle);
   }
 }

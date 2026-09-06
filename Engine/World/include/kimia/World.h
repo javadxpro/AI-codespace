@@ -93,12 +93,24 @@ inline constexpr f64 kAiStuckTime = 0.6;
 inline constexpr f64 kAiUnstickTime = 0.7;
 // A player carrying the ball drives it at goal from this far out.
 inline constexpr f64 kAiShootRange = 6.0;
-// A ball this close to a wall is trapped: the attacker takes it back
-// toward the middle instead of pinning it against the boards forever.
+// A ball this close to a SIDE wall is trapped: the attacker takes it back
+// toward the middle instead of pinning it against the boards. The end
+// walls are deliberately excluded — that is where the goals are, and
+// treating them as trouble is what stopped anyone ever scoring.
 inline constexpr f64 kAiWallEscape = 1.2;
+// Where the attacker aims: the mouth of the opposition goal.
+inline constexpr f64 kAiGoalAim = 0.9;
+// How far toward a post the attacker aims, as a share of the half width.
+// Shooting straight down the middle is where the keeper already stands.
+inline constexpr f64 kAiGoalCorner = 0.7;
 // How hard the player on the ball nudges it along, m/s. Without this the
 // ball only ever moves when somebody collides with it by luck.
 inline constexpr f64 kAiDribblePush = 2.6;
+// Inside this range of the net the attacker stops dribbling and SHOOTS.
+// Walking the ball in never worked: at dribble pace the defence always got
+// back first, so one side could dominate possession and still never score.
+inline constexpr f64 kAiShootFrom = 4.5;
+inline constexpr f64 kAiShootSpeed = 9.0;
 
 // --- Camera director (stage 28) ---
 // How fast the camera swings to follow the aim, 1/s.
@@ -502,6 +514,10 @@ public:
   // True when this side has the ball (their chaser is on it).
   bool aiHasPossession(u32 team) const;
 
+  // The middle of the net this team is shooting at. Falls back to the far
+  // end of the pitch when the world has no goal built yet.
+  Vec3 aiGoalMouth(u32 team) const;
+
   // The character each side has sent for the ball right now (0 = nobody).
   // Only one per team: the rest hold their shape instead of swarming.
   u32 aiChaser(u32 team) const;
@@ -660,6 +676,7 @@ private:
   u32 restartTeam_ = 0U;
   Vec3 restartSpot_{0.0, 0.0, 0.0};
   f64 stamina_ = 1.0;
+  bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
   // Per-character jam detection: where it was, how long it has failed to
   // get anywhere, and how long it should keep sidestepping.
   std::map<u32, Vec3> aiLastPos_;

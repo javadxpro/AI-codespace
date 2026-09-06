@@ -2393,6 +2393,8 @@ KIMIA_TEST(world_match_goal_scores_for_the_attacking_side_and_kicks_off_again) {
 KIMIA_TEST(world_match_own_goal_scores_for_the_other_side) {
   WorldEditor editor;
   createWorldFor(editor, "street");
+  // This is about who a goal is CREDITED to, not about beating a defence.
+  editor.setAiSkill(0.0);
   addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
   exitPlace(editor);
   addGoal(editor, 1, Vec3{0.0, 0.0, 2.0});  // OUR net, on the +Z half
@@ -3775,4 +3777,116 @@ KIMIA_TEST(world_ai_takes_a_trapped_ball_back_off_the_wall) {
   for (i32 f = 0; f < 900; ++f) editor.update(1.0 / 60.0);
   // Somebody has dug it out and brought it back into the pitch.
   KIMIA_REQUIRE(editor.ballPosition().z > -endWall + 0.5);
+}
+
+// --- Stage 27.2: the computer players must actually attack the goal ---
+
+namespace {
+// Street with a real net at each end, in PLAY, human parked out of the way.
+void streetWithNets(WorldEditor& editor) {
+  createWorldFor(editor, "street");
+  editor.choose(0);  // catalog
+  editor.choose(1);  // ball
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  addGoal(editor, 1, Vec3{0.0, 0.0, -7.5});
+  exitPlace(editor);
+  addGoal(editor, 1, Vec3{0.0, 0.0, 7.5});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.9});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+}
+}  // namespace
+
+KIMIA_TEST(world_ai_actually_scores_goals) {
+  // The player's second report: "still the same, they just position
+  // themselves properly". They held their shape but never finished a move.
+  WorldEditor editor;
+  streetWithNets(editor);
+  KIMIA_REQUIRE(editor.goalCount() == 2U);
+
+  for (i32 f = 0; f < 10800; ++f) editor.update(1.0 / 60.0);  // three minutes
+  // Somebody has to have scored. A match that ends 0-0 with nobody ever
+  // reaching a net is the bug, not a tight game.
+  KIMIA_REQUIRE(editor.teamScore(1U) + editor.teamScore(2U) > 0U);
+}
+
+KIMIA_TEST(world_ai_aims_at_the_net_it_is_attacking) {
+  WorldEditor editor;
+  streetWithNets(editor);
+  // Team 1 scores in the z <= 0 goal (scoringTeamForGoalZ), team 2 in the
+  // other. Each side must be aiming at the right one — pointing a side at
+  // its own net is the kind of sign error that ends 0-22.
+  KIMIA_REQUIRE(editor.aiGoalMouth(1U).z < 0.0);
+  KIMIA_REQUIRE(editor.aiGoalMouth(2U).z > 0.0);
+  // And it aims at a post rather than the middle, where the keeper stands.
+  KIMIA_REQUIRE(std::abs(editor.aiGoalMouth(1U).x) > 0.1);
+}
+
+KIMIA_TEST(world_ai_carries_the_ball_toward_the_goal_not_backwards) {
+  // With a clear run at goal the ball must go FORWARD. It used to judder
+  // on the spot because the carrier could end up on the wrong side of it
+  // and drag it back the way it came.
+  WorldEditor editor;
+  streetWithNets(editor);
+  // Clear the opposition out of the way so this measures the carry alone.
+  for (const u32 id : editor.squadIds()) {
+    if (editor.squadTeam(id) == 2U) editor.setSquadPosition(id, Vec3{0.0, 0.5, 7.0});
+  }
+  const u32 chaser = editor.aiChaser(1U);
+  KIMIA_REQUIRE(chaser != 0U);
+  editor.setSquadPosition(chaser, Vec3{0.0, 0.5, 0.7});
+
+  const f64 before = editor.ballPosition().z;
+  for (i32 f = 0; f < 240; ++f) editor.update(1.0 / 60.0);
+  // Team 1 attacks -Z, so the ball must have gone that way, and by a
+  // clear margin rather than jittering.
+  KIMIA_REQUIRE(editor.ballPosition().z < before - 1.0);
+}
+
+KIMIA_TEST(world_ai_tackle_clears_the_ball_instead_of_always_one_way) {
+  // The tackle used to fire the ball toward the tackler's attacking end
+  // whoever they were. With one side fielding an extra body that bias
+  // stacked up until the ball spent 92% of the match in one half.
+  WorldEditor editor;
+  streetWithNets(editor);
+  i32 inTeam1Half = 0;
+  for (i32 f = 0; f < 7200; ++f) {
+    editor.update(1.0 / 60.0);
+    if (editor.ballPosition().z > 0.0) ++inTeam1Half;
+  }
+  const f64 share = static_cast<f64>(inTeam1Half) / 7200.0;
+  // Not a perfect split — one side is a man up while the human idles — but
+  // nothing like the old 92% one-way drift.
+  KIMIA_REQUIRE(share > 0.15);
+  KIMIA_REQUIRE(share < 0.85);
+}
+
+KIMIA_TEST(world_offside_only_fires_when_the_player_plays_the_ball) {
+  // Once the computer players started making runs, the flag went up 44
+  // times a minute and grass was stopped 95% of the time. The linesman
+  // only watches balls the HUMAN actually plays.
+  WorldEditor editor;
+  createWorldFor(editor, "grass");
+  editor.choose(0);
+  editor.choose(1);
+  editor.setGhostPosition(Vec3{0.0, 0.0, 0.0});
+  editor.choose(0);
+  exitPlace(editor);
+  editor.choose(3);
+  KIMIA_REQUIRE(editor.rulesEnabled());
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 18.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+
+  i32 stopped = 0;
+  for (i32 f = 0; f < 3600; ++f) {
+    editor.update(1.0 / 60.0);
+    if (editor.playStopped()) ++stopped;
+  }
+  // A minute of computer football the human never touches must not be
+  // whistled to a standstill.
+  KIMIA_REQUIRE(stopped < 600);  // under a sixth of the time
 }
