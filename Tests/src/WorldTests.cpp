@@ -1092,6 +1092,9 @@ KIMIA_TEST(world_street_profile_skips_the_ball_question) {
 KIMIA_TEST(world_profile_field_bounds_player_ball_and_ghost) {
   WorldEditor editor;
   createWorldFor(editor, "street");  // 5 wide: half width 2.5
+  // This test is about the walls, not the opposition: with the computer
+  // players switched off nothing else can touch the ball.
+  editor.setAiSkill(0.0);
   // Ghost: clamped 0.5 inside the edge on X, free along the 16 m length.
   editor.choose(0);
   editor.choose(2);  // block
@@ -2353,6 +2356,9 @@ KIMIA_TEST(world_match_goal_scores_for_the_attacking_side_and_kicks_off_again) {
   KIMIA_REQUIRE(editor.teamScore(1U) == 0U);
   KIMIA_REQUIRE(editor.teamScore(2U) == 0U);
   KIMIA_REQUIRE(editor.matchScoreText() == "MA 0 - 0 ANHA");
+  // This test is about who gets CREDITED for a goal, not about beating a
+  // keeper: with the opposition switched off the ball reaches the net.
+  editor.setAiSkill(0.0);
   editor.setPlayerPosition(Vec3{0.0, 0.5, 0.6});
   editor.setMoveInput(0.0, -1.0);
   editor.update(0.0);  // kick it toward -Z
@@ -2534,6 +2540,7 @@ KIMIA_TEST(world_a_curled_kick_lands_wide_of_a_straight_one) {
   const auto kickLanding = [](f64 curl) {
     WorldEditor editor;
     createWorldFor(editor, "street");  // kick pops the ball up 2.0 m/s
+    editor.setAiSkill(0.0);  // measure the curl, not a defender's boot
     addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
     exitPlace(editor);
     editor.choose(3);
@@ -2566,6 +2573,10 @@ KIMIA_TEST(world_pass_finds_a_team_mate_ahead_and_reaches_their_feet) {
   exitPlace(editor);
   editor.choose(3);  // PLAY: the squads come out, team 1 on +Z
   KIMIA_REQUIRE(editor.squadCount() == 10U);
+  // This measures the WEIGHT of the pass: how far the ball runs. With the
+  // computer players live the receiver would jog off to a new position and
+  // the arrival point would be measuring their run, not the pass.
+  editor.setAiSkill(0.0);
   // The player stands at the centre; team 1 mates are on the +Z half, so
   // aim back up the pitch (yaw pi = toward +Z) to find them.
   editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
@@ -2971,4 +2982,204 @@ KIMIA_TEST(world_trick_pads_appear_only_for_the_games_that_allow_them) {
     KIMIA_REQUIRE(pad.second != "o");
     KIMIA_REQUIRE(pad.second != "u");
   }
+}
+
+// --- Stage 27: computer players ---
+
+KIMIA_TEST(world_ai_is_off_by_default_and_statues_never_move) {
+  // Every profile that shipped before stage 27 had no opposition worth the
+  // name, and must still behave that way: skill 0 means nobody moves.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  KIMIA_REQUIRE(editor.aiActive());  // street DOES field a live opposition
+  editor.setAiSkill(0.0);
+  KIMIA_REQUIRE(!editor.aiActive());
+  KIMIA_REQUIRE(editor.aiChaser(2U) == 0U);
+  KIMIA_REQUIRE(editor.aiKeeper(2U) == 0U);
+
+  const Vec3 before = editor.squadPosition(2U);
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, 0.0});
+  for (i32 i = 0; i < 60; ++i) editor.update(1.0 / 60.0);
+  const Vec3 after = editor.squadPosition(2U);
+  // Not "barely moved": exactly where it was.
+  KIMIA_REQUIRE(near3(after, before, 1e-12));
+
+  // Golf is one player: there is nobody to be clever with at all.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(golf.aiSkill() == 0.0);
+  KIMIA_REQUIRE(!golf.aiActive());
+}
+
+KIMIA_TEST(world_ai_sends_exactly_one_chaser_and_it_is_not_the_keeper) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  KIMIA_REQUIRE(editor.aiActive());
+
+  const u32 chaser = editor.aiChaser(2U);
+  const u32 keeper = editor.aiKeeper(2U);
+  KIMIA_REQUIRE(chaser != 0U);
+  KIMIA_REQUIRE(keeper != 0U);
+  // The keeper minds the net; sending them chasing leaves an empty goal.
+  KIMIA_REQUIRE(chaser != keeper);
+  // Both really are on the side we asked about.
+  KIMIA_REQUIRE(editor.squadTeam(chaser) == 2U);
+  KIMIA_REQUIRE(editor.squadTeam(keeper) == 2U);
+  // Both sides field their own, and never the human.
+  const u32 ourChaser = editor.aiChaser(1U);
+  KIMIA_REQUIRE(ourChaser != 0U);
+  KIMIA_REQUIRE(ourChaser != kimia::kPrimaryCharacter);
+  KIMIA_REQUIRE(editor.squadTeam(ourChaser) == 1U);
+  KIMIA_REQUIRE(ourChaser != chaser);
+}
+
+KIMIA_TEST(world_ai_chaser_actually_closes_on_the_ball) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  // Park the human far away so only the computer is doing anything.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  const u32 chaser = editor.aiChaser(2U);
+  KIMIA_REQUIRE(chaser != 0U);
+
+  const Vec3 ballSpot{0.0, editor.world().ball.radius, 0.0};
+  const auto gap = [&editor, chaser, &ballSpot]() {
+    const Vec3 at = editor.squadPosition(chaser);
+    return std::sqrt(std::pow(at.x - ballSpot.x, 2.0) + std::pow(at.z - ballSpot.z, 2.0));
+  };
+  const f64 before = gap();
+  // Hold the ball still so we are measuring the chase, not the ball.
+  for (i32 i = 0; i < 60; ++i) {
+    editor.setBallPosition(ballSpot);
+    editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+    editor.update(1.0 / 60.0);
+  }
+  const f64 after = gap();
+  KIMIA_REQUIRE(before > 1.5);   // it really did start away from the ball
+  KIMIA_REQUIRE(after < 0.75);   // and it really did arrive
+  KIMIA_REQUIRE(after < before);
+}
+
+KIMIA_TEST(world_ai_keeper_stays_near_its_own_line) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  const u32 keeper = editor.aiKeeper(2U);
+  KIMIA_REQUIRE(keeper != 0U);
+  // Team 2 defends the -Z end.
+  const f64 ownLine = -editor.world().halfLength();
+
+  // Drag the ball right across the far corner: a keeper must track it but
+  // must NOT go charging up the pitch after it.
+  editor.setBallPosition(Vec3{2.0, editor.world().ball.radius, 6.0});
+  for (i32 i = 0; i < 180; ++i) {
+    editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+    editor.update(1.0 / 60.0);
+  }
+  const Vec3 at = editor.squadPosition(keeper);
+  // Still in its own third, nowhere near the ball at the other end.
+  KIMIA_REQUIRE(at.z < ownLine + kimia::kAiKeeperRange * 2.0 + 1.0);
+  KIMIA_REQUIRE(at.z < 0.0);
+  // And it did not abandon the goal sideways either.
+  KIMIA_REQUIRE(std::abs(at.x) <= kimia::kWorldGoalLarge);
+}
+
+KIMIA_TEST(world_ai_support_players_do_not_all_swarm_the_ball) {
+  // The rule that stops a match becoming a scrum: only the chaser goes for
+  // the ball, everyone else holds a shape behind it.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  const Vec3 ballSpot{0.0, editor.world().ball.radius, 0.0};
+  const u32 chaser = editor.aiChaser(2U);
+  for (i32 i = 0; i < 120; ++i) {
+    editor.setBallPosition(ballSpot);
+    editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+    editor.update(1.0 / 60.0);
+  }
+  // Count how many of team 2 ended up standing on the ball.
+  u32 onTheBall = 0U;
+  for (const u32 id : editor.squadIds()) {
+    if (id == kimia::kPrimaryCharacter || editor.squadTeam(id) != 2U) continue;
+    const Vec3 at = editor.squadPosition(id);
+    if (std::sqrt(std::pow(at.x - ballSpot.x, 2.0) + std::pow(at.z - ballSpot.z, 2.0)) < 1.5) ++onTheBall;
+  }
+  KIMIA_REQUIRE(chaser != 0U);
+  KIMIA_REQUIRE(onTheBall == 1U);  // exactly the chaser, nobody else
+}
+
+KIMIA_TEST(world_ai_defender_tackles_the_ball_away) {
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(1.0);  // a sharp defender, so the tackle is decisive
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+  const Vec3 ballSpot{0.0, editor.world().ball.radius, 0.0};
+  editor.setBallPosition(ballSpot);
+  editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+  // Let a defender arrive and put a boot through it.
+  for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);
+  // The ball was left completely still, so any motion is the tackle. Team
+  // 2 defends the -Z end and attacks +Z, so a clearance goes UP the pitch,
+  // away from the net they are protecting.
+  KIMIA_REQUIRE(editor.ballPosition().z > ballSpot.z + 0.5);
+  KIMIA_REQUIRE(editor.ballVelocity().z > 0.0);
+}
+
+KIMIA_TEST(world_ai_makes_showing_off_genuinely_risky) {
+  // Stages 26 and 27 together: start a trick in front of a live defender
+  // and they take it off you before you finish, so you score nothing.
+  WorldEditor editor;
+  streetAtTheFeet(editor);
+  editor.setAiSkill(1.0);
+  // Stand where the opposition will reach us, and let one arrive.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, -2.0});
+  editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, -2.0});
+  for (i32 i = 0; i < 90; ++i) {
+    editor.setBallPosition(Vec3{0.0, editor.world().ball.radius, -2.0});
+    editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+    editor.update(1.0 / 60.0);
+  }
+  // Now try to show off. The roulette is the slowest move, so it is the
+  // easiest to get robbed during.
+  if (editor.startTrick(WorldEditor::Trick::Roulette)) {
+    for (i32 i = 0; i < 90; ++i) editor.update(1.0 / 60.0);
+    // Either they robbed us (no points) or we completed it (full points) —
+    // never a partial score. The engine must not pay out half a trick.
+    const u32 style = editor.styleScore();
+    KIMIA_REQUIRE(style == 0U || style == kimia::kTrickRoulettePoints);
+  }
+  KIMIA_REQUIRE(!editor.trickActive());
+}
+
+KIMIA_TEST(world_ai_skill_reaches_the_simulation_from_the_profile) {
+  // The profile is the only place the number comes from, and a sharper
+  // side really does close you down faster.
+  WorldEditor street;
+  streetAtTheFeet(street);
+  KIMIA_REQUIRE(near(street.aiSkill(), 0.6));
+  KIMIA_REQUIRE(near(street.profile().aiSkill, 0.6));
+
+  WorldEditor grass;
+  createWorldFor(grass, "grass");
+  // A serious fixture fields a sharper side than an alley kickabout.
+  KIMIA_REQUIRE(near(grass.aiSkill(), 0.85));
+  KIMIA_REQUIRE(grass.aiSkill() > street.aiSkill());
+
+  // Measured: the same chase, run at two skills, covers different ground.
+  const auto chaseGap = [](f64 skill) {
+    WorldEditor editor;
+    streetAtTheFeet(editor);
+    editor.setAiSkill(skill);
+    editor.setPlayerPosition(Vec3{0.0, 0.5, 7.0});
+    const u32 chaser = editor.aiChaser(2U);
+    const Vec3 spot{0.0, editor.world().ball.radius, 0.0};
+    for (i32 i = 0; i < 30; ++i) {
+      editor.setBallPosition(spot);
+      editor.setBallVelocity(Vec3{0.0, 0.0, 0.0});
+      editor.update(1.0 / 60.0);
+    }
+    const Vec3 at = editor.squadPosition(chaser);
+    return std::sqrt(std::pow(at.x - spot.x, 2.0) + std::pow(at.z - spot.z, 2.0));
+  };
+  // Half a second of chasing: the sharp one is measurably closer.
+  KIMIA_REQUIRE(chaseGap(1.0) < chaseGap(0.3));
 }

@@ -55,6 +55,25 @@ inline constexpr f64 kTrickNutmegRange = 2.5;
 // Get the ball this far from your feet mid-trick and the move is lost.
 inline constexpr f64 kTrickLoseBall = 2.0;
 
+// --- Computer players (stage 27) ---
+// Only the closest team-mate on each side actually goes for the ball. The
+// rest hold their shape, or a match turns into every player chasing the
+// same ball in a heap — which is what school football looks like, not a
+// game worth playing against.
+// How fast a computer player runs, as a share of the human's speed. Even
+// a perfect one is a shade slower so a good player can beat them.
+inline constexpr f64 kAiMaxSpeedFactor = 0.92;
+// A chaser this close to the ball is considered to be ON it.
+inline constexpr f64 kAiTackleReach = 0.75;
+// How hard a tackle knocks the ball away, m/s at full skill.
+inline constexpr f64 kAiTacklePush = 4.0;
+// A keeper never strays further than this from its own line.
+inline constexpr f64 kAiKeeperRange = 2.5;
+// Support players hold this far behind the ball, up their own half.
+inline constexpr f64 kAiSupportGap = 3.0;
+// Below this skill the computer players do not move at all.
+inline constexpr f64 kAiIdleSkill = 0.05;
+
 // --- Weather and the clock (stage 24) ---
 inline constexpr f64 kWorldSunrise = 6.0;   // before this it is night
 inline constexpr f64 kWorldSunset = 19.0;   // from this hour it is night
@@ -360,6 +379,10 @@ public:
 
   // Debug/test hooks.
   void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
+  // Overrides the profile's computer skill for this world. Setting 0 puts
+  // the squads back to statues, which is how tests isolate everything that
+  // is not the AI.
+  void setAiSkill(f64 skill) { world_.profile.aiSkill = skill < 0.0 ? 0.0 : (skill > 1.0 ? 1.0 : skill); }
 
   // --- Ball control (stage 23) ---
   // Curl for the NEXT shot/pass, -1..1 (negative = left, positive = right).
@@ -398,6 +421,20 @@ public:
   std::string trickHudText() const;
   // True when this world's profile has skill moves switched on.
   bool tricksEnabled() const { return world_.profile.tricks; }
+
+  // --- Computer players (stage 27) ---
+  // How sharp this world's computer players are, 0 (statues) .. 1.
+  f64 aiSkill() const { return world_.profile.aiSkill; }
+  bool aiActive() const { return world_.profile.aiSkill > kAiIdleSkill && squadCount() > 1U; }
+  // The character each side has sent for the ball right now (0 = nobody).
+  // Only one per team: the rest hold their shape instead of swarming.
+  u32 aiChaser(u32 team) const;
+  // The keeper of a side: the player nearest its own goal line. 0 when the
+  // side is too small to spare one.
+  u32 aiKeeper(u32 team) const;
+  // Where a given computer player wants to be right now. Useful on its own
+  // for tests and for drawing debug markers.
+  Vec3 aiTargetFor(u32 id) const;
 
   // Pass the ball to a team-mate: the nearest one in front of the aim, at
   // the speed that arrives at their feet. False when nobody is available.
@@ -459,6 +496,7 @@ private:
   void kickOff();      // ball to the center spot, squads back to formation
   Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
   void updateTrick(f64 seconds);  // advance and finish the running trick
+  void updateAi(f64 seconds);     // drive every computer player one step
   f64 trickDuration(Trick trick) const;
   u32 trickPoints(Trick trick) const;
   bool opponentInFront(f64 range) const;  // is there someone to nutmeg?

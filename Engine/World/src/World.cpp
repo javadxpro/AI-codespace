@@ -712,6 +712,10 @@ void WorldEditor::update(f64 hostSeconds) {
       }
     }
 
+    // Computer players move before the tricks resolve, so a defender who
+    // arrives this frame can take the ball off a show-off in the same frame.
+    updateAi(hostSeconds);
+
     // Skill moves run on the same clock as everything else, after the
     // ball has been moved and clamped, so a trick that finishes this frame
     // launches the ball from where it actually is.
@@ -1098,6 +1102,152 @@ void WorldEditor::updateTrick(f64 seconds) {
   styleScore_ += trickPoints(finished);
   lastTrick_ = finished;
   events_.push_back(GameEvent::Kick);
+}
+
+// --- Computer players (stage 27) ---
+//
+// The whole design is one idea: only ONE player per side goes for the
+// ball. Everyone else holds a shape. Without that rule every character
+// runs at the ball at once and a match becomes a scrum.
+
+// Which way this team is attacking: team 1 defends +Z and shoots toward
+// -Z, team 2 the other way round. Matches scoringTeamForGoalZ.
+namespace {
+f64 attackDirectionZ(u32 team) { return team == 1U ? -1.0 : 1.0; }
+}  // namespace
+
+u32 WorldEditor::aiChaser(u32 team) const {
+  if (!aiActive()) return 0U;
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return 0U;
+  const u32 keeper = aiKeeper(team);
+  u32 best = 0U;
+  f64 bestDistance = 0.0;
+  for (const u32 id : physics_.characterIds()) {
+    // The human is never picked: the player chases their own ball.
+    if (id == kPrimaryCharacter) continue;
+    const CharacterBody* body = physics_.characterById(id);
+    if (body == nullptr || body->team != team) continue;
+    if (id == keeper) continue;  // the keeper minds the net, not the ball
+    const f64 dx = ball->position.x - body->position.x;
+    const f64 dz = ball->position.z - body->position.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    if (best == 0U || distance < bestDistance) {
+      best = id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+u32 WorldEditor::aiKeeper(u32 team) const {
+  if (!aiActive()) return 0U;
+  // A side needs somebody to spare: with one outfield player, that player
+  // goes for the ball rather than standing on the line.
+  u32 count = 0U;
+  for (const u32 id : physics_.characterIds()) {
+    if (id == kPrimaryCharacter) continue;
+    const CharacterBody* body = physics_.characterById(id);
+    if (body != nullptr && body->team == team) ++count;
+  }
+  if (count < 2U) return 0U;
+
+  // The keeper is whoever is deepest in their own half.
+  const f64 ownGoalZ = -attackDirectionZ(team) * world_.halfLength();
+  u32 best = 0U;
+  f64 bestDistance = 0.0;
+  for (const u32 id : physics_.characterIds()) {
+    if (id == kPrimaryCharacter) continue;
+    const CharacterBody* body = physics_.characterById(id);
+    if (body == nullptr || body->team != team) continue;
+    const f64 distance = std::abs(body->position.z - ownGoalZ);
+    if (best == 0U || distance < bestDistance) {
+      best = id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+Vec3 WorldEditor::aiTargetFor(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr || id == kPrimaryCharacter) return Vec3{0.0, 0.0, 0.0};
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return body->position;
+  const u32 team = body->team;
+  const f64 forward = attackDirectionZ(team);
+  const f64 ownGoalZ = -forward * world_.halfLength();
+
+  // --- Keeper: stay on the line, shuffle across to the ball ---
+  if (id == aiKeeper(team)) {
+    // A keeper tracks the ball sideways but never wanders far off the
+    // line: an empty net is worse than a shot saved.
+    const f64 postLimit = kWorldGoalLarge * 0.5;
+    const f64 x = std::min(postLimit, std::max(-postLimit, ball->position.x));
+    // Comes out a little when the ball is close, back on the line when not.
+    const f64 ballDepth = std::abs(ball->position.z - ownGoalZ);
+    const f64 comeOut = ballDepth < kAiKeeperRange * 2.0 ? kAiKeeperRange : kAiKeeperRange * 0.35;
+    return Vec3{x, body->position.y, ownGoalZ + forward * comeOut};
+  }
+
+  // --- Chaser: go and get it ---
+  if (id == aiChaser(team)) return Vec3{ball->position.x, body->position.y, ball->position.z};
+
+  // --- Everyone else: hold a shape relative to the ball ---
+  // Sit goal-side of the ball, spread across the width, so the side keeps
+  // its shape and there is somebody to pass to.
+  const f64 supportZ = ball->position.z - forward * kAiSupportGap;
+  const f64 limit = world_.halfLength() - kPlayerMargin;
+  // Fan out from the ball rather than all standing on the same spot: the
+  // character id gives each one a stable slot.
+  const f64 spread = (static_cast<f64>(id % 3U) - 1.0) * kAiSupportGap;
+  const f64 boundX = world_.halfWidth() - kPlayerMargin;
+  return Vec3{std::min(boundX, std::max(-boundX, ball->position.x + spread)), body->position.y,
+              std::min(limit, std::max(-limit, supportZ))};
+}
+
+void WorldEditor::updateAi(f64 seconds) {
+  if (!aiActive() || seconds <= 0.0) return;
+  SphereBody* ball = physics_.sphere(ballId_);
+  const f64 skill = world_.profile.aiSkill;
+  // Skill scales how fast they close you down. Even a perfect one is a
+  // shade slower than the human, so a good player can still beat them.
+  const f64 speed = world_.player.speed * kAiMaxSpeedFactor * skill;
+  const f64 boundX = world_.halfWidth() - kPlayerMargin;
+  const f64 boundZ = world_.halfLength() - kPlayerMargin;
+
+  for (const u32 id : physics_.characterIds()) {
+    if (id == kPrimaryCharacter) continue;  // the human drives themself
+    CharacterBody* body = physics_.characterById(id);
+    if (body == nullptr) continue;
+    const Vec3 target = aiTargetFor(id);
+    const f64 dx = target.x - body->position.x;
+    const f64 dz = target.z - body->position.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    Vec3 wanted{0.0, 0.0, 0.0};
+    // Do not jitter on the spot once they have arrived.
+    if (distance > kMoveEpsilon) {
+      // Ease off over the last stride so they settle instead of overshooting.
+      const f64 pace = std::min(speed, distance / std::max(seconds, 1e-4));
+      wanted = Vec3{dx / distance * pace, 0.0, dz / distance * pace};
+    }
+    physics_.moveCharacter(id, seconds, wanted);
+    // Keep them on the pitch, like the human.
+    body->position.x = std::min(boundX, std::max(-boundX, body->position.x));
+    body->position.z = std::min(boundZ, std::max(-boundZ, body->position.z));
+
+    // --- Tackling ---
+    // An opponent who reaches the ball knocks it away toward their own
+    // attacking end. This is what makes a trick risky: start showing off
+    // in front of a defender and they will take it off you.
+    if (ball == nullptr || body->team == 1U) continue;
+    const f64 ballDx = ball->position.x - body->position.x;
+    const f64 ballDz = ball->position.z - body->position.z;
+    if (std::sqrt(ballDx * ballDx + ballDz * ballDz) > world_.ball.radius + kAiTackleReach) continue;
+    const f64 forward = attackDirectionZ(body->team);
+    ball->velocity.x = ballDx * skill;
+    ball->velocity.z = forward * kAiTacklePush * skill;
+  }
 }
 
 std::string WorldEditor::trickHudText() const {

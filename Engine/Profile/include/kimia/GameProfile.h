@@ -70,6 +70,7 @@ inline constexpr f64 kProfileWetMax = 1.0;
 // Kick-off time as hours on a 24 h clock, 12.0 = midday (the default, and
 // what every game did before this stage existed).
 inline constexpr f64 kProfileHourMax = 24.0;
+inline constexpr f64 kProfileAiMax = 1.0;
 
 // Squad size limits: 1 = a single player (golf, sandbox), 11 = a full grass
 // football side. The ceiling keeps a typo from spawning a crowd the phone
@@ -125,6 +126,10 @@ struct GameProfile {
   // where a nutmeg is worth more than a goal. A serious grass fixture turns
   // them off, so the same engine plays two different games.
   bool tricks = false;
+  // How sharp the computer players are (stage 27). 0 = statues, which is
+  // exactly how every squad behaved until now, so an old profile plays
+  // unchanged. 1 = they chase hard and hold their shape.
+  f64 aiSkill = 0.0;
 
   f64 halfLength() const { return fieldLength * 0.5; }
   f64 halfWidth() const { return fieldWidth * 0.5; }
@@ -166,6 +171,7 @@ std::vector<GameProfile> loadProfiles(const std::string& dir);
 //   team 5                       (players per side, 1..16; 1 = single player)
 //   match 300.000000             (match length in seconds, 0 = no clock)
 //   tricks on                    (skill moves + style points: on/off)
+//   ai 0.700000                  (computer skill, 0 = statues .. 1 = sharp)
 //
 // `#` lines are comments, unknown keys are skipped, a line missing any of
 // its values is ignored as a whole (never half-applied), out-of-range

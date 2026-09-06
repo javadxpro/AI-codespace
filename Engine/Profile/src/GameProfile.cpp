@@ -170,6 +170,7 @@ std::vector<GameProfile> builtinProfiles() {
   street.teamSize = 5U;         // ۵ در برابر ۵
   street.matchSeconds = 300.0;  // ۵ دقیقه
   street.tricks = true;         // the alley is where showboating belongs
+  street.aiSkill = 0.6;         // alley opposition: keen, not professional
   // A street game after school: late afternoon, and the alley is still
   // damp from earlier rain even though it has stopped.
   street.hour = 17.0;
@@ -193,6 +194,7 @@ std::vector<GameProfile> builtinProfiles() {
   grass.kickUp = 0.8;
   grass.teamSize = 11U;        // ۱۱ در برابر ۱۱
   grass.matchSeconds = 600.0;  // ۱۰ دقیقه
+  grass.aiSkill = 0.85;        // a serious fixture: they close you down
   // A proper evening fixture under lights, with a bit of drizzle: the
   // ball runs on off a wet pitch.
   grass.hour = 19.5;
@@ -217,6 +219,7 @@ std::vector<GameProfile> builtinProfiles() {
   battleground.kickUp = 1.2;
   battleground.teamSize = 4U;         // تیم‌های ۴ نفره
   battleground.matchSeconds = 420.0;  // ۷ دقیقه
+  battleground.aiSkill = 0.7;
   battleground.hour = 20.5;  // dusk raid
   profiles.push_back(battleground);
 
@@ -273,6 +276,7 @@ std::vector<std::string> ProfileIO::lines(const GameProfile& profile) {
   out.push_back("weather " + formatFixed6(profile.rain) + ' ' + formatFixed6(profile.wetness));
   out.push_back("time " + formatFixed6(profile.hour));
   out.push_back(std::string("tricks ") + (profile.tricks ? "on" : "off"));
+  out.push_back("ai " + formatFixed6(profile.aiSkill));
   return out;
 }
 
@@ -416,6 +420,13 @@ bool ProfileIO::parseLine(const std::string& rawLine, GameProfile& out) {
     f64 hour = 0.0;
     if (!(tokens >> value) || !parseF64Token(value, hour)) return false;
     out.hour = clampF64(hour, 0.0, kProfileHourMax);
+    return true;
+  }
+  if (key == "ai") {
+    std::string value;
+    f64 skill = 0.0;
+    if (!(tokens >> value) || !parseF64Token(value, skill)) return false;
+    out.aiSkill = clampF64(skill, 0.0, kProfileAiMax);
     return true;
   }
   if (key == "tricks") {
