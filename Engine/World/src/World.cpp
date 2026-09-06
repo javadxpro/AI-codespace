@@ -452,6 +452,28 @@ void WorldEditor::setSquadPosition(u32 id, const Vec3& position) {
   body->velocity = Vec3{0.0, 0.0, 0.0};
 }
 
+f64 WorldEditor::squadSpeed(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return 0.0;
+  return std::sqrt(body->velocity.x * body->velocity.x + body->velocity.z * body->velocity.z);
+}
+
+f64 WorldEditor::squadFacing(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  if (body == nullptr) return 0.0;
+  // Face the way you are running. Standing still, the human keeps its aim
+  // and everyone else faces up the pitch, so nobody stares at their feet.
+  const f64 speed = std::sqrt(body->velocity.x * body->velocity.x + body->velocity.z * body->velocity.z);
+  if (speed > 0.15) return std::atan2(body->velocity.x, -body->velocity.z);
+  if (id == kPrimaryCharacter) return aimYaw_;
+  return body->team == 1U ? 3.14159265358979323846 : 0.0;
+}
+
+bool WorldEditor::squadAirborne(u32 id) const {
+  const CharacterBody* body = physics_.characterById(id);
+  return body != nullptr && !body->onGround;
+}
+
 u32 WorldEditor::squadTeam(u32 id) const {
   const CharacterBody* body = physics_.characterById(id);
   if (body == nullptr) return 0U;
@@ -798,6 +820,9 @@ void WorldEditor::update(f64 hostSeconds) {
         }
       }
     }
+
+    // The walk cycle only runs while the game does.
+    figureClock_ += hostSeconds;
 
     // Triggered clips age out (stage 31).
     updateTriggers(hostSeconds);

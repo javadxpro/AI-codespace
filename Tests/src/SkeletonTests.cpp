@@ -375,3 +375,186 @@ KIMIA_TEST(fbx_skinned_bar_really_bends_when_it_is_posed) {
   KIMIA_REQUIRE(worstBottom < 1e-9);  // the base does not budge
   KIMIA_REQUIRE(bestTop > 0.5);       // the tip really swings
 }
+
+// --- Stage 33: the figure rig ---
+
+KIMIA_TEST(figure_rig_is_a_valid_skeleton_with_named_joints) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  KIMIA_REQUIRE(rig.boneCount() == static_cast<usize>(kimia::FigureBone::Count));
+  KIMIA_REQUIRE(rig.isValid());  // parents always before children
+
+  // The joints a walking figure needs, wired up the way a body is.
+  KIMIA_REQUIRE(rig.bones[0].name == "Hips");
+  KIMIA_REQUIRE(rig.bones[0].parent == kimia::kNoParentBone);
+  KIMIA_REQUIRE(rig.findBone("Head") >= 0);
+  KIMIA_REQUIRE(rig.findBone("LeftFoot") >= 0);
+  KIMIA_REQUIRE(rig.findBone("RightHand") >= 0);
+  // A hand hangs off an arm, a foot off a leg — not straight off the hips.
+  KIMIA_REQUIRE(rig.bones[rig.findBone("LeftHand")].parent == rig.findBone("LeftArm"));
+  KIMIA_REQUIRE(rig.bones[rig.findBone("LeftFoot")].parent == rig.findBone("LeftLeg"));
+
+  // Every limb bone must have LENGTH. A zero-length bone cannot swing:
+  // the first build gave the legs a sideways offset only, and they stayed
+  // rigid however fast the figure ran.
+  for (const char* name : {"LeftArm", "LeftHand", "LeftLeg", "LeftFoot"}) {
+    const kimia::Bone& bone = rig.bones[rig.findBone(name)];
+    KIMIA_REQUIRE(std::abs(bone.restPose.position.y) > 0.05);
+  }
+}
+
+KIMIA_TEST(figure_stands_on_the_ground_at_its_own_height) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  std::vector<Transform3D> pose;
+  std::vector<kimia::FigureLimb> limbs;
+  kimia::poseFigure(rig, kimia::FigureMotion{}, pose);
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  KIMIA_REQUIRE(limbs.size() >= 10U);
+
+  f64 lowest = 1e9;
+  f64 highest = -1e9;
+  for (const kimia::FigureLimb& limb : limbs) {
+    lowest = std::min(lowest, std::min(limb.from.y, limb.to.y));
+    highest = std::max(highest, std::max(limb.from.y, limb.to.y));
+  }
+  // Feet on the floor, head near the stated height. The first attempt left
+  // the figure floating half a metre up because the thighs had no length.
+  KIMIA_REQUIRE(lowest >= -0.05);
+  KIMIA_REQUIRE(lowest < 0.15);
+  KIMIA_REQUIRE(highest > 1.5);
+  KIMIA_REQUIRE(highest < 1.95);
+
+  // A shorter figure really is shorter.
+  const Skeleton child = kimia::makeFigureRig(1.0);
+  kimia::poseFigure(child, kimia::FigureMotion{}, pose);
+  kimia::figureLimbs(child, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  f64 top = -1e9;
+  for (const kimia::FigureLimb& limb : limbs) top = std::max(top, std::max(limb.from.y, limb.to.y));
+  KIMIA_REQUIRE(top < 1.2);
+}
+
+KIMIA_TEST(figure_walks_with_opposite_arm_to_opposite_leg) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  std::vector<Transform3D> pose;
+  std::vector<kimia::FigureLimb> limbs;
+
+  // Limb 7 is LeftLeg->LeftFoot, 9 is RightLeg->RightFoot, 3 is the left
+  // forearm. (Reading the wrong index is how I first convinced myself the
+  // legs were not moving when they were.)
+  kimia::FigureMotion walking;
+  walking.speed = 4.0;
+  walking.time = 0.4;
+  kimia::poseFigure(rig, walking, pose);
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  const f64 leftFoot = limbs[7].to.z;
+  const f64 rightFoot = limbs[9].to.z;
+  const f64 leftHand = limbs[3].to.z;
+
+  // The feet are on opposite sides of the body: that is a stride.
+  KIMIA_REQUIRE(std::abs(leftFoot) > 0.05);
+  KIMIA_REQUIRE(leftFoot * rightFoot < 0.0);
+  // And the arm opposite the leading leg swings the other way, which is
+  // what makes a walk read as a walk rather than a shuffle.
+  KIMIA_REQUIRE(leftFoot * leftHand < 0.0);
+}
+
+KIMIA_TEST(figure_stride_grows_with_speed_and_stops_when_still) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  std::vector<Transform3D> pose;
+  std::vector<kimia::FigureLimb> limbs;
+
+  const auto strideAt = [&](f64 speed) {
+    f64 lowest = 1e9;
+    f64 highest = -1e9;
+    for (i32 step = 0; step < 80; ++step) {
+      kimia::FigureMotion motion;
+      motion.speed = speed;
+      motion.time = static_cast<f64>(step) * 0.02;
+      kimia::poseFigure(rig, motion, pose);
+      kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+      lowest = std::min(lowest, limbs[7].to.z);
+      highest = std::max(highest, limbs[7].to.z);
+    }
+    return highest - lowest;
+  };
+
+  const f64 amble = strideAt(1.0);
+  const f64 run = strideAt(4.0);
+  const f64 sprint = strideAt(8.0);
+  KIMIA_REQUIRE(amble > 0.02);
+  KIMIA_REQUIRE(run > amble);
+  KIMIA_REQUIRE(sprint > run);
+  // A sprint is a stride, not a stretch: it stays a plausible step.
+  KIMIA_REQUIRE(sprint < 1.5);
+
+  // Standing still is perfectly still, at any moment in time. A figure
+  // that jiggles on the spot looks broken.
+  kimia::FigureMotion early;
+  early.time = 1.0;
+  kimia::poseFigure(rig, early, pose);
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  const f64 first = limbs[7].to.z;
+  kimia::FigureMotion later;
+  later.time = 9.9;
+  kimia::poseFigure(rig, later, pose);
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  KIMIA_REQUIRE(first == limbs[7].to.z);
+}
+
+KIMIA_TEST(figure_faces_where_it_is_told_and_stands_where_it_is_put) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  std::vector<Transform3D> pose;
+  std::vector<kimia::FigureLimb> limbs;
+  kimia::poseFigure(rig, kimia::FigureMotion{}, pose);
+
+  // Facing 0, the left shoulder is off to +X.
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+  const f64 shoulderX = limbs[2].to.x;
+  KIMIA_REQUIRE(shoulderX > 0.05);
+
+  // Turned a quarter turn, that same shoulder has swung round to Z.
+  kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 1.5707963267948966, limbs);
+  KIMIA_REQUIRE(std::abs(limbs[2].to.x) < 0.02);
+  KIMIA_REQUIRE(std::abs(limbs[2].to.z) > 0.05);
+
+  // Moved across the pitch, the whole figure moves with it.
+  kimia::figureLimbs(rig, pose, Vec3{5.0, 0.0, -3.0}, 0.0, limbs);
+  KIMIA_REQUIRE(near(limbs[2].to.x, 5.0 + shoulderX, 1e-9));
+  KIMIA_REQUIRE(near3(limbs[0].from, Vec3{5.0, limbs[0].from.y, -3.0}, 1e-9));
+}
+
+KIMIA_TEST(figure_tucks_in_the_air_and_lies_flat_when_downed) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  std::vector<Transform3D> pose;
+  std::vector<kimia::FigureLimb> limbs;
+
+  const auto topOf = [&](const kimia::FigureMotion& motion) {
+    kimia::poseFigure(rig, motion, pose);
+    kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+    f64 top = -1e9;
+    for (const kimia::FigureLimb& limb : limbs) top = std::max(top, std::max(limb.from.y, limb.to.y));
+    return top;
+  };
+
+  const f64 standing = topOf(kimia::FigureMotion{});
+
+  // Knocked out: down on the floor, clearly not still standing.
+  kimia::FigureMotion downed;
+  downed.downed = true;
+  const f64 flat = topOf(downed);
+  KIMIA_REQUIRE(flat < standing * 0.6);
+
+  // Airborne: the legs tuck, so the feet come UP relative to standing.
+  // Measured against the standing pose rather than an invented number —
+  // what matters is that the jump differs from a stand, not that the feet
+  // clear some particular height.
+  const auto lowestOf = [&](const kimia::FigureMotion& motion) {
+    kimia::poseFigure(rig, motion, pose);
+    kimia::figureLimbs(rig, pose, Vec3{0.0, 0.0, 0.0}, 0.0, limbs);
+    f64 lowest = 1e9;
+    for (const kimia::FigureLimb& limb : limbs) lowest = std::min(lowest, std::min(limb.from.y, limb.to.y));
+    return lowest;
+  };
+  kimia::FigureMotion jumping;
+  jumping.airborne = true;
+  KIMIA_REQUIRE(lowestOf(jumping) > lowestOf(kimia::FigureMotion{}) + 0.03);
+}

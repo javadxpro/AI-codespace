@@ -16,6 +16,7 @@
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
+#include <kimia/Skeleton.h>
 #include <kimia/Studio.h>
 #include <kimia/Version.h>
 #include <kimia/World.h>
@@ -256,6 +257,47 @@ void addAimIndicator(RenderScene& scene, const WorldEditor& editor, const MeshDa
 // which nobody noticed while they stood still. Now that stage 27 has them
 // running about, an invisible opposition makes a match unplayable. Each
 // character is a coloured box: our side in blue, theirs in red.
+// One rig shared by everyone: it is a fixed shape, so building it per
+// character per frame would be waste.
+const kimia::Skeleton& figureRig() {
+  static const kimia::Skeleton rig = kimia::makeFigureRig(1.7);
+  return rig;
+}
+
+// Draws one posed figure as a set of limb segments. Each segment is a
+// stretched cube laid along the bone, which is all the software rasteriser
+// needs and reads far better than the single box these used to be.
+void addFigure(RenderScene& scene, const MeshData& cube, const kimia::Skeleton& rig,
+               const kimia::FigureMotion& motion, const Vec3& at, f64 facing, const Vec3& color) {
+  static std::vector<kimia::Transform3D> pose;
+  static std::vector<kimia::FigureLimb> limbs;
+  kimia::poseFigure(rig, motion, pose);
+  kimia::figureLimbs(rig, pose, at, facing, limbs);
+  for (const kimia::FigureLimb& limb : limbs) {
+    const Vec3 along = limb.to - limb.from;
+    const f64 length = along.length();
+    if (length < 1e-4) continue;
+    const Vec3 middle = limb.from + along * 0.5;
+    // Build the segment lying along +Y, then turn +Y onto the bone.
+    const Vec3 up{0.0, 1.0, 0.0};
+    const Vec3 dir = along * (1.0 / length);
+    const f64 dot = up.x * dir.x + up.y * dir.y + up.z * dir.z;
+    Mat4 orient;  // identity when the bone already points up
+    if (dot < 0.9999) {
+      if (dot < -0.9999) {
+        orient = Mat4::rotationX(3.14159265358979323846);  // straight down
+      } else {
+        const Vec3 axis{up.y * dir.z - up.z * dir.y, up.z * dir.x - up.x * dir.z, up.x * dir.y - up.y * dir.x};
+        orient = kimia::Quat::fromAxisAngle(axis, std::acos(dot)).toMat4();
+      }
+    }
+    scene.objects.push_back({&cube,
+                             Mat4::translation(middle) * orient *
+                                 Mat4::scaling(Vec3{limb.thickness, length, limb.thickness}),
+                             color, 1.0});
+  }
+}
+
 void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cube) {
   if (!editor.playing() || editor.squadCount() <= 1U) return;
   const Vec3 ourColor{0.25, 0.45, 0.95};
@@ -267,18 +309,22 @@ void addSquads(RenderScene& scene, const WorldEditor& editor, const MeshData& cu
     const Vec3 at = editor.squadPosition(id);
     const kimia::u32 team = editor.squadTeam(id);
     Vec3 color = team == 1U ? ourColor : theirColor;
-    Vec3 size{0.6, 1.0, 0.6};
-    if (editor.arenaMode()) {
-      // A downed fighter lies flat and goes grey, so it is obvious at a
-      // glance who is still in the fight.
-      if (editor.downed(id)) {
-        color = Vec3{0.45, 0.45, 0.45};
-        size = Vec3{0.9, 0.25, 0.9};
-      }
-    } else if (id == editor.aiKeeper(team)) {
+    const bool down = editor.arenaMode() && editor.downed(id);
+    if (down) {
+      color = Vec3{0.45, 0.45, 0.45};
+    } else if (!editor.arenaMode() && id == editor.aiKeeper(team)) {
       color = keeperColor;
     }
-    scene.objects.push_back({&cube, Mat4::translation(at) * Mat4::scaling(size), color, 1.0});
+    // A jointed figure, not a sliding box (stage 33). The rig is the
+    // engine's; the moment somebody imports a model it replaces this.
+    kimia::FigureMotion motion;
+    motion.speed = editor.squadSpeed(id);
+    motion.time = editor.figureClock();
+    motion.airborne = editor.squadAirborne(id);
+    motion.downed = down;
+    // The feet belong on the floor: the body position is its centre.
+    const Vec3 feet{at.x, at.y - kimia::kWorldPlayerRadius - 0.15, at.z};
+    addFigure(scene, cube, figureRig(), motion, feet, editor.squadFacing(id), color);
   }
 }
 

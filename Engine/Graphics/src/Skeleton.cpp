@@ -209,4 +209,166 @@ bool poseMesh(const SkinnedMesh& mesh, const AnimationClip& clip, f64 time, Mesh
   return skinMesh(mesh, matrices, out);
 }
 
+// --- Posing a figure without a model (stage 33) ---
+//
+// A rig, not a character. The engine supplies the joints so a player is
+// visibly a figure with limbs; the ART is always the user's to bring.
+
+namespace {
+
+// Proportions as fractions of total height, near enough to a real body
+// that the walk reads correctly.
+constexpr f64 kHipHeight = 0.53;
+constexpr f64 kChestRise = 0.24;
+constexpr f64 kHeadRise = 0.16;
+constexpr f64 kShoulderHalf = 0.11;
+constexpr f64 kHipHalf = 0.055;
+constexpr f64 kUpperArm = 0.16;
+constexpr f64 kForearm = 0.15;
+constexpr f64 kThigh = 0.26;
+constexpr f64 kShin = 0.25;
+
+Bone makeBone(const char* name, i32 parent, const Vec3& offset) {
+  Bone bone;
+  bone.name = name;
+  bone.parent = parent;
+  bone.restPose.position = offset;
+  return bone;
+}
+
+}  // namespace
+
+Skeleton makeFigureRig(f64 height) {
+  if (height <= 0.0) height = 1.7;
+  Skeleton rig;
+  rig.bones.reserve(static_cast<usize>(FigureBone::Count));
+
+  // Hips are the root: everything else hangs off them, so moving the root
+  // moves the whole figure.
+  rig.bones.push_back(makeBone("Hips", kNoParentBone, Vec3{0.0, height * kHipHeight, 0.0}));
+  rig.bones.push_back(makeBone("Chest", 0, Vec3{0.0, height * kChestRise, 0.0}));
+  rig.bones.push_back(makeBone("Head", 1, Vec3{0.0, height * kHeadRise, 0.0}));
+
+  // Arms hang from the chest, legs from the hips. Each limb bone must
+  // carry the LENGTH of its segment, not just the offset to one side:
+  // rotating a zero-length bone moves nothing, which is exactly what went
+  // wrong the first time — the legs refused to swing at all.
+  //
+  // LeftArm sits at the shoulder and reaches down the upper arm; LeftHand
+  // continues down the forearm. Same idea for the legs, so a knee is a
+  // real hinge at the bottom of a real thigh.
+  rig.bones.push_back(makeBone("LeftArm", 1, Vec3{height * kShoulderHalf, -height * kUpperArm, 0.0}));
+  rig.bones.push_back(makeBone("LeftHand", 3, Vec3{0.0, -height * kForearm, 0.0}));
+  rig.bones.push_back(makeBone("RightArm", 1, Vec3{-height * kShoulderHalf, -height * kUpperArm, 0.0}));
+  rig.bones.push_back(makeBone("RightHand", 5, Vec3{0.0, -height * kForearm, 0.0}));
+  rig.bones.push_back(makeBone("LeftLeg", 0, Vec3{height * kHipHalf, -height * kThigh, 0.0}));
+  rig.bones.push_back(makeBone("LeftFoot", 7, Vec3{0.0, -height * kShin, 0.0}));
+  rig.bones.push_back(makeBone("RightLeg", 0, Vec3{-height * kHipHalf, -height * kThigh, 0.0}));
+  rig.bones.push_back(makeBone("RightFoot", 9, Vec3{0.0, -height * kShin, 0.0}));
+
+  // The bind pose is the rest pose, so a figure posed at rest is exactly
+  // the shape built here.
+  std::vector<Transform3D> rest(rig.bones.size());
+  for (usize i = 0; i < rig.bones.size(); ++i) rest[i] = rig.bones[i].restPose;
+  std::vector<Mat4> world;
+  computeWorldMatrices(rig, rest, world);
+  for (usize i = 0; i < rig.bones.size(); ++i) rig.bones[i].inverseBindPose = world[i].inverse();
+  return rig;
+}
+
+void poseFigure(const Skeleton& rig, const FigureMotion& motion, std::vector<Transform3D>& out) {
+  out.assign(rig.bones.size(), Transform3D{});
+  for (usize i = 0; i < rig.bones.size(); ++i) out[i] = rig.bones[i].restPose;
+  if (rig.bones.size() < static_cast<usize>(FigureBone::Count)) return;
+
+  const auto index = [](FigureBone bone) { return static_cast<usize>(bone); };
+  const auto swing = [](f64 radians) { return Quat::fromAxisAngle(Vec3{1.0, 0.0, 0.0}, radians); };
+
+  // Knocked out: fold forward and drop. Nothing else matters.
+  if (motion.downed) {
+    out[index(FigureBone::Hips)].rotation = Quat::fromAxisAngle(Vec3{1.0, 0.0, 0.0}, -1.4);
+    out[index(FigureBone::Hips)].position.y *= 0.25;
+    return;
+  }
+
+  // In the air: tuck the legs and lift the arms, so a jump reads as a jump.
+  if (motion.airborne) {
+    // The knees come up too, or the feet trail on the floor and the figure
+    // looks like it is standing rather than jumping.
+    out[index(FigureBone::LeftFoot)].rotation = swing(1.1);
+    out[index(FigureBone::RightFoot)].rotation = swing(0.9);
+    out[index(FigureBone::LeftLeg)].rotation = swing(-0.7);
+    out[index(FigureBone::RightLeg)].rotation = swing(-0.5);
+    out[index(FigureBone::LeftArm)].rotation = swing(-1.2);
+    out[index(FigureBone::RightArm)].rotation = swing(-1.2);
+    return;
+  }
+
+  // Walking: opposite arm to opposite leg, the way people actually move.
+  // Both the stride length and the cadence grow with speed, so a sprint
+  // does not look like a stroll played fast.
+  const f64 pace = motion.speed < 0.0 ? 0.0 : motion.speed;
+  if (pace < 0.05) return;  // standing still: the rest pose is correct
+  const f64 reach = std::min(0.85, pace * 0.16);
+  const f64 cadence = 2.2 + std::min(pace, 8.0) * 0.55;
+  const f64 phase = std::sin(motion.time * cadence);
+
+  out[index(FigureBone::LeftLeg)].rotation = swing(phase * reach);
+  out[index(FigureBone::RightLeg)].rotation = swing(-phase * reach);
+  // Knees only bend forwards, so the trailing leg bends and the leading
+  // one stays straight — a leg that hinges backwards looks broken.
+  out[index(FigureBone::LeftFoot)].rotation = swing(std::max(0.0, -phase) * reach * 0.9);
+  out[index(FigureBone::RightFoot)].rotation = swing(std::max(0.0, phase) * reach * 0.9);
+  out[index(FigureBone::LeftArm)].rotation = swing(-phase * reach * 0.8);
+  out[index(FigureBone::RightArm)].rotation = swing(phase * reach * 0.8);
+  // A slight bob: the body rises on each step.
+  out[index(FigureBone::Hips)].position.y += std::abs(phase) * reach * 0.035;
+}
+
+void figureLimbs(const Skeleton& rig, const std::vector<Transform3D>& pose, const Vec3& position, f64 yaw,
+                 std::vector<FigureLimb>& out) {
+  out.clear();
+  if (rig.bones.size() < static_cast<usize>(FigureBone::Count)) return;
+
+  std::vector<Mat4> world;
+  computeWorldMatrices(rig, pose, world);
+
+  // Turn the figure to face its heading, then stand it where it belongs.
+  const f64 sinYaw = std::sin(yaw);
+  const f64 cosYaw = std::cos(yaw);
+  const auto place = [&](const Vec3& local) {
+    return Vec3{position.x + local.x * cosYaw + local.z * sinYaw, position.y + local.y,
+                position.z - local.x * sinYaw + local.z * cosYaw};
+  };
+  const auto jointAt = [&](FigureBone bone) {
+    return place(world[static_cast<usize>(bone)] * Vec3{0.0, 0.0, 0.0});
+  };
+
+  const auto limb = [&](FigureBone a, FigureBone b, f64 thickness) {
+    FigureLimb segment;
+    segment.from = jointAt(a);
+    segment.to = jointAt(b);
+    segment.thickness = thickness;
+    out.push_back(segment);
+  };
+
+  limb(FigureBone::Hips, FigureBone::Chest, 0.13);   // torso
+  limb(FigureBone::Chest, FigureBone::Head, 0.09);   // neck
+  limb(FigureBone::Chest, FigureBone::LeftArm, 0.06);
+  limb(FigureBone::LeftArm, FigureBone::LeftHand, 0.055);
+  limb(FigureBone::Chest, FigureBone::RightArm, 0.06);
+  limb(FigureBone::RightArm, FigureBone::RightHand, 0.055);
+  limb(FigureBone::Hips, FigureBone::LeftLeg, 0.075);
+  limb(FigureBone::LeftLeg, FigureBone::LeftFoot, 0.07);
+  limb(FigureBone::Hips, FigureBone::RightLeg, 0.075);
+  limb(FigureBone::RightLeg, FigureBone::RightFoot, 0.07);
+
+  // The head itself, as a short stub above the neck joint.
+  FigureLimb head;
+  head.from = jointAt(FigureBone::Head);
+  head.to = head.from + Vec3{0.0, 0.13, 0.0};
+  head.thickness = 0.11;
+  out.push_back(head);
+}
+
 }  // namespace kimia

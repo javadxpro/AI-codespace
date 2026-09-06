@@ -148,4 +148,52 @@ bool skinMesh(const SkinnedMesh& mesh, const std::vector<Mat4>& skinMatrices, Me
 // this moment".
 bool poseMesh(const SkinnedMesh& mesh, const AnimationClip& clip, f64 time, MeshData& out);
 
+// --- Posing a figure without a model (stage 33) ---
+//
+// The engine must never invent game CONTENT, but a character still has to
+// be visible before anyone has supplied an FBX. These build a plain
+// jointed figure — a rig, not a character — so the players on the pitch
+// have arms and legs that move instead of being boxes that slide about.
+// Bring your own model and it replaces this entirely.
+
+// The bones a walking figure needs, in the order makeFigureRig() builds
+// them. Parents always come before children.
+enum class FigureBone : u32 {
+  Hips = 0U, Chest, Head,
+  LeftArm, LeftHand, RightArm, RightHand,
+  LeftLeg, LeftFoot, RightLeg, RightFoot,
+  Count,
+};
+
+// A rig roughly `height` metres tall, standing at the origin with its feet
+// on the ground. Every bone's rest pose and inverse bind matrix is filled
+// in, so it can be posed immediately.
+Skeleton makeFigureRig(f64 height = 1.7);
+
+// How a figure is moving, which is all the engine needs to choose a pose.
+struct FigureMotion {
+  f64 speed = 0.0;      // metres per second along the ground
+  f64 time = 0.0;       // seconds, for the swing cycle
+  bool airborne = false;
+  bool downed = false;  // arena: knocked out
+};
+
+// Poses `rig` for that motion: legs and arms swing when walking, the
+// figure tucks when airborne, and lies flat when downed. Writes one local
+// transform per bone.
+void poseFigure(const Skeleton& rig, const FigureMotion& motion, std::vector<Transform3D>& out);
+
+// A drawable segment of a posed figure: where a limb is and how long.
+struct FigureLimb {
+  Vec3 from{0.0, 0.0, 0.0};
+  Vec3 to{0.0, 0.0, 0.0};
+  f64 thickness = 0.08;
+};
+
+// Turns a posed rig into the segments to draw, in world space, for a
+// figure standing at `position` and facing `yaw` radians. This is what a
+// renderer with no skinned mesh uses.
+void figureLimbs(const Skeleton& rig, const std::vector<Transform3D>& pose, const Vec3& position, f64 yaw,
+                 std::vector<FigureLimb>& out);
+
 }  // namespace kimia

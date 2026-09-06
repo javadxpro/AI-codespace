@@ -395,6 +395,15 @@ public:
   std::vector<u32> squadIds() const { return physics_.characterIds(); }
   Vec3 squadPosition(u32 id) const;  // origin when the id is unknown
   u32 squadTeam(u32 id) const;       // 0 when the id is unknown
+  // How fast this character is moving along the ground, and which way it
+  // faces. The renderer needs both to animate a figure (stage 33): pace
+  // drives the stride, heading turns the body.
+  f64 squadSpeed(u32 id) const;
+  f64 squadFacing(u32 id) const;
+  bool squadAirborne(u32 id) const;
+  // A clock that only advances while the world is being played, so the
+  // walk cycle freezes with the game instead of running in the menus.
+  f64 figureClock() const { return figureClock_; }
 
   // --- Match (stage 22) ---
   // A profile is a match when it fields squads AND runs a clock. The two
@@ -785,6 +794,7 @@ private:
   u32 restartTeam_ = 0U;
   Vec3 restartSpot_{0.0, 0.0, 0.0};
   f64 stamina_ = 1.0;
+  f64 figureClock_ = 0.0;  // drives the walk cycle (stage 33)
   bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
 
   // Trigger state (stage 31).
