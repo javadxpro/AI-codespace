@@ -28,8 +28,25 @@ struct SphereBody {
   // How strongly the world wind pushes this body while it is airborne
   // (0 = immune, 1 = full). A heavy accurate ball can be tuned below 1.
   f64 windFactor = 1.0;
+  // Spin, in radians per second, as an axis-angle vector (stage 23). A ball
+  // spinning about the Y axis curls sideways; about X it dips or floats.
+  // Only the Magnus force reads it — the renderer does not roll the ball.
+  Vec3 spin{0.0, 0.0, 0.0};
+  // How much Magnus lift this ball gets (0 = immune). A heavy accurate ball
+  // curls less than a light fantasy one.
+  f64 magnusFactor = 1.0;
   u32 collisionCount = 0U;  // contacts resolved during the last step
 };
+
+// Magnus: F/m = kMagnusCoefficient * (spin x velocity). Tuned so a 6 m/s
+// shot with 12 rad/s of side spin bends about a third of a metre over a
+// 10 m flight — a visible curl, not a boomerang.
+inline constexpr f64 kMagnusCoefficient = 0.06;
+
+// Spin bleeds away in flight with this time constant (per second), and a
+// ball that touches down loses most of it at once: grass kills spin.
+inline constexpr f64 kSpinAirDecay = 0.35;
+inline constexpr f64 kSpinGroundKeep = 0.25;
 
 // Dynamic axis-aligned box body (a crate): falls, slides, stacks and gets
 // knocked around. No rotation — boxes stay axis-aligned. Semi-implicit

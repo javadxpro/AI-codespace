@@ -829,3 +829,76 @@ KIMIA_TEST(physics_clear_keeps_the_player_and_drops_the_extra_characters) {
   // And the next spawn starts the extra ids over again at 2.
   KIMIA_REQUIRE(world.addCharacter(kimia::CharacterBody{}) == 2U);
 }
+
+// --- Stage 23: spin and the Magnus force ---
+
+KIMIA_TEST(physics_side_spin_bends_a_flying_ball_and_no_spin_flies_straight) {
+  const auto fly = [](f64 spinY) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    SphereBody ball;
+    ball.position = Vec3{0.0, 1.0, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{0.0, 2.0, -8.0};  // struck down the pitch, toward -Z
+    ball.spin = Vec3{0.0, spinY, 0.0};
+    const kimia::u32 id = world.addSphere(ball);
+    for (kimia::u32 i = 0; i < 40U; ++i) world.step();
+    return world.sphere(id)->position;
+  };
+  // No spin: dead straight, x stays exactly zero.
+  const Vec3 straight = fly(0.0);
+  KIMIA_REQUIRE(straight.x == 0.0);
+  KIMIA_REQUIRE(straight.z < -1.0);
+  // Spin one way bends one way, the other way bends the other, and by the
+  // same amount — the force is symmetric.
+  const Vec3 curled = fly(12.0);
+  const Vec3 opposite = fly(-12.0);
+  KIMIA_REQUIRE(curled.x < -0.05);
+  KIMIA_REQUIRE(opposite.x > 0.05);
+  KIMIA_REQUIRE(near(curled.x, -opposite.x, 1e-12));
+  // The curl is a bend, not a teleport: it stays a fraction of the travel.
+  KIMIA_REQUIRE(std::abs(curled.x) < std::abs(curled.z) * 0.5);
+}
+
+KIMIA_TEST(physics_spin_decays_in_the_air_and_is_scrubbed_off_by_the_ground) {
+  PhysicsWorld world;
+  world.addPlane(0.0);
+  SphereBody ball;
+  ball.position = Vec3{0.0, 4.0, 0.0};
+  ball.radius = 0.12;
+  ball.velocity = Vec3{0.0, 0.0, -4.0};
+  ball.spin = Vec3{0.0, 20.0, 0.0};
+  const kimia::u32 id = world.addSphere(ball);
+  world.step();
+  // One step in the air: spin drops by exactly the air decay factor.
+  const f64 dt = 1.0 / 120.0;
+  KIMIA_REQUIRE(near(world.sphere(id)->spin.y, 20.0 * (1.0 - kimia::kSpinAirDecay * dt), 1e-12));
+  KIMIA_REQUIRE(world.sphere(id)->spin.y < 20.0);
+  // Land it: the turf takes most of the spin away at the first contact.
+  for (kimia::u32 i = 0; i < 240U; ++i) world.step();
+  KIMIA_REQUIRE(world.sphere(id)->position.y <= 0.13);
+  KIMIA_REQUIRE(std::abs(world.sphere(id)->spin.y) < 1.0);
+}
+
+KIMIA_TEST(physics_a_ball_immune_to_magnus_never_curls) {
+  // magnusFactor 0 must be bit-identical to having no spin at all: this is
+  // the guard that every existing world is untouched by stage 23.
+  const auto fly = [](f64 factor, f64 spinY) {
+    PhysicsWorld world;
+    world.addPlane(0.0);
+    SphereBody ball;
+    ball.position = Vec3{0.0, 2.0, 0.0};
+    ball.radius = 0.12;
+    ball.velocity = Vec3{1.0, 1.0, -6.0};
+    ball.spin = Vec3{0.0, spinY, 0.0};
+    ball.magnusFactor = factor;
+    const kimia::u32 id = world.addSphere(ball);
+    for (kimia::u32 i = 0; i < 100U; ++i) world.step();
+    return world.sphere(id)->position;
+  };
+  const Vec3 immune = fly(0.0, 18.0);
+  const Vec3 spinless = fly(1.0, 0.0);
+  KIMIA_REQUIRE(immune.x == spinless.x);
+  KIMIA_REQUIRE(immune.y == spinless.y);
+  KIMIA_REQUIRE(immune.z == spinless.z);
+}

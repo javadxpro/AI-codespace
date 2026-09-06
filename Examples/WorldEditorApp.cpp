@@ -343,7 +343,8 @@ int main(int argc, char** argv) {
       "var km={'1':'t:num1','2':'t:num2','3':'t:num3','4':'t:num4','5':'t:num5','6':'t:num6',"
       "'7':'t:num7','8':'t:num8','9':'t:num9',"
       "'r':'t:r','b':'t:b','j':'t:j',' ':'h:space','ArrowUp':'h:up','ArrowDown':'h:down','ArrowLeft':'h:left',"
-      "'ArrowRight':'h:right','Shift':'h:shift'};\n"
+      "'ArrowRight':'h:right','Shift':'h:shift',"
+      "'c':'h:c','q':'h:q','e':'h:e','p':'t:p'};\n"
       "function kmd(e,down){var m=km[e.key];if(!m)return;e.preventDefault();"
       "if(m[0]==='h')post('key='+m.slice(2)+'&down='+(down?1:0));else if(down)post('tap='+m.slice(2));}\n"
       "window.addEventListener('keydown',function(e){kmd(e,true);});\n"
@@ -353,7 +354,7 @@ int main(int argc, char** argv) {
   engine.server()->start(options.webPort, kimia::web::makePageHtml(
       "KIMIA World", {}, keymapJs,
       "everything is menus: tap 1-9 for the options, arrows move, Shift = fine, r resets, b opens the menu, "
-      "Space = jump (or hold to charge a shot)"));
+      "Space = jump (or hold to charge a shot), hold c = dribble, hold q/e = curl, p = pass"));
   // The intro film, if the Branding folder shipped with this build.
   const bool intro = kimia::web::loadIntroFrom(*engine.server(), brandingDir);
   std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
@@ -410,6 +411,14 @@ int main(int argc, char** argv) {
       editor.setShootHeld(false);
       if (input.pressed(Key::J) || input.pressed(Key::Space)) editor.jumpPressed();
     }
+    // Ball control (stage 23): hold C to dribble, hold Q/E to curl the next
+    // strike left/right, tap P to pass to the nearest team-mate ahead.
+    editor.setDribbleHeld(input.down(Key::C));
+    f64 curl = 0.0;
+    if (input.down(Key::Q)) curl -= 1.0;
+    if (input.down(Key::E)) curl += 1.0;
+    if (curl != 0.0) editor.setCurl(curl);
+    if (input.pressed(Key::P)) editor.pass();
 
     f64 moveX = 0.0;
     f64 moveZ = 0.0;

@@ -21,6 +21,18 @@ inline constexpr f64 kWorldKickReach = 0.55;  // horizontal distance player-ball
 inline constexpr f64 kWorldPlayerRadius = 0.35;  // XZ radius the ball collides with
 inline constexpr f64 kWorldPlayerRestitution = 0.4;  // bounce off a still player
 
+// --- Ball control (stage 23) ---
+// Dribbling: a ball this close to a walking player is nudged along instead
+// of blasted, so the ball stays at the feet rather than running away.
+inline constexpr f64 kWorldDribbleReach = 0.85;
+// The dribbled ball is kept at this distance ahead of the feet and never
+// pushed faster than the player's own speed times this.
+inline constexpr f64 kWorldDribbleHold = 0.42;
+inline constexpr f64 kWorldDribbleSpeed = 1.15;
+// Curl: a shot with the curl stick fully over gets this much side spin
+// (rad/s). Positive curls to the right of the aim.
+inline constexpr f64 kWorldMaxCurl = 14.0;
+
 // --- Object builder constants (all chosen from menus) ---
 inline constexpr f64 kWorldBlockSmall = 0.5;
 inline constexpr f64 kWorldBlockMedium = 1.0;
@@ -313,6 +325,26 @@ public:
 
   // Debug/test hooks.
   void setAimYaw(f64 yaw) { aimYaw_ = yaw; }
+
+  // --- Ball control (stage 23) ---
+  // Curl for the NEXT shot/pass, -1..1 (negative = left, positive = right).
+  // It is a held stick, so it survives until the shot is taken and resets.
+  void setCurl(f64 curl);
+  f64 curl() const { return curl_; }
+  // Dribbling is a DELIBERATE skill, held down like a sprint button: with
+  // it held, a ball at the feet is carried instead of blasted. Released
+  // (the default) every kick behaves exactly as it always has.
+  void setDribbleHeld(bool held) { dribbleHeld_ = held; }
+  bool dribbleHeld() const { return dribbleHeld_; }
+  // True while the ball is actually being carried at the feet right now.
+  bool dribbling() const { return dribbling_; }
+  // Ball spin right now, radians/second (0 when there is no ball).
+  Vec3 ballSpin() const;
+  // Pass the ball to a team-mate: the nearest one in front of the aim, at
+  // the speed that arrives at their feet. False when nobody is available.
+  bool pass();
+  // The team-mate a pass would find right now, 0 when there is nobody.
+  u32 passTarget() const;
   void setPlayerPosition(const Vec3& position) {
     playerPos_ = position;
     physics_.resetCharacter(position);  // teleports keep the physics body in sync
@@ -366,6 +398,7 @@ private:
   void enterPlay();
   void spawnSquads();  // formation for the current profile's «team N»
   void kickOff();      // ball to the center spot, squads back to formation
+  Vec3 takeCurlSpin();  // the curl stick as spin, and reset the stick
   void applyEnvironmentToScene();
   void beginPlace();      // ghost to the origin, enter Place
   void confirmPlace();    // create/update the pending object at the ghost
@@ -396,6 +429,9 @@ private:
 
   // Shot mode state.
   f64 aimYaw_ = 0.0;
+  f64 curl_ = 0.0;
+  bool dribbling_ = false;
+  bool dribbleHeld_ = false;
   f64 power_ = 0.0;
   bool charging_ = false;
   bool shootHeld_ = false;

@@ -467,6 +467,22 @@ void PhysicsWorld::step() {
         }
       }
     }
+    // Magnus (stage 23): a spinning ball is pushed sideways by the air,
+    // which is what bends a free kick. Only in the air — on the turf the
+    // contact solver owns the ball. Spin decays as the air drags on it.
+    if (body.magnusFactor != 0.0) {
+      const f64 spinLength = body.spin.length();
+      if (spinLength > kEpsilon) {
+        if (!grounded) {
+          const Vec3 magnus = cross(body.spin, body.velocity) * (kMagnusCoefficient * body.magnusFactor);
+          body.velocity += magnus * fixedDt_;
+          body.spin -= body.spin * (kSpinAirDecay * fixedDt_);
+        } else {
+          // Touching down scrubs the spin off against the ground.
+          body.spin = body.spin * kSpinGroundKeep;
+        }
+      }
+    }
     body.position += body.velocity * fixedDt_;
   }
   for (auto& boxPair : dynamicBoxes_) {

@@ -621,9 +621,13 @@ KIMIA_TEST(world_play_controls_reset_and_back) {
   WorldEditor editor = editorWithWorld();
   editor.choose(3);  // PLAY
   KIMIA_REQUIRE(editor.playing());
-  KIMIA_REQUIRE(editor.holdPad().size() == 4U);  // the four direction pads
+  // The sandbox is a single player: four directions plus the dribble hold.
+  KIMIA_REQUIRE(editor.holdPad().size() == 5U);
+  KIMIA_REQUIRE(editor.holdPad()[4].second == "c");
   KIMIA_REQUIRE(editor.tapPad().size() == 3U);   // jump + reset + menu
   KIMIA_REQUIRE(editor.tapPad()[0].second == "j");
+  // No team, so no pass button anywhere on the pad.
+  for (const auto& pad : editor.tapPad()) KIMIA_REQUIRE(pad.second != "p");
   KIMIA_REQUIRE(editor.optionLabels().empty());
   editor.setBallPosition(Vec3{3.0, kGolfBallRadius, 3.0});
   editor.resetBall();
@@ -1347,8 +1351,9 @@ KIMIA_TEST(world_golf_profile_builds_a_shot_mode_world) {
   exitPlace(editor);
   editor.choose(3);  // PLAY
   KIMIA_REQUIRE(editor.playing());
+  // Aim left/right, charge, and the two curl sticks (stage 23).
   const auto holds = editor.holdPad();
-  KIMIA_REQUIRE(holds.size() == 3U);
+  KIMIA_REQUIRE(holds.size() == 5U);
   KIMIA_REQUIRE(holds[2].second == "space");
   const auto taps = editor.tapPad();
   KIMIA_REQUIRE(taps.size() == 2U);
@@ -1822,8 +1827,10 @@ KIMIA_TEST(world_football_profile_can_also_use_a_cup) {
   for (i32 i = 0; i < 240; ++i) editor.update(1.0 / 120.0);
   KIMIA_REQUIRE(editor.score() == 0U);
   KIMIA_REQUIRE(!editor.celebrating());
-  // The runner still works in the same world (kick mode untouched).
-  KIMIA_REQUIRE(editor.holdPad().size() == 4U);
+  // The runner still works in the same world (kick mode untouched). street
+  // is a 5-a-side match, so it gets the full stage 23 set: four directions
+  // plus dribble and the two curl sticks.
+  KIMIA_REQUIRE(editor.holdPad().size() == 7U);
   KIMIA_REQUIRE(editor.tapPad()[0].second == "j");
 }
 
@@ -2446,4 +2453,192 @@ KIMIA_TEST(world_profile_match_key_round_trips_and_clamps) {
   // No match line = no clock.
   KIMIA_REQUIRE(kimia::ProfileIO::load("# KIMIA profile v1\nname x\n", out, error));
   KIMIA_REQUIRE(near(out.matchSeconds, 0.0));
+}
+
+// --- Stage 23: ball control (dribble, curl, pass) ---
+
+KIMIA_TEST(world_dribble_carries_the_ball_instead_of_blasting_it) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  // Off by default: this is exactly the old kick, unchanged.
+  KIMIA_REQUIRE(!editor.dribbleHeld());
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.6, kWorldFantasyRadius, 0.0});
+  editor.setMoveInput(1.0, 0.0);
+  editor.update(0.0);
+  KIMIA_REQUIRE(!editor.dribbling());
+  KIMIA_REQUIRE(near(editor.ballVelocity().x, 3.0 + 5.0 * 0.6));  // the full kick
+  KIMIA_REQUIRE(near(editor.ballVelocity().y, 2.0));
+
+  // Now hold the dribble: the same touch carries the ball at walking pace
+  // and never pops it into the air.
+  WorldEditor carry;
+  createWorldFor(carry, "street");
+  addGolfBall(carry, Vec3{0.0, 0.0, 0.0});
+  exitPlace(carry);
+  carry.choose(3);
+  carry.setDribbleHeld(true);
+  carry.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  carry.setBallPosition(Vec3{0.6, kWorldFantasyRadius, 0.0});
+  carry.setMoveInput(1.0, 0.0);
+  carry.update(1.0 / 60.0);
+  KIMIA_REQUIRE(carry.dribbling());
+  KIMIA_REQUIRE(carry.ballVelocity().y == 0.0);  // never popped up
+  // Carried at no more than the player's pace, not the 6 m/s kick.
+  const f64 pace = 5.0 * kimia::kWorldDribbleSpeed;
+  KIMIA_REQUIRE(carry.ballVelocity().length() <= pace + 1e-9);
+  KIMIA_REQUIRE(carry.ballVelocity().length() < 3.0 + 5.0 * 0.6);
+  // Walk on: the ball stays with the player instead of running away.
+  for (i32 i = 0; i < 45; ++i) carry.update(1.0 / 60.0);
+  const f64 gap = std::sqrt(std::pow(carry.ballPosition().x - carry.playerPosition().x, 2.0) +
+                            std::pow(carry.ballPosition().z - carry.playerPosition().z, 2.0));
+  KIMIA_REQUIRE(gap < 1.2);
+  KIMIA_REQUIRE(carry.ballPosition().x > 0.6);  // and it did travel forward
+}
+
+KIMIA_TEST(world_curl_puts_spin_on_the_shot_and_is_spent_by_it) {
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.curl() == 0.0);
+  KIMIA_REQUIRE(near3(editor.ballSpin(), Vec3{0.0, 0.0, 0.0}));
+  // The stick clamps to -1..1 however hard it is pushed.
+  editor.setCurl(5.0);
+  KIMIA_REQUIRE(near(editor.curl(), 1.0));
+  editor.setCurl(-5.0);
+  KIMIA_REQUIRE(near(editor.curl(), -1.0));
+  editor.setCurl(0.5);
+  KIMIA_REQUIRE(near(editor.curl(), 0.5));
+  // Taking the shot turns the stick into spin and empties it. Charge and
+  // release exactly like a player does.
+  editor.setShootHeld(true);
+  editor.update(0.5);
+  editor.setShootHeld(false);
+  editor.update(0.0);
+  KIMIA_REQUIRE(near(editor.ballSpin().y, -0.5 * kimia::kWorldMaxCurl));
+  KIMIA_REQUIRE(near(editor.ballSpin().y, -7.0));
+  KIMIA_REQUIRE(editor.ballSpin().x == 0.0);
+  KIMIA_REQUIRE(editor.curl() == 0.0);  // spent
+}
+
+KIMIA_TEST(world_a_curled_kick_lands_wide_of_a_straight_one) {
+  // The whole point of stage 23: the same strike, curled, must finish
+  // somewhere else — measured on the real world simulation. It has to be a
+  // FLIGHTED ball: a putt rolling on the turf has its spin scrubbed off by
+  // the ground, which is exactly what the physics layer promises.
+  const auto kickLanding = [](f64 curl) {
+    WorldEditor editor;
+    createWorldFor(editor, "street");  // kick pops the ball up 2.0 m/s
+    addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+    exitPlace(editor);
+    editor.choose(3);
+    editor.setCurl(curl);
+    editor.setPlayerPosition(Vec3{0.0, 0.5, 1.0});
+    editor.setBallPosition(Vec3{0.0, kWorldFantasyRadius, 0.4});
+    editor.setMoveInput(0.0, -1.0);  // strike it down the pitch, toward -Z
+    editor.update(0.0);
+    editor.setMoveInput(0.0, 0.0);
+    for (i32 i = 0; i < 120; ++i) editor.update(1.0 / 60.0);
+    return editor.ballPosition();
+  };
+  const Vec3 straight = kickLanding(0.0);
+  const Vec3 right = kickLanding(1.0);
+  const Vec3 left = kickLanding(-1.0);
+  // Straight really is straight.
+  KIMIA_REQUIRE(near(straight.x, 0.0, 1e-9));
+  // And the curled ones bend to opposite sides by a visible amount.
+  KIMIA_REQUIRE(right.x > 0.02);
+  KIMIA_REQUIRE(left.x < -0.02);
+  KIMIA_REQUIRE(near(right.x, -left.x, 1e-9));
+  // A bend, never a boomerang: it stays small next to the distance travelled.
+  KIMIA_REQUIRE(std::abs(right.x) < std::abs(right.z - 0.4) * 0.5);
+}
+
+KIMIA_TEST(world_pass_finds_a_team_mate_ahead_and_reaches_their_feet) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY: the squads come out, team 1 on +Z
+  KIMIA_REQUIRE(editor.squadCount() == 10U);
+  // The player stands at the centre; team 1 mates are on the +Z half, so
+  // aim back up the pitch (yaw pi = toward +Z) to find them.
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  editor.setBallPosition(Vec3{0.0, kWorldFantasyRadius, 0.0});
+  editor.setAimYaw(3.14159265358979323846);
+  const u32 target = editor.passTarget();
+  KIMIA_REQUIRE(target != 0U);
+  KIMIA_REQUIRE(target != kimia::kPrimaryCharacter);
+  KIMIA_REQUIRE(editor.squadTeam(target) == 1U);  // never to the opposition
+  const Vec3 mate = editor.squadPosition(target);
+  KIMIA_REQUIRE(mate.z > 0.0);
+  KIMIA_REQUIRE(editor.pass());
+  // A ground pass: along the floor, no lofting.
+  KIMIA_REQUIRE(editor.ballVelocity().y == 0.0);
+  KIMIA_REQUIRE(editor.ballVelocity().length() > 0.0);
+  // Let it run and check it actually arrives near the receiver's feet.
+  for (i32 i = 0; i < 300; ++i) editor.update(1.0 / 60.0);
+  const f64 miss = std::sqrt(std::pow(editor.ballPosition().x - mate.x, 2.0) +
+                             std::pow(editor.ballPosition().z - mate.z, 2.0));
+  KIMIA_REQUIRE(miss < 1.0);
+}
+
+KIMIA_TEST(world_pass_refuses_when_there_is_nobody_to_pass_to) {
+  // Golf is one player: there is no team-mate, so a pass must fail rather
+  // than fling the ball at nothing.
+  WorldEditor editor;
+  createWorldFor(editor, "golf");
+  addGolfBall(editor, Vec3{0.0, 0.0, 6.0});
+  exitPlace(editor);
+  editor.choose(3);
+  KIMIA_REQUIRE(editor.squadCount() == 1U);
+  KIMIA_REQUIRE(editor.passTarget() == 0U);
+  KIMIA_REQUIRE(!editor.pass());
+  KIMIA_REQUIRE(near3(editor.ballVelocity(), Vec3{0.0, 0.0, 0.0}));
+
+  // In a match, a team-mate strictly BEHIND the aim is not a pass target.
+  WorldEditor street;
+  createWorldFor(street, "street");
+  addGolfBall(street, Vec3{0.0, 0.0, 0.0});
+  exitPlace(street);
+  street.choose(3);
+  street.setPlayerPosition(Vec3{0.0, 0.5, 0.0});
+  street.setAimYaw(0.0);  // toward -Z, where only the opposition stands
+  KIMIA_REQUIRE(street.passTarget() == 0U);
+  KIMIA_REQUIRE(!street.pass());
+}
+
+KIMIA_TEST(world_ball_control_pads_appear_only_where_they_make_sense) {
+  // A match: dribble, both curl sticks and a pass button.
+  WorldEditor street;
+  createWorldFor(street, "street");
+  addGolfBall(street, Vec3{0.0, 0.0, 0.0});
+  exitPlace(street);
+  street.choose(3);  // PLAY
+  KIMIA_REQUIRE(street.holdPad().size() == 7U);
+  KIMIA_REQUIRE(street.holdPad()[4].second == "c");
+  KIMIA_REQUIRE(street.holdPad()[5].second == "q");
+  KIMIA_REQUIRE(street.holdPad()[6].second == "e");
+  bool hasPass = false;
+  for (const auto& pad : street.tapPad()) {
+    if (pad.second == "p") hasPass = true;
+  }
+  KIMIA_REQUIRE(hasPass);
+
+  // Golf is one player aiming a shot: curl sticks, but never a pass.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  addGolfBall(golf, Vec3{0.0, 0.0, 6.0});
+  exitPlace(golf);
+  golf.choose(3);
+  KIMIA_REQUIRE(golf.holdPad().size() == 5U);
+  KIMIA_REQUIRE(golf.holdPad()[2].second == "space");
+  KIMIA_REQUIRE(golf.holdPad()[3].second == "q");
+  KIMIA_REQUIRE(golf.holdPad()[4].second == "e");
+  for (const auto& pad : golf.tapPad()) KIMIA_REQUIRE(pad.second != "p");
 }

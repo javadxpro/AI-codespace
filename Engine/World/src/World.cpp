@@ -677,10 +677,33 @@ void WorldEditor::update(f64 hostSeconds) {
           ball->velocity.z -= (1.0 + kWorldPlayerRestitution) * velocityNormal * pushNormal.z;
         }
       }
-      const f64 kickDistance = world_.ball.radius + kWorldKickReach;
-      if (moving && distance < kickDistance && ball->velocity.length() < kKickMaxSpeed) {
-        ball->velocity = direction * kickSpeed() + Vec3{0.0, world_.profile.kickUp, 0.0};
-        events_.push_back(GameEvent::Kick);
+      // Dribbling (stage 23): a ball right at the feet of a walking player
+      // is carried, not blasted. It is nudged to stay just ahead of the
+      // player at no more than the player's own pace, so it stays under
+      // control instead of running away on the first touch.
+      const f64 dribbleDistance = world_.ball.radius + kWorldDribbleReach;
+      const bool slowEnough = ball->velocity.length() < kKickMaxSpeed;
+      dribbling_ = dribbleHeld_ && moving && slowEnough && distance < dribbleDistance &&
+                   ball->position.y <= world_.ball.radius + 1e-3;
+      if (dribbling_) {
+        const f64 pace = world_.player.speed * kWorldDribbleSpeed;
+        const Vec3 ahead{playerPos_.x + direction.x * (contact + kWorldDribbleHold), ball->position.y,
+                         playerPos_.z + direction.z * (contact + kWorldDribbleHold)};
+        const f64 toX = ahead.x - ball->position.x;
+        const f64 toZ = ahead.z - ball->position.z;
+        const f64 toLength = std::sqrt(toX * toX + toZ * toZ);
+        if (toLength > kMoveEpsilon) {
+          const f64 push = std::min(pace, toLength / std::max(hostSeconds, 1e-4));
+          ball->velocity.x = toX / toLength * push;
+          ball->velocity.z = toZ / toLength * push;
+        }
+      } else {
+        const f64 kickDistance = world_.ball.radius + kWorldKickReach;
+        if (moving && distance < kickDistance && slowEnough) {
+          ball->velocity = direction * kickSpeed() + Vec3{0.0, world_.profile.kickUp, 0.0};
+          ball->spin = takeCurlSpin();
+          events_.push_back(GameEvent::Kick);
+        }
       }
     }
 
@@ -855,14 +878,76 @@ f64 WorldEditor::shotSpeed(f64 power) const {
   return world_.profile.kickBase + std::min(1.0, std::max(0.0, power)) * world_.profile.kickSpeedScale;
 }
 
+void WorldEditor::setCurl(f64 curl) { curl_ = std::min(1.0, std::max(-1.0, curl)); }
+
+Vec3 WorldEditor::ballSpin() const {
+  const SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return Vec3{0.0, 0.0, 0.0};
+  return ball->spin;
+}
+
+// The curl stick becomes spin about the vertical axis: positive curl bends
+// the ball to the right of the aim. Taking the shot spends the stick.
+Vec3 WorldEditor::takeCurlSpin() {
+  const Vec3 spin{0.0, -curl_ * kWorldMaxCurl, 0.0};
+  curl_ = 0.0;
+  return spin;
+}
+
 void WorldEditor::shoot(f64 power) {
   SphereBody* ball = physics_.sphere(ballId_);
   charging_ = false;
   if (ball == nullptr) return;
   ball->velocity = aimDirection() * shotSpeed(power) + Vec3{0.0, world_.profile.kickUp, 0.0};
+  ball->spin = takeCurlSpin();
   ++strokes_;
   power_ = 0.0;
   events_.push_back(GameEvent::Shot);
+}
+
+// Pick the team-mate a pass should find: on our side, ahead of the aim
+// (within a generous cone) and nearest. 0 when there is nobody to pass to.
+u32 WorldEditor::passTarget() const {
+  const Vec3 aim = aimDirection();
+  u32 best = 0U;
+  f64 bestDistance = 0.0;
+  for (const u32 id : physics_.characterIds()) {
+    if (id == kPrimaryCharacter) continue;
+    const CharacterBody* mate = physics_.characterById(id);
+    if (mate == nullptr || mate->team != 1U) continue;  // only our own side
+    const f64 dx = mate->position.x - playerPos_.x;
+    const f64 dz = mate->position.z - playerPos_.z;
+    const f64 distance = std::sqrt(dx * dx + dz * dz);
+    if (distance < kMoveEpsilon) continue;
+    // Ahead of the aim: at least 45 degrees off is behind us.
+    if ((dx / distance) * aim.x + (dz / distance) * aim.z < 0.70710678) continue;
+    if (best == 0U || distance < bestDistance) {
+      best = id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+bool WorldEditor::pass() {
+  SphereBody* ball = physics_.sphere(ballId_);
+  if (ball == nullptr) return false;
+  const u32 target = passTarget();
+  if (target == 0U) return false;
+  const CharacterBody* mate = physics_.characterById(target);
+  if (mate == nullptr) return false;
+  const f64 dx = mate->position.x - ball->position.x;
+  const f64 dz = mate->position.z - ball->position.z;
+  const f64 distance = std::sqrt(dx * dx + dz * dz);
+  if (distance < kMoveEpsilon) return false;
+  // A ground pass weighted to arrive: friction eats v^2 / (2*a) of range,
+  // so aim for the speed that dies just past the receiver's feet.
+  const f64 decel = (ball->friction + ball->rollingFriction) * kGravity;
+  const f64 wanted = std::sqrt(std::max(2.0 * decel * distance * 1.15, 1e-6));
+  ball->velocity = Vec3{dx / distance * wanted, 0.0, dz / distance * wanted};
+  ball->spin = takeCurlSpin();
+  events_.push_back(GameEvent::Kick);
+  return true;
 }
 
 // Hole capture: within kWorldHoleCapture of a cup centre (horizontally) and

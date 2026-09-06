@@ -520,8 +520,20 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::holdPad() const {
   if (!playing() && screen_ != Screen::Place && screen_ != Screen::Move) return {};
   if (screen_ == Screen::RoundEnd) return {};
   if (playing()) {
-    if (shotMode()) return {{"← نشانه", "left"}, {"نشانه →", "right"}, {"شوت (نگه دار)", "space"}};
-    return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}};
+    // Ball control (stage 23) rides along with the movement pads: the curl
+    // sticks are held while aiming, the dribble while running.
+    if (shotMode()) {
+      return {{"← نشانه", "left"},
+              {"نشانه →", "right"},
+              {"شوت (نگه دار)", "space"},
+              {"چرخ ←", "q"},
+              {"چرخ →", "e"}};
+    }
+    if (teamSize() > 1U) {
+      return {{"↑", "up"},   {"←", "left"},  {"↓", "down"},  {"→", "right"},
+              {"دریبل", "c"}, {"چرخ ←", "q"}, {"چرخ →", "e"}};
+    }
+    return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}, {"دریبل", "c"}};
   }
   return {{"↑", "up"}, {"←", "left"}, {"↓", "down"}, {"→", "right"}, {"ریز", "shift"}};
 }
@@ -532,6 +544,8 @@ std::vector<std::pair<std::string, std::string>> WorldEditor::tapPad() const {
   }
   if (!playing() || screen_ == Screen::RoundEnd) return {};
   if (shotMode()) return {{"توپ از نو", "r"}, {"منو", "b"}};
+  // A pass only makes sense when there is a team to pass to.
+  if (teamSize() > 1U) return {{"پرش", "j"}, {"پاس", "p"}, {"توپ از نو", "r"}, {"منو", "b"}};
   return {{"پرش", "j"}, {"توپ از نو", "r"}, {"منو", "b"}};
 }
 
