@@ -104,6 +104,14 @@ package_one() {
     cp "$src" "$stage/profiles/"
   fi
 
+  # Branding: the intro film and its poster. The app finds them by itself in
+  # a Branding folder next to the binary, so no flag is needed in play.sh.
+  if [ -f "$ROOT/Branding/kimia-intro.mp4" ]; then
+    mkdir -p "$stage/Branding"
+    cp "$ROOT/Branding/kimia-intro.mp4" "$stage/Branding/"
+    [ -f "$ROOT/Branding/kimia-logo.png" ] && cp "$ROOT/Branding/kimia-logo.png" "$stage/Branding/"
+  fi
+
   # Licences: ours plus every vendored library's. The vendored sources carry
   # their licence in the file header rather than a separate LICENSE file, so
   # we ship a summary that names each one and points at the header.
@@ -171,8 +179,13 @@ KIMIA — نسخهٔ آفلاین
   profiles/     فایل‌های متنی بازی‌ها — با ویرایش‌شان بازی عوض می‌شود
   worlds/       دنیاهایی که می‌سازی اینجا ذخیره می‌شوند
   assets/       فایل‌های OBJ/FBX خودت را اینجا بگذار تا در بازی بگذاری‌شان
+  Branding/     فیلم معرفی و لوگو که موقع باز شدن بازی پخش می‌شود
   licenses/     لایسنس کتابخانه‌های آزاد استفاده‌شده
   MANIFEST.txt  فهرست فایل‌ها با sha256
+
+موقع باز کردن صفحه، فیلم معرفی پخش می‌شود؛ با دکمهٔ «رد کردن / SKIP» می‌توانی
+از آن بگذری و در همان تب دیگر تکرار نمی‌شود. برای خاموش کردن کامل آن،
+پوشهٔ Branding را پاک کن یا بازی را با گزینهٔ --no-intro اجرا کن.
 
 این نسخه آفلاین است: نه هنگام بازی به اینترنت نیاز دارد و نه بازی آنلاین
 دارد. اگر GPU نباشد، خودش با رسترایزر نرم‌افزاری اجرا می‌شود.

@@ -49,6 +49,8 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
 //   GET  /sound     -> 200 text/plain "<seq> <name>" (the latest sound cue; seq
 //                      grows by one per playSound, so the page plays each cue once)
 //   GET  /sfx/<n>   -> 200 audio/wav (a registered sound) or 404
+//   GET  /intro.mp4 -> 200 video/mp4 (the intro film) or 404 if none was set
+//   GET  /logo.png  -> 200 image/png (the splash logo) or 404 if none was set
 //   anything else   -> 404
 class Server {
 public:
@@ -71,6 +73,13 @@ public:
 
   // Sound: register WAV bytes under a name once, then cue it by name. The
   // page polls /sound and plays /sfx/<name> when the sequence number moves.
+  // Branding: the intro film plays full-screen over the page once, before
+  // the first frame, and the logo is the poster shown while it loads. Both
+  // are optional — without them the page opens straight into the game, so a
+  // build with no branding files behaves exactly as it always did.
+  void setIntro(std::vector<u8> mp4Bytes, std::vector<u8> logoPngBytes);
+  bool hasIntro() const;
+
   void registerSound(const std::string& name, std::vector<u8> wavBytes);
   void playSound(const std::string& name);
   u64 soundSequence() const;
@@ -78,6 +87,11 @@ public:
 private:
   std::unique_ptr<Impl> impl_;
 };
+// Reads the branding files (kimia-intro.mp4 / kimia-logo.png) from a folder
+// and hands them to the server. Looks in `folder`, then ./Branding, then
+// ../Branding, so it works from a build tree and from a release package
+// alike. Returns false when nothing was found — which is not an error.
+bool loadIntroFrom(Server& server, const std::string& folder);
 
 }  // namespace web
 }  // namespace kimia

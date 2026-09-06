@@ -292,3 +292,61 @@ KIMIA_TEST(web_restart_and_ephemeral_port) {
   KIMIA_REQUIRE(server.running());
   server.stop();
 }
+
+// --- Branding: the intro film ---
+
+KIMIA_TEST(web_intro_film_is_served_byte_for_byte_or_404) {
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  // Nothing set: both branding routes are a clean 404, and the engine says so.
+  KIMIA_REQUIRE(!server.hasIntro());
+  KIMIA_REQUIRE(request(server.port(), "GET", "/intro.mp4").status == 404);
+  KIMIA_REQUIRE(request(server.port(), "GET", "/logo.png").status == 404);
+
+  // A tiny stand-in film and poster: the server must hand back exactly the
+  // bytes it was given, with the right content types.
+  const std::vector<kimia::u8> film{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 0x00, 0xFF, 0x7F, 0x10};
+  const std::vector<kimia::u8> logo{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00};
+  server.setIntro(film, logo);
+  KIMIA_REQUIRE(server.hasIntro());
+
+  const HttpResponse movie = request(server.port(), "GET", "/intro.mp4");
+  KIMIA_REQUIRE(movie.status == 200);
+  KIMIA_REQUIRE(movie.body.size() == 12U);
+  for (kimia::usize i = 0; i < film.size(); ++i) {
+    KIMIA_REQUIRE(static_cast<kimia::u8>(movie.body[i]) == film[i]);
+  }
+  const HttpResponse poster = request(server.port(), "GET", "/logo.png");
+  KIMIA_REQUIRE(poster.status == 200);
+  KIMIA_REQUIRE(poster.body.size() == 9U);
+  KIMIA_REQUIRE(static_cast<kimia::u8>(poster.body[0]) == 0x89);
+  server.stop();
+}
+
+KIMIA_TEST(web_page_carries_the_skippable_splash) {
+  const std::string page = kimia::web::makePageHtml("KIMIA World", {}, "", "");
+  KIMIA_REQUIRE(page.find("id=\"splash\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("id=\"introfilm\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("/intro.mp4") != std::string::npos);
+  KIMIA_REQUIRE(page.find("poster=\"/logo.png\"") != std::string::npos);
+  // The splash starts hidden and is only revealed when /intro.mp4 answers,
+  // so a build with no branding never shows a black box.
+  KIMIA_REQUIRE(page.find("#splash{position:fixed;inset:0;background:#000;display:none") != std::string::npos);
+  KIMIA_REQUIRE(page.find("'HEAD'") != std::string::npos || page.find("method:'HEAD'") != std::string::npos);
+  // It must always be escapable and never replay in the same tab.
+  KIMIA_REQUIRE(page.find("id=\"skip\"") != std::string::npos);
+  KIMIA_REQUIRE(page.find("kimiaIntroSeen") != std::string::npos);
+}
+
+KIMIA_TEST(web_load_intro_from_folder_finds_the_shipped_film) {
+  kimia::web::Server server;
+  KIMIA_REQUIRE(server.start(0, makeTestPage()));
+  // A named folder is authoritative: no film there means no intro, even
+  // though a Branding folder exists next to the build.
+  KIMIA_REQUIRE(!kimia::web::loadIntroFrom(server, "/tmp/kimia-no-such-branding"));
+  KIMIA_REQUIRE(!server.hasIntro());
+  // "-" is the explicit opt out (what --no-intro passes).
+  KIMIA_REQUIRE(!kimia::web::loadIntroFrom(server, "-"));
+  KIMIA_REQUIRE(!server.hasIntro());
+  server.stop();
+}

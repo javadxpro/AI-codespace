@@ -1,5 +1,16 @@
 # KIMIA
 
+![KIMIA](Branding/kimia-logo.png)
+
+<div dir="rtl">
+
+موقع باز کردن بازی در مرورگر، فیلم معرفی (`Branding/kimia-intro.mp4`) پخش
+می‌شود و با دکمهٔ «رد کردن / SKIP» می‌شود از آن گذشت. برای خاموش کردنش:
+`kimia_world --no-intro`.
+
+</div>
+
+
 موتور بازی C++17 و ویرایشگر گزینه‌محور KIMIA World — ساخته‌شده از صفر، بدون وابستگی غیرآزاد.
 
 **نسخهٔ موتور: `0.3.0`** (`kimia_world --version`؛ شماره با اندازهٔ تغییر جلو می‌رود: باگ/کوچک `+0.0.1`، مرحله/بزرگ `+0.1.0`) — دفترچهٔ نسخه‌ها: [CHANGELOG.md](CHANGELOG.md).
@@ -40,7 +51,7 @@
 pkg install -y git clang cmake ninja
 git clone --branch arena/01a07125-ai-codespace https://github.com/javadxpro/AI-codespace.git
 cd AI-codespace
-bash Tools/termux_build.sh          # ابزار → cmake → build → 236/236 → دستور بعدی
+bash Tools/termux_build.sh          # ابزار → cmake → build → 239/239 → دستور بعدی
 ./build/bin/kimia_world --port 8080 --profiles build/bin/profiles
 ```
 
@@ -68,7 +79,7 @@ bash Tools/package_release.sh --game=golf     # → release/kimia-golf-0.3.0.tar
 ```bash
 cmake -B build -DKIMIA_WERROR=ON      # بدون build type = Release (خودکار)
 cmake --build build -j4
-./build/bin/kimia_tests      # 236/236 tests passed
+./build/bin/kimia_tests      # 239/239 tests passed
 ctest --test-dir build --output-on-failure
 ```
 
@@ -87,7 +98,7 @@ cmake --build build-warn -j4 2>&1 | grep -ci warning   # 0
 ```bash
 cmake -B build-nosdl -DKIMIA_ENABLE_SDL2=OFF -DKIMIA_WERROR=ON
 cmake --build build-nosdl -j4
-./build-nosdl/bin/kimia_tests    # 236/236 tests passed
+./build-nosdl/bin/kimia_tests    # 239/239 tests passed
 ```
 
 ## هدف: چهار بازی روی یک موتور

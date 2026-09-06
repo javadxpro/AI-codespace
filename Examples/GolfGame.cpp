@@ -131,6 +131,7 @@ int main(int argc, char** argv) {
         "hold a/d to aim, hold SPACE to charge, release to shoot | builder: 1/2/3 tool, "
         "WASD/arrows move ghost, Shift fine, Q/E length, R axis, Enter place, U undo, S save, "
         "L load, F play/edit"));
+    kimia::web::loadIntroFrom(*engine.server(), "");
     std::printf("KIMIA Golf serving on port %d | GL: %s\n", static_cast<i32>(engine.server()->port()),
                 engine.glAvailable() ? "yes" : "no (software)");
   } else if (!headlessDemo && engine.window() == nullptr) {

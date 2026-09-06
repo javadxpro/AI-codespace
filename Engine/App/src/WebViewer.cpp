@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <fstream>
 #include <sstream>
 #include <thread>
 
@@ -205,6 +206,8 @@ struct Server::Impl {
   std::string page;
   Menu menu;
   std::map<std::string, std::vector<u8>> sounds;
+  std::vector<u8> intro;    // the mp4 film, empty = no intro
+  std::vector<u8> logo;     // the png poster, empty = no logo
   std::string lastSound;
   u64 soundSequence = 0U;
   int listenFd = -1;
@@ -302,6 +305,16 @@ void handleConnection(int fd, Server::Impl* impl) {
     std::lock_guard<std::mutex> lock(impl->mutex);
     response = httpResponse(statusLine(200), "text/plain; charset=utf-8",
                             std::to_string(impl->soundSequence) + " " + impl->lastSound);
+  } else if (path == "/intro.mp4" || path == "/logo.png") {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    const bool wantsFilm = path == "/intro.mp4";
+    const std::vector<u8>& bytes = wantsFilm ? impl->intro : impl->logo;
+    if (!bytes.empty()) {
+      const std::string body(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+      response = httpResponse(statusLine(200), wantsFilm ? "video/mp4" : "image/png", body);
+    } else {
+      response = httpResponse(statusLine(404), "text/plain; charset=utf-8", "no branding");
+    }
   } else if (path.rfind("/sfx/", 0) == 0) {
     std::lock_guard<std::mutex> lock(impl->mutex);
     const auto found = impl->sounds.find(path.substr(5U));
@@ -397,6 +410,17 @@ void Server::setMenu(const Menu& menu) {
   impl_->menu = menu;
 }
 
+void Server::setIntro(std::vector<u8> mp4Bytes, std::vector<u8> logoPngBytes) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->intro = std::move(mp4Bytes);
+  impl_->logo = std::move(logoPngBytes);
+}
+
+bool Server::hasIntro() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return !impl_->intro.empty();
+}
+
 void Server::registerSound(const std::string& name, std::vector<u8> wavBytes) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->sounds[name] = std::move(wavBytes);
@@ -448,7 +472,17 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "#look{width:100%;max-width:720px;height:120px;border:1px dashed #3a3a44;border-radius:10px;"
          "margin:10px 0;display:flex;align-items:center;justify-content:center;color:#7a7a88;font-size:14px;"
          "touch-action:none}\n";
+  // The intro splash: covers everything until the film ends or is skipped.
+  out << "#splash{position:fixed;inset:0;background:#000;display:none;align-items:center;"
+         "justify-content:center;z-index:99;flex-direction:column}\n";
+  out << "#splash video{width:100%;height:100%;object-fit:contain;background:#000}\n";
+  out << "#skip{position:fixed;right:16px;bottom:16px;z-index:100;padding:10px 18px;font-size:15px;"
+         "border:1px solid #55555f;border-radius:10px;background:rgba(20,20,26,.85);color:#e8e8ec;"
+         "cursor:pointer}\n";
   out << "</style>\n</head>\n<body>\n";
+  out << "<div id=\"splash\"><video id=\"introfilm\" playsinline autoplay muted poster=\"/logo.png\">"
+         "<source src=\"/intro.mp4\" type=\"video/mp4\"></video>"
+         "<div id=\"skip\">رد کردن / SKIP</div></div>\n";
   out << "<h1>" << htmlEscape(title) << "</h1>\n";
   if (!hint.empty()) out << "<div class=\"hint\">" << htmlEscape(hint) << "</div>\n";
   out << "<img id=\"frame\" alt=\"engine frame\">\n<div id=\"stats\">waiting for first frame...</div>\n";
@@ -523,6 +557,27 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "look.addEventListener('pointerup',function(){dragging=false;});\n";
   out << "var img=document.getElementById('frame');\n";
   out << "setInterval(function(){img.src='/frame.png?t='+Date.now();},100);\n";
+  // Intro film: shown once per tab, and only when /intro.mp4 really exists.
+  // Any failure (404, codec, autoplay policy) just hides it and starts the
+  // game, so the engine never gets stuck behind its own logo.
+  out << "(function(){\n";
+  out << "  var splash=document.getElementById('splash');\n";
+  out << "  var film=document.getElementById('introfilm');\n";
+  out << "  var skip=document.getElementById('skip');\n";
+  out << "  function done(){splash.style.display='none';try{film.pause();}catch(e){}\n";
+  out << "    try{sessionStorage.setItem('kimiaIntroSeen','1');}catch(e){}}\n";
+  out << "  if(sessionStorage.getItem('kimiaIntroSeen')==='1'){return;}\n";
+  out << "  fetch('/intro.mp4',{method:'HEAD'}).then(function(r){\n";
+  out << "    if(!r.ok){return;}\n";
+  out << "    splash.style.display='flex';\n";
+  out << "    film.addEventListener('ended',done);\n";
+  out << "    film.addEventListener('error',done);\n";
+  out << "    skip.addEventListener('click',done);\n";
+  out << "    splash.addEventListener('click',function(e){if(e.target!==skip){film.muted=false;"
+         "film.play().catch(function(){});}});\n";
+  out << "    film.play().catch(function(){});\n";
+  out << "  }).catch(function(){});\n";
+  out << "})();\n";
   out << "setInterval(function(){fetch('/stats').then(function(r){return r.text();}).then(function(t){"
          "document.getElementById('stats').textContent=t;}).catch(function(){});},500);\n";
   // Sound cues: /sound = "<seq> <name>"; a new seq plays /sfx/<name>. Browsers
@@ -542,6 +597,44 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   if (!keymapJs.empty()) out << keymapJs << '\n';
   out << "</script>\n</body>\n</html>\n";
   return out.str();
+}
+
+namespace {
+
+bool readWholeFile(const std::string& path, std::vector<u8>& out) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) return false;
+  out.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+  return !out.empty();
+}
+
+}  // namespace
+
+bool loadIntroFrom(Server& server, const std::string& folder) {
+  // The same film may sit next to the binary (a release package) or two
+  // folders up (a build tree), so try the obvious places in order.
+  // "-" is the explicit «no intro»: search nothing, find nothing.
+  if (folder == "-") return false;
+  // A folder the caller named is authoritative: if the film is not there,
+  // that is the answer. Only the default (empty) search walks the usual
+  // places, so a build tree and a release package both just work.
+  std::vector<std::string> roots;
+  if (!folder.empty()) {
+    roots.push_back(folder);
+  } else {
+    roots.push_back("Branding");
+    roots.push_back("../Branding");
+    roots.push_back("../../Branding");
+  }
+  for (const std::string& root : roots) {
+    std::vector<u8> film;
+    if (!readWholeFile(root + "/kimia-intro.mp4", film)) continue;
+    std::vector<u8> logo;
+    readWholeFile(root + "/kimia-logo.png", logo);  // optional poster
+    server.setIntro(std::move(film), std::move(logo));
+    return true;
+  }
+  return false;
 }
 
 }  // namespace web

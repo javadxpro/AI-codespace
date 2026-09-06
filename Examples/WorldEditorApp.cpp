@@ -270,6 +270,9 @@ void printUsage() {
       "  --assets DIR      OBJ/FBX files you can place in a scene (default assets)\n"
       "  --profiles DIR    *.kimiaprofile game files (default profiles;\n"
       "                    the built-in games always work without this)\n"
+      "  --branding DIR    folder with kimia-intro.mp4 / kimia-logo.png\n"
+      "                    (default: Branding next to the app or the build)\n"
+      "  --no-intro        do not play the intro film\n"
       "  --version         print the engine version and exit\n"
       "  --help            print this text and exit\n"
       "\n"
@@ -284,6 +287,7 @@ int main(int argc, char** argv) {
   std::string worldPath = "my_world.kimia";
   std::string assetsDir = "assets";
   std::string profilesDir = "profiles";
+  std::string brandingDir;  // empty = look in Branding, ../Branding, ../../Branding
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
@@ -294,6 +298,10 @@ int main(int argc, char** argv) {
       assetsDir = argv[++i];
     } else if (arg == "--profiles" && i + 1 < argc) {
       profilesDir = argv[++i];
+    } else if (arg == "--branding" && i + 1 < argc) {
+      brandingDir = argv[++i];
+    } else if (arg == "--no-intro") {
+      brandingDir = "-";  // a folder that cannot exist: skips the film
     } else if (arg == "--version") {
       std::printf("%s\n", kimia::kEngineVersionString);
       return 0;
@@ -346,9 +354,12 @@ int main(int argc, char** argv) {
       "KIMIA World", {}, keymapJs,
       "everything is menus: tap 1-9 for the options, arrows move, Shift = fine, r resets, b opens the menu, "
       "Space = jump (or hold to charge a shot)"));
+  // The intro film, if the Branding folder shipped with this build.
+  const bool intro = kimia::web::loadIntroFrom(*engine.server(), brandingDir);
   std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
               static_cast<i32>(engine.server()->port()), engine.glAvailable() ? "yes" : "no (software)",
               static_cast<i32>(editor.profileCount()));
+  std::printf("intro: %s\n", intro ? "yes" : "no (no Branding/kimia-intro.mp4)");
 
   Renderer renderer;
   std::string rendererError;
