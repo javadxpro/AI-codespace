@@ -1,5 +1,6 @@
 #include <kimia/Assets.h>
 #include <kimia/Input.h>
+#include <kimia/InputState.h>
 #include <kimia_test.h>
 
 #include <string>
@@ -30,6 +31,37 @@ void bind(Control& control, Source source, const char* code) {
 }  // namespace
 
 // --- The input system: one action, many ways to do it ---
+
+KIMIA_TEST(input_native_mouse_and_gamepad_edges_and_axes_reset_per_frame) {
+  kimia::InputState input;
+  input.setMouseButton(kimia::MouseButton::Left, true);
+  input.setGamepadButton(kimia::GamepadButton::A, true);
+  input.setGamepadAxis(kimia::GamepadAxis::LeftX, 0.75);
+  KIMIA_REQUIRE(input.mouseDown(kimia::MouseButton::Left));
+  KIMIA_REQUIRE(input.mousePressed(kimia::MouseButton::Left));
+  KIMIA_REQUIRE(input.gamepadDown(kimia::GamepadButton::A));
+  KIMIA_REQUIRE(input.gamepadPressed(kimia::GamepadButton::A));
+  KIMIA_REQUIRE(input.gamepadAxis(kimia::GamepadAxis::LeftX) == 0.75);
+
+  input.endFrame();
+  KIMIA_REQUIRE(input.mouseDown(kimia::MouseButton::Left));
+  KIMIA_REQUIRE(!input.mousePressed(kimia::MouseButton::Left));
+  KIMIA_REQUIRE(input.gamepadDown(kimia::GamepadButton::A));
+  KIMIA_REQUIRE(!input.gamepadPressed(kimia::GamepadButton::A));
+  KIMIA_REQUIRE(input.gamepadAxis(kimia::GamepadAxis::LeftX) == 0.75);
+
+  input.setMouseButton(kimia::MouseButton::Left, false);
+  input.setGamepadButton(kimia::GamepadButton::A, false);
+  KIMIA_REQUIRE(input.mouseReleased(kimia::MouseButton::Left));
+  KIMIA_REQUIRE(input.gamepadReleased(kimia::GamepadButton::A));
+
+  input.setKeyDown(kimia::Key::A, true);
+  input.setGamepadAxis(kimia::GamepadAxis::LeftY, -1.0);
+  input.clearHeld();
+  KIMIA_REQUIRE(!input.down(kimia::Key::A));
+  KIMIA_REQUIRE(!input.gamepadDown(kimia::GamepadButton::A));
+  KIMIA_REQUIRE(input.gamepadAxis(kimia::GamepadAxis::LeftY) == 0.0);
+}
 
 KIMIA_TEST(input_one_control_answers_to_key_touch_and_pad) {
   // The whole point: a game says "jump", and the player's hardware is

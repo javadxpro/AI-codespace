@@ -1,6 +1,13 @@
 #include <kimia/GLFunctions.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 namespace kimia {
 
@@ -15,7 +22,13 @@ namespace {
 void* gLibraryHandle = nullptr;
 
 void* resolve(const char* name) {
+#ifdef _WIN32
+  return gLibraryHandle != nullptr
+             ? reinterpret_cast<void*>(::GetProcAddress(reinterpret_cast<HMODULE>(gLibraryHandle), name))
+             : nullptr;
+#else
   return gLibraryHandle != nullptr ? dlsym(gLibraryHandle, name) : nullptr;
+#endif
 }
 
 #define LOAD(name) name##Fn = reinterpret_cast<decltype(name##Fn)>(resolver("gl" #name))
@@ -26,8 +39,12 @@ bool GLFunctions::load(GLGetProcFn proc) {
 
   GLGetProcFn resolver = proc;
   if (resolver == nullptr) {
+#ifdef _WIN32
+    handle_ = reinterpret_cast<void*>(::LoadLibraryA("opengl32.dll"));
+#else
     handle_ = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
     if (handle_ == nullptr) handle_ = dlopen("libGL.so", RTLD_NOW | RTLD_LOCAL);
+#endif
     if (handle_ == nullptr) return false;
     gLibraryHandle = handle_;
     resolver = resolve;
@@ -101,7 +118,11 @@ bool GLFunctions::load(GLGetProcFn proc) {
 
 void GLFunctions::unload() {
   if (handle_ != nullptr) {
+#ifdef _WIN32
+    ::FreeLibrary(reinterpret_cast<HMODULE>(handle_));
+#else
     dlclose(handle_);
+#endif
     handle_ = nullptr;
   }
   loaded_ = false;

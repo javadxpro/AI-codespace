@@ -1,5 +1,23 @@
 #include <kimia/EGL.h>
 
+#ifdef _WIN32
+
+namespace kimia {
+
+EGLContext::~EGLContext() { destroy(); }
+bool EGLContext::create(i32, i32) { return false; }
+void EGLContext::destroy() {
+  library_ = nullptr;
+  display_ = nullptr;
+  surface_ = nullptr;
+  context_ = nullptr;
+  valid_ = false;
+}
+
+}  // namespace kimia
+
+#else
+
 #include <dlfcn.h>
 
 namespace kimia {
@@ -138,3 +156,5 @@ void EGLContext::destroy() {
 }
 
 }  // namespace kimia
+
+#endif  // _WIN32

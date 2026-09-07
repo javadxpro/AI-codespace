@@ -7,6 +7,22 @@ namespace kimia {
 namespace {
 
 usize indexOf(Key key) { return static_cast<usize>(key); }
+usize indexOf(MouseButton button) { return static_cast<usize>(button); }
+usize indexOf(GamepadButton button) { return static_cast<usize>(button); }
+usize indexOf(GamepadAxis axis) { return static_cast<usize>(axis); }
+
+template <typename Enum>
+void setButton(Enum button, bool down, bool* held, bool* pressed, bool* released) {
+  const usize index = indexOf(button);
+  if (down && !held[index]) pressed[index] = true;
+  if (!down && held[index]) released[index] = true;
+  held[index] = down;
+}
+
+template <typename Enum>
+bool buttonValue(Enum button, const bool* values) {
+  return values[indexOf(button)];
+}
 
 }  // namespace
 
@@ -41,21 +57,59 @@ std::optional<Key> keyFromName(const std::string& name) {
 }
 
 void InputState::setKeyDown(Key key, bool down) {
-  const usize index = indexOf(key);
-  if (down && !held_[index]) pressed_[index] = true;
-  if (!down && held_[index]) released_[index] = true;
-  held_[index] = down;
+  setButton(key, down, held_, pressed_, released_);
 }
 
 void InputState::tap(Key key) { pressed_[indexOf(key)] = true; }
 
-bool InputState::down(Key key) const { return held_[indexOf(key)]; }
-bool InputState::pressed(Key key) const { return pressed_[indexOf(key)]; }
-bool InputState::released(Key key) const { return released_[indexOf(key)]; }
+bool InputState::down(Key key) const { return buttonValue(key, held_); }
+bool InputState::pressed(Key key) const { return buttonValue(key, pressed_); }
+bool InputState::released(Key key) const { return buttonValue(key, released_); }
+
+void InputState::setMouseButton(MouseButton button, bool down) {
+  setButton(button, down, mouseHeld_, mousePressed_, mouseReleased_);
+}
+
+bool InputState::mouseDown(MouseButton button) const { return buttonValue(button, mouseHeld_); }
+bool InputState::mousePressed(MouseButton button) const { return buttonValue(button, mousePressed_); }
+bool InputState::mouseReleased(MouseButton button) const { return buttonValue(button, mouseReleased_); }
+
+void InputState::setGamepadButton(GamepadButton button, bool down) {
+  setButton(button, down, gamepadHeld_, gamepadPressed_, gamepadReleased_);
+}
+
+bool InputState::gamepadDown(GamepadButton button) const { return buttonValue(button, gamepadHeld_); }
+bool InputState::gamepadPressed(GamepadButton button) const {
+  return buttonValue(button, gamepadPressed_);
+}
+bool InputState::gamepadReleased(GamepadButton button) const {
+  return buttonValue(button, gamepadReleased_);
+}
+
+void InputState::setGamepadAxis(GamepadAxis axis, f64 value) { gamepadAxes_[indexOf(axis)] = value; }
+
+f64 InputState::gamepadAxis(GamepadAxis axis) const { return gamepadAxes_[indexOf(axis)]; }
+
+void InputState::clearHeld() {
+  for (usize i = 0; i < static_cast<usize>(Key::Count); ++i) {
+    setKeyDown(static_cast<Key>(i), false);
+  }
+  for (usize i = 0; i < static_cast<usize>(MouseButton::Count); ++i) {
+    setMouseButton(static_cast<MouseButton>(i), false);
+  }
+  for (usize i = 0; i < static_cast<usize>(GamepadButton::Count); ++i) {
+    setGamepadButton(static_cast<GamepadButton>(i), false);
+  }
+  std::memset(gamepadAxes_, 0, sizeof(gamepadAxes_));
+}
 
 void InputState::endFrame() {
   std::memset(pressed_, 0, sizeof(pressed_));
   std::memset(released_, 0, sizeof(released_));
+  std::memset(mousePressed_, 0, sizeof(mousePressed_));
+  std::memset(mouseReleased_, 0, sizeof(mouseReleased_));
+  std::memset(gamepadPressed_, 0, sizeof(gamepadPressed_));
+  std::memset(gamepadReleased_, 0, sizeof(gamepadReleased_));
   lookX = 0.0;
   lookY = 0.0;
   zoom = 0.0;

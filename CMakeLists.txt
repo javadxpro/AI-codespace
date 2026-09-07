@@ -14,7 +14,29 @@ message(STATUS "KIMIA engine version ${PROJECT_VERSION}")
 
 option(KIMIA_WERROR "Treat warnings as errors" ON)
 option(KIMIA_BUILD_TOOLS "Build the kimia_assets CLI tool" ON)
+if(WIN32)
+  # The current aggregate tests contain Unix-only test clients. The PC runtime
+  # is buildable by default; the test port is a separate migration task and
+  # can be requested explicitly with -DKIMIA_BUILD_TESTS=ON.
+  option(KIMIA_BUILD_TESTS "Build the aggregate test executable" OFF)
+else()
+  option(KIMIA_BUILD_TESTS "Build the aggregate test executable" ON)
+endif()
 option(KIMIA_ENABLE_SDL2 "Use SDL2 for the window backend when available" ON)
+option(KIMIA_BUILD_PC "Build the Windows desktop path when targeting Windows" ON)
+option(KIMIA_ENABLE_D3D11 "Build the Direct3D 11 renderer on Windows" ON)
+set(KIMIA_RENDER_BACKEND "AUTO" CACHE STRING "Primary renderer: AUTO, D3D11, OPENGL or SOFTWARE")
+set_property(CACHE KIMIA_RENDER_BACKEND PROPERTY STRINGS AUTO D3D11 OPENGL SOFTWARE)
+string(TOUPPER "${KIMIA_RENDER_BACKEND}" KIMIA_RENDER_BACKEND_NORMALIZED)
+if(NOT KIMIA_RENDER_BACKEND_NORMALIZED MATCHES "^(AUTO|D3D11|OPENGL|SOFTWARE)$")
+  message(FATAL_ERROR "KIMIA_RENDER_BACKEND must be AUTO, D3D11, OPENGL or SOFTWARE")
+endif()
+if(KIMIA_RENDER_BACKEND_NORMALIZED STREQUAL "D3D11" AND NOT WIN32)
+  message(FATAL_ERROR "KIMIA_RENDER_BACKEND=D3D11 requires a Windows build")
+endif()
+if(KIMIA_RENDER_BACKEND_NORMALIZED STREQUAL "D3D11" AND NOT KIMIA_ENABLE_D3D11)
+  message(FATAL_ERROR "KIMIA_RENDER_BACKEND=D3D11 requires KIMIA_ENABLE_D3D11=ON")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,12 +51,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 message(STATUS "KIMIA build type: ${CMAKE_BUILD_TYPE}, compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 
-# -Wsign-conversion is listed EXPLICITLY: GCC's -Wconversion does not imply
-# it in C++ but Clang's does, so a signed/unsigned slip compiled clean on
-# every GCC gate here and then failed on the phone's Clang. Naming it makes
-# both compilers agree.
-set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
-                          -Wdouble-promotion)
+# Keep the strict gate on GCC/Clang, but make the same project consumable by
+# the Windows/MSVC toolchain selected for the PC rebuild. MSVC does not accept
+# GCC's -W* switches; /permissive- and /W4 are the closest useful baseline.
+if(MSVC)
+  set(KIMIA_STRICT_WARNINGS /W4 /permissive- /utf-8)
+  set(KIMIA_WERROR_FLAGS /WX)
+else()
+  # -Wsign-conversion is listed explicitly: GCC's -Wconversion does not imply
+  # it in C++ but Clang's does.
+  set(KIMIA_STRICT_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+                            -Wdouble-promotion)
+  set(KIMIA_WERROR_FLAGS -Werror)
+endif()
 # Binaries live in <build>/bin (the paths the engine spec's gates use).
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -68,6 +97,10 @@ elseif(KIMIA_ENABLE_SDL2)
 else()
   message(STATUS "SDL2 disabled by KIMIA_ENABLE_SDL2=OFF: headless-only (WebViewer display)")
 endif()
+if(WIN32 AND KIMIA_BUILD_PC AND NOT KIMIA_HAS_SDL2)
+  message(FATAL_ERROR
+      "KIMIA_BUILD_PC requires SDL2. Install the SDL2 development package or configure with -DKIMIA_BUILD_PC=OFF.")
+endif()
 
 add_library(kimia_core
     Engine/Core/src/Log.cpp
@@ -77,7 +110,20 @@ add_library(kimia_core
 target_include_directories(kimia_core PUBLIC Engine/Core/include)
 target_compile_options(kimia_core PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_core PRIVATE -Werror)
+  target_compile_options(kimia_core PRIVATE ${KIMIA_WERROR_FLAGS})
+endif()
+
+# Portable runtime clock shared by the future PC game loop and the editor.
+# Keeping it outside WorldEditor is the first step in separating engine state
+# from the reference games.
+add_library(kimia_runtime STATIC
+    Engine/Runtime/src/RuntimeLoop.cpp
+)
+target_include_directories(kimia_runtime PUBLIC Engine/Runtime/include)
+target_link_libraries(kimia_runtime PUBLIC kimia_core)
+target_compile_options(kimia_runtime PRIVATE ${KIMIA_STRICT_WARNINGS})
+if(KIMIA_WERROR)
+  target_compile_options(kimia_runtime PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_library(kimia_math INTERFACE)
@@ -91,7 +137,7 @@ target_include_directories(kimia_scene PUBLIC Engine/Scene/include)
 target_link_libraries(kimia_scene PUBLIC kimia_math)
 target_compile_options(kimia_scene PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_scene PRIVATE -Werror)
+  target_compile_options(kimia_scene PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_library(kimia_physics STATIC
@@ -101,7 +147,7 @@ target_include_directories(kimia_physics PUBLIC Engine/Physics/include)
 target_link_libraries(kimia_physics PUBLIC kimia_core kimia_math)
 target_compile_options(kimia_physics PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_physics PRIVATE -Werror)
+  target_compile_options(kimia_physics PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # --- Game profiles (the data that turns the engine into one game) ---
@@ -112,7 +158,7 @@ target_include_directories(kimia_profile PUBLIC Engine/Profile/include)
 target_link_libraries(kimia_profile PUBLIC kimia_core)
 target_compile_options(kimia_profile PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_profile PRIVATE -Werror)
+  target_compile_options(kimia_profile PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # Vendored FBX loader (single-file library, upstream code).
@@ -149,9 +195,10 @@ target_include_directories(kimia_assets SYSTEM PUBLIC
 target_link_libraries(kimia_assets PUBLIC kimia_core kimia_math kimia_ufbx kimia_stb_vorbis)
 target_compile_options(kimia_assets PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_assets PRIVATE -Werror)
+  target_compile_options(kimia_assets PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
+if(KIMIA_BUILD_TESTS)
 add_executable(kimia_tests
     Tests/src/main.cpp
     Tests/src/CoreTests.cpp
@@ -173,12 +220,13 @@ add_executable(kimia_tests
     Tests/src/ParticleTests.cpp
     Tests/src/InputTests.cpp
     Tests/src/ProfileTests.cpp
+    Tests/src/RuntimeTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
 target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_tests PRIVATE -Werror)
+  target_compile_options(kimia_tests PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 target_compile_definitions(kimia_tests PRIVATE
     KIMIA_CMAKE_VERSION="${PROJECT_VERSION}"
@@ -188,6 +236,8 @@ target_compile_definitions(kimia_tests PRIVATE
     KIMIA_TEST_TMP="${CMAKE_BINARY_DIR}/kimia_test_tmp"
 )
 
+endif()
+
 # --- Raytracer (offline path tracer render preview) ---
 add_library(kimia_raytracer STATIC
     Engine/Raytracer/src/Raytracer.cpp
@@ -196,31 +246,34 @@ target_include_directories(kimia_raytracer PUBLIC Engine/Raytracer/include)
 target_link_libraries(kimia_raytracer PUBLIC kimia_world kimia_math)
 target_compile_options(kimia_raytracer PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_raytracer PRIVATE -Werror)
+  target_compile_options(kimia_raytracer PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # Tiny generator that writes the test assets (tone.wav, 2x3.png, 2x2.jpg,
-# cube.obj, quad.obj) into Tests/assets. Runs on every build.
-add_executable(kimia_asset_gen Tools/src/asset_gen.cpp)
-target_link_libraries(kimia_asset_gen PRIVATE kimia_assets)
-target_compile_options(kimia_asset_gen PRIVATE ${KIMIA_STRICT_WARNINGS})
-if(KIMIA_WERROR)
-  target_compile_options(kimia_asset_gen PRIVATE -Werror)
+# cube.obj, quad.obj) into Tests/assets. A PC release does not build or run
+# test-asset tooling unless the aggregate tests were explicitly enabled.
+if(KIMIA_BUILD_TESTS)
+  add_executable(kimia_asset_gen Tools/src/asset_gen.cpp)
+  target_link_libraries(kimia_asset_gen PRIVATE kimia_assets)
+  target_compile_options(kimia_asset_gen PRIVATE ${KIMIA_STRICT_WARNINGS})
+  if(KIMIA_WERROR)
+    target_compile_options(kimia_asset_gen PRIVATE ${KIMIA_WERROR_FLAGS})
+  endif()
+  add_custom_target(kimia_generate_assets ALL
+      COMMAND ${CMAKE_COMMAND} -E env
+          KIMIA_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/assets"
+          $<TARGET_FILE:kimia_asset_gen>
+      DEPENDS kimia_asset_gen
+  )
+  add_dependencies(kimia_tests kimia_generate_assets)
 endif()
-add_custom_target(kimia_generate_assets ALL
-    COMMAND ${CMAKE_COMMAND} -E env
-        KIMIA_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/assets"
-        $<TARGET_FILE:kimia_asset_gen>
-    DEPENDS kimia_asset_gen
-)
-add_dependencies(kimia_tests kimia_generate_assets)
 
 if(KIMIA_BUILD_TOOLS)
   add_executable(kimia_assets_cli Tools/src/kimia_assets.cpp)
   target_link_libraries(kimia_assets_cli PRIVATE kimia_assets)
   target_compile_options(kimia_assets_cli PRIVATE ${KIMIA_STRICT_WARNINGS})
   if(KIMIA_WERROR)
-    target_compile_options(kimia_assets_cli PRIVATE -Werror)
+    target_compile_options(kimia_assets_cli PRIVATE ${KIMIA_WERROR_FLAGS})
   endif()
 
   add_executable(kimia_raytrace_cli Tools/src/kimia_raytrace.cpp)
@@ -228,11 +281,11 @@ if(KIMIA_BUILD_TOOLS)
   target_link_libraries(kimia_raytrace_cli PRIVATE kimia_raytracer kimia_world)
   target_compile_options(kimia_raytrace_cli PRIVATE ${KIMIA_STRICT_WARNINGS})
   if(KIMIA_WERROR)
-    target_compile_options(kimia_raytrace_cli PRIVATE -Werror)
+    target_compile_options(kimia_raytrace_cli PRIVATE ${KIMIA_WERROR_FLAGS})
   endif()
 endif()
 
-# --- Renderer (GL 3.3 loader + EGL + shaders + software rasterizer) ---
+# --- Renderer (D3D11 PC backend + GL/EGL + software fallback) ---
 add_library(kimia_renderer STATIC
     Engine/Renderer/src/GLFunctions.cpp
     Engine/Renderer/src/EGL.cpp
@@ -241,13 +294,36 @@ add_library(kimia_renderer STATIC
     Engine/Renderer/src/Shaders.cpp
     Engine/Renderer/src/Renderer.cpp
     Engine/Renderer/src/SoftwareRenderer.cpp
+    Engine/Renderer/src/D3D11Renderer.cpp
 )
 target_include_directories(kimia_renderer PUBLIC Engine/Renderer/include)
 # dlopen/dlsym for the runtime GL loader (libdl on Android/bionic and old glibc).
 target_link_libraries(kimia_renderer PUBLIC kimia_assets kimia_math ${CMAKE_DL_LIBS})
+if(WIN32 AND KIMIA_ENABLE_D3D11)
+  target_link_libraries(kimia_renderer PUBLIC d3d11 dxgi d3dcompiler)
+  target_compile_definitions(kimia_renderer PUBLIC KIMIA_HAS_D3D11=1)
+endif()
+if(KIMIA_RENDER_BACKEND_NORMALIZED STREQUAL "D3D11")
+  target_compile_definitions(kimia_renderer PUBLIC KIMIA_PRIMARY_RENDERER_D3D11=1)
+elseif(KIMIA_RENDER_BACKEND_NORMALIZED STREQUAL "OPENGL")
+  target_compile_definitions(kimia_renderer PUBLIC KIMIA_PRIMARY_RENDERER_OPENGL=1)
+elseif(KIMIA_RENDER_BACKEND_NORMALIZED STREQUAL "SOFTWARE")
+  target_compile_definitions(kimia_renderer PUBLIC KIMIA_PRIMARY_RENDERER_SOFTWARE=1)
+else()
+  target_compile_definitions(kimia_renderer PUBLIC KIMIA_PRIMARY_RENDERER_AUTO=1)
+endif()
 target_compile_options(kimia_renderer PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_renderer PRIVATE -Werror)
+  target_compile_options(kimia_renderer PRIVATE ${KIMIA_WERROR_FLAGS})
+endif()
+
+if(WIN32 AND KIMIA_BUILD_PC AND KIMIA_ENABLE_D3D11)
+  add_executable(kimia_pc_d3d11_smoke Examples/PCD3D11Smoke.cpp)
+  target_link_libraries(kimia_pc_d3d11_smoke PRIVATE kimia_renderer kimia_assets)
+  target_compile_options(kimia_pc_d3d11_smoke PRIVATE ${KIMIA_STRICT_WARNINGS})
+  if(KIMIA_WERROR)
+    target_compile_options(kimia_pc_d3d11_smoke PRIVATE ${KIMIA_WERROR_FLAGS})
+  endif()
 endif()
 
 # --- Platform (input + optional SDL2 window) ---
@@ -265,7 +341,7 @@ if(KIMIA_HAS_SDL2)
 endif()
 target_compile_options(kimia_platform PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_platform PRIVATE -Werror)
+  target_compile_options(kimia_platform PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # --- App (WebViewer + engine bootstrap) ---
@@ -274,10 +350,13 @@ add_library(kimia_app STATIC
     Engine/App/src/Engine.cpp
 )
 target_include_directories(kimia_app PUBLIC Engine/App/include)
-target_link_libraries(kimia_app PUBLIC kimia_platform kimia_renderer Threads::Threads)
+target_link_libraries(kimia_app PUBLIC kimia_platform kimia_renderer kimia_runtime Threads::Threads)
+if(WIN32)
+  target_link_libraries(kimia_app PUBLIC ws2_32)
+endif()
 target_compile_options(kimia_app PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_app PRIVATE -Werror)
+  target_compile_options(kimia_app PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # --- Examples ---
@@ -285,21 +364,21 @@ add_executable(kimia_hello Examples/HelloWindow.cpp)
 target_link_libraries(kimia_hello PRIVATE kimia_app)
 target_compile_options(kimia_hello PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_hello PRIVATE -Werror)
+  target_compile_options(kimia_hello PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_executable(kimia_first3d Examples/First3DScene.cpp)
 target_link_libraries(kimia_first3d PRIVATE kimia_app)
 target_compile_options(kimia_first3d PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_first3d PRIVATE -Werror)
+  target_compile_options(kimia_first3d PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_executable(kimia_remote Examples/RemoteView.cpp)
 target_link_libraries(kimia_remote PRIVATE kimia_app)
 target_compile_options(kimia_remote PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_remote PRIVATE -Werror)
+  target_compile_options(kimia_remote PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 # --- World (option-driven editor + SceneIO-v1-compatible world files) ---
@@ -320,7 +399,7 @@ target_include_directories(kimia_world PUBLIC Engine/World/include)
 target_link_libraries(kimia_world PUBLIC kimia_profile kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_world PRIVATE -Werror)
+  target_compile_options(kimia_world PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_executable(kimia_world_app Examples/WorldEditorApp.cpp)
@@ -328,7 +407,7 @@ set_target_properties(kimia_world_app PROPERTIES OUTPUT_NAME kimia_world)
 target_link_libraries(kimia_world_app PRIVATE kimia_app kimia_world)
 target_compile_options(kimia_world_app PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_world_app PRIVATE -Werror)
+  target_compile_options(kimia_world_app PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 # The game profile files ship next to the binaries (kimia_world looks in
 # ./profiles by default, --profiles DIR overrides).
@@ -345,7 +424,7 @@ target_include_directories(kimia_golf PUBLIC Engine/Golf/include)
 target_link_libraries(kimia_golf PUBLIC kimia_scene kimia_physics)
 target_compile_options(kimia_golf PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_golf PRIVATE -Werror)
+  target_compile_options(kimia_golf PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 add_executable(kimia_golf_app Examples/GolfGame.cpp)
@@ -353,11 +432,13 @@ set_target_properties(kimia_golf_app PROPERTIES OUTPUT_NAME kimia_golf)
 target_link_libraries(kimia_golf_app PRIVATE kimia_app kimia_golf)
 target_compile_options(kimia_golf_app PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
-  target_compile_options(kimia_golf_app PRIVATE -Werror)
+  target_compile_options(kimia_golf_app PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
 include(CTest)
-# Run from the source tree: several tests read real files out of
-# Tests/assets, and ctest would otherwise start them in the build folder
-# where those files do not exist.
-add_test(NAME kimia_tests COMMAND kimia_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+if(KIMIA_BUILD_TESTS)
+  # Run from the source tree: several tests read real files out of
+  # Tests/assets, and ctest would otherwise start them in the build folder
+  # where those files do not exist.
+  add_test(NAME kimia_tests COMMAND kimia_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()

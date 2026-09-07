@@ -1,10 +1,8 @@
-#include <dirent.h>
-#include <sys/stat.h>
-
 #include <kimia/AssetPipeline.h>
 #include <kimia/Assets.h>
 
 #include <algorithm>
+#include <filesystem>
 
 namespace kimia {
 namespace assetscan {
@@ -21,11 +19,6 @@ std::string lowered(const std::string& text) {
 
 bool endsWith(const std::string& text, const std::string& tail) {
   return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
-}
-
-std::string join(const std::string& folder, const std::string& file) {
-  if (folder.empty()) return file;
-  return folder.back() == '/' ? folder + file : folder + "/" + file;
 }
 
 }  // namespace
@@ -56,35 +49,48 @@ AssetKind kindOfFile(const std::string& file) {
 // all of it, not just the top level. `file` stays relative to the scanned
 // root ("actions/Dribble.fbx"), `path` is the whole thing.
 void scanInto(const std::string& root, const std::string& folder, std::vector<ScannedAsset>& found) {
-  DIR* dir = ::opendir(folder.c_str());
-  if (dir == nullptr) return;  // a missing folder is empty, not an error
+  namespace fs = std::filesystem;
+  std::error_code error;
+  const fs::path rootPath = fs::weakly_canonical(fs::path(root), error);
+  error.clear();
+  const fs::path folderPath = fs::weakly_canonical(fs::path(folder), error);
+  if (error) return;
+  fs::directory_iterator iterator(folderPath, error);
+  if (error) return;  // a missing or inaccessible folder is empty, not a crash
 
-  while (dirent* entry = ::readdir(dir)) {
-    const std::string name = entry->d_name;
-    if (name == "." || name == "..") continue;
-    const std::string whole = join(folder, name);
-    struct ::stat info {};
-    if (::stat(whole.c_str(), &info) == 0 && S_ISDIR(info.st_mode)) {
-      scanInto(root, whole, found);
+  const fs::directory_iterator end;
+  for (; iterator != end; iterator.increment(error)) {
+    if (error) {
+      error.clear();
       continue;
     }
+    const fs::directory_entry& entry = *iterator;
+    std::error_code entryError;
+    if (entry.is_directory(entryError)) {
+      scanInto(root, entry.path().string(), found);
+      continue;
+    }
+    if (entryError || !entry.is_regular_file(entryError)) continue;
+
+    const std::string name = entry.path().filename().string();
     const AssetKind kind = kindOfFile(name);
     // Anything the engine cannot use is left out: showing a list full of
     // .txt and .zip would make the useful entries harder to find.
     if (kind == AssetKind::Unknown) continue;
 
     ScannedAsset asset;
-    // Relative to the scanned root, tolerating a trailing slash on it.
-    std::string relative = whole;
-    if (relative.compare(0, root.size(), root) == 0) relative.erase(0, root.size());
-    while (!relative.empty() && relative.front() == '/') relative.erase(0, 1U);
-    asset.file = relative.empty() ? name : relative;
-    asset.path = whole;
+    const fs::path wholePath = entry.path();
+    std::error_code relativeError;
+    fs::path relativePath = fs::relative(wholePath, rootPath, relativeError);
+    if (relativeError || relativePath.empty()) relativePath = wholePath.filename();
+    asset.file = relativePath.generic_string();
+    asset.path = wholePath.generic_string();
     asset.kind = kind;
-    asset.bytes = static_cast<u64>(info.st_size);
+    std::error_code sizeError;
+    asset.bytes = static_cast<u64>(entry.file_size(sizeError));
+    if (sizeError) asset.bytes = 0U;
     found.push_back(asset);
   }
-  ::closedir(dir);
 }
 
 std::vector<ScannedAsset> scan(const std::string& folder, bool deep) {

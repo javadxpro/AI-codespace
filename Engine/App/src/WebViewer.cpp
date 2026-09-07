@@ -1,10 +1,18 @@
 #include <kimia/WebViewer.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +30,42 @@ namespace kimia {
 namespace web {
 
 namespace {
+
+#ifdef _WIN32
+using SocketHandle = SOCKET;
+using SocketLength = int;
+constexpr SocketHandle kInvalidSocket = INVALID_SOCKET;
+#else
+using SocketHandle = int;
+using SocketLength = socklen_t;
+constexpr SocketHandle kInvalidSocket = -1;
+#endif
+
+void closeSocket(SocketHandle socket) {
+#ifdef _WIN32
+  if (socket != kInvalidSocket) ::closesocket(socket);
+#else
+  if (socket != kInvalidSocket) ::close(socket);
+#endif
+}
+
+void shutdownSocket(SocketHandle socket) {
+#ifdef _WIN32
+  if (socket != kInvalidSocket) ::shutdown(socket, SD_BOTH);
+#else
+  if (socket != kInvalidSocket) ::shutdown(socket, SHUT_RDWR);
+#endif
+}
+
+bool socketFailed(SocketHandle socket) { return socket == kInvalidSocket; }
+
+#ifdef _WIN32
+bool ensureWinsock() {
+  WSADATA data{};
+  return ::WSAStartup(MAKEWORD(2, 2), &data) == 0;
+}
+#endif
+
 
 std::string htmlEscape(const std::string& text) {
   std::string out;
@@ -108,10 +152,17 @@ std::map<std::string, std::string> parseQuery(const std::string& query) {
   return params;
 }
 
-bool sendAll(int fd, const std::string& data) {
+bool sendAll(SocketHandle socket, const std::string& data) {
   usize sent = 0;
   while (sent < data.size()) {
-    const ssize_t n = ::send(fd, data.data() + sent, data.size() - sent, 0);
+    // Winsock takes an int length; the response is sent in bounded chunks so
+    // large branding/video payloads never overflow that parameter.
+    const usize chunk = std::min<usize>(data.size() - sent, 1024U * 1024U);
+#ifdef _WIN32
+    const int n = ::send(socket, data.data() + sent, static_cast<int>(chunk), 0);
+#else
+    const ssize_t n = ::send(socket, data.data() + sent, chunk, 0);
+#endif
     if (n <= 0) return false;
     sent += static_cast<usize>(n);
   }
@@ -215,6 +266,8 @@ std::string statusLine(int code) {
       return "200 OK";
     case 400:
       return "400 Bad Request";
+    case 401:
+      return "401 Unauthorized";
     case 404:
       return "404 Not Found";
     case 405:
@@ -226,6 +279,52 @@ std::string statusLine(int code) {
     default:
       return "500 Internal Server Error";
   }
+}
+
+bool authorized(const std::string& request, const std::string& token) {
+  if (token.empty()) return true;
+  const std::string prefix = "\r\nAuthorization: Bearer ";
+  usize at = request.find(prefix);
+  if (at == std::string::npos) at = request.find("\r\nauthorization: Bearer ");
+  if (at != std::string::npos) {
+    at += prefix.size();
+    const usize end = request.find("\r\n", at);
+    if (request.substr(at, end == std::string::npos ? std::string::npos : end - at) == token) return true;
+  }
+
+  // The browser Workbench cannot set Authorization headers for its initial
+  // navigation. A short-lived-looking, HttpOnly cookie is established by
+  // opening /?token=... once; subsequent fetches use the normal cookie path.
+  const usize cookieAt = request.find("\r\nCookie:");
+  if (cookieAt != std::string::npos) {
+    const usize lineEnd = request.find("\r\n", cookieAt + 2U);
+    const usize cookieBegin = cookieAt + 9U;
+    const std::string cookies = request.substr(cookieBegin,
+                                               lineEnd == std::string::npos ? std::string::npos : lineEnd - cookieBegin);
+    const std::string expected = "kimia_token=" + token;
+    usize begin = 0U;
+    while (begin <= cookies.size()) {
+      const usize separator = cookies.find(';', begin);
+      std::string part = cookies.substr(begin, separator == std::string::npos ? std::string::npos : separator - begin);
+      while (!part.empty() && (part.front() == ' ' || part.front() == '\t')) part.erase(part.begin());
+      while (!part.empty() && (part.back() == ' ' || part.back() == '\t')) part.pop_back();
+      if (part == expected) return true;
+      if (separator == std::string::npos) break;
+      begin = separator + 1U;
+    }
+  }
+
+  std::istringstream firstLine(request);
+  std::string method;
+  std::string target;
+  firstLine >> method >> target;
+  const usize question = target.find('?');
+  if (question != std::string::npos) {
+    const std::map<std::string, std::string> params = parseQuery(target.substr(question + 1U));
+    const auto queryToken = params.find("token");
+    if (queryToken != params.end() && queryToken->second == token) return true;
+  }
+  return false;
 }
 
 std::string jsonEscape(const std::string& text) {
@@ -301,8 +400,13 @@ struct Server::Impl {
   std::vector<u8> logo;     // the png poster, empty = no logo
   std::string lastSound;
   u64 soundSequence = 0U;
-  int listenFd = -1;
+  SocketHandle listenFd = kInvalidSocket;
   u16 boundPort = 0;
+  std::string bindAddress = "127.0.0.1";
+  std::string authToken;
+#ifdef _WIN32
+  bool winsockStarted = false;
+#endif
   std::thread acceptThread;
   std::atomic<bool> stopFlag{false};
 };
@@ -336,21 +440,37 @@ void applyInputParams(Server::Impl* impl, const std::map<std::string, std::strin
   }
 }
 
-void handleConnection(int fd, Server::Impl* impl) {
+void handleConnection(SocketHandle socket, Server::Impl* impl) {
+#ifdef _WIN32
+  const DWORD timeout = 3000U;
+  ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+  ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+#else
   timeval timeout{};
   timeout.tv_sec = 3;
   timeout.tv_usec = 0;
-  ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+#endif
 
   std::string request;
   char buffer[2048];
   for (;;) {
-    const ssize_t n = ::recv(fd, buffer, sizeof(buffer), 0);
+#ifdef _WIN32
+    const int n = ::recv(socket, buffer, static_cast<int>(sizeof(buffer)), 0);
+#else
+    const ssize_t n = ::recv(socket, buffer, sizeof(buffer), 0);
+#endif
     if (n <= 0) break;
     request.append(buffer, static_cast<usize>(n));
     if (request.find("\r\n\r\n") != std::string::npos) break;
     if (request.size() > 16384U) break;
+  }
+
+  if (!authorized(request, impl->authToken)) {
+    sendAll(socket, httpResponse(statusLine(401), "text/plain; charset=utf-8", "unauthorized"));
+    closeSocket(socket);
+    return;
   }
 
   std::string method;
@@ -360,7 +480,7 @@ void handleConnection(int fd, Server::Impl* impl) {
     stream >> method >> target;
   }
   if (method.empty() || target.empty()) {
-    ::close(fd);
+    closeSocket(socket);
     return;
   }
 
@@ -392,7 +512,11 @@ void handleConnection(int fd, Server::Impl* impl) {
         while (body.size() < announced) {
           char chunk[8192];
           const usize want = std::min(sizeof(chunk), announced - body.size());
-          const ssize_t n = ::recv(fd, chunk, want, 0);
+#ifdef _WIN32
+          const int n = ::recv(socket, chunk, static_cast<int>(want), 0);
+#else
+          const ssize_t n = ::recv(socket, chunk, want, 0);
+#endif
           if (n <= 0) break;
           body.append(chunk, static_cast<usize>(n));
         }
@@ -497,16 +621,37 @@ void handleConnection(int fd, Server::Impl* impl) {
   } else {
     response = httpResponse(statusLine(404), "text/plain; charset=utf-8", "not found");
   }
-  sendAll(fd, response);
-  ::close(fd);
+  // A browser can bootstrap the protected Workbench with /?token=... once;
+  // move the secret into an HttpOnly cookie and keep it out of later URLs.
+  if (!impl->authToken.empty()) {
+    std::istringstream firstLine(request);
+    std::string methodForCookie;
+    std::string targetForCookie;
+    firstLine >> methodForCookie >> targetForCookie;
+    const usize questionForCookie = targetForCookie.find('?');
+    if (questionForCookie != std::string::npos) {
+      const std::map<std::string, std::string> params = parseQuery(targetForCookie.substr(questionForCookie + 1U));
+      const auto queryToken = params.find("token");
+      const bool safe = impl->authToken.find_first_of("\r\n;") == std::string::npos;
+      if (safe && queryToken != params.end() && queryToken->second == impl->authToken) {
+        const usize headerEnd = response.find("\r\n\r\n");
+        if (headerEnd != std::string::npos) {
+          response.insert(headerEnd, "\r\nSet-Cookie: kimia_token=" + impl->authToken +
+                                      "; Path=/; HttpOnly; SameSite=Strict\r\n");
+        }
+      }
+    }
+  }
+  sendAll(socket, response);
+  closeSocket(socket);
 }
 
 void acceptLoop(Server::Impl* impl) {
   while (!impl->stopFlag.load()) {
     sockaddr_in address{};
-    socklen_t addressLength = sizeof(address);
-    const int client = ::accept(impl->listenFd, reinterpret_cast<sockaddr*>(&address), &addressLength);
-    if (client < 0) {
+    SocketLength addressLength = static_cast<SocketLength>(sizeof(address));
+    const SocketHandle client = ::accept(impl->listenFd, reinterpret_cast<sockaddr*>(&address), &addressLength);
+    if (socketFailed(client)) {
       if (impl->stopFlag.load()) break;
       continue;
     }
@@ -521,31 +666,77 @@ Server::Server() : impl_(new Impl()) {}
 Server::~Server() { stop(); }
 
 bool Server::start(u16 port, const std::string& pageHtml) {
+  return start(port, pageHtml, ServerOptions{});
+}
+
+bool Server::start(u16 port, const std::string& pageHtml, const ServerOptions& options) {
   stop();
+#ifdef _WIN32
+  if (!ensureWinsock()) return false;
+  impl_->winsockStarted = true;
+#endif
   impl_->page = pageHtml;
-  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) return false;
-  int reuse = 1;
-  ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
-  address.sin_port = htons(port);
-  if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-    ::close(fd);
+  impl_->bindAddress = options.bindAddress.empty() ? "127.0.0.1" : options.bindAddress;
+  impl_->authToken = options.authToken;
+  if (impl_->bindAddress != "127.0.0.1" && impl_->authToken.empty()) {
+    // A non-loopback editor API without authentication is an accidental LAN
+    // file/project control surface, not a valid release configuration.
+#ifdef _WIN32
+    if (impl_->winsockStarted) {
+      ::WSACleanup();
+      impl_->winsockStarted = false;
+    }
+#endif
     return false;
   }
-  if (::listen(fd, 16) != 0) {
-    ::close(fd);
+  const SocketHandle socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (socketFailed(socket)) {
+#ifdef _WIN32
+    ::WSACleanup();
+    impl_->winsockStarted = false;
+#endif
+    return false;
+  }
+  int reuse = 1;
+#ifdef _WIN32
+  ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+#else
+  ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  if (::inet_pton(AF_INET, impl_->bindAddress.c_str(), &address.sin_addr) != 1) {
+    closeSocket(socket);
+#ifdef _WIN32
+    ::WSACleanup();
+    impl_->winsockStarted = false;
+#endif
+    return false;
+  }
+  address.sin_port = htons(port);
+  if (::bind(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    closeSocket(socket);
+#ifdef _WIN32
+    ::WSACleanup();
+    impl_->winsockStarted = false;
+#endif
+    return false;
+  }
+  if (::listen(socket, 16) != 0) {
+    closeSocket(socket);
+#ifdef _WIN32
+    ::WSACleanup();
+    impl_->winsockStarted = false;
+#endif
     return false;
   }
   sockaddr_in bound{};
-  socklen_t boundLength = sizeof(bound);
+  SocketLength boundLength = static_cast<SocketLength>(sizeof(bound));
   u16 actualPort = port;
-  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &boundLength) == 0) {
+  if (::getsockname(socket, reinterpret_cast<sockaddr*>(&bound), &boundLength) == 0) {
     actualPort = ntohs(bound.sin_port);
   }
-  impl_->listenFd = fd;
+  impl_->listenFd = socket;
   impl_->boundPort = actualPort;
   impl_->stopFlag.store(false);
   impl_->acceptThread = std::thread(acceptLoop, impl_.get());
@@ -554,16 +745,23 @@ bool Server::start(u16 port, const std::string& pageHtml) {
 
 u16 Server::port() const { return impl_->boundPort; }
 
-bool Server::running() const { return impl_->listenFd >= 0; }
+bool Server::running() const { return !socketFailed(impl_->listenFd); }
 
 void Server::stop() {
   impl_->stopFlag.store(true);
-  if (impl_->listenFd >= 0) {
-    ::shutdown(impl_->listenFd, SHUT_RDWR);
-    ::close(impl_->listenFd);
-    impl_->listenFd = -1;
+  if (!socketFailed(impl_->listenFd)) {
+    shutdownSocket(impl_->listenFd);
+    closeSocket(impl_->listenFd);
+    impl_->listenFd = kInvalidSocket;
   }
   if (impl_->acceptThread.joinable()) impl_->acceptThread.join();
+  impl_->boundPort = 0;
+#ifdef _WIN32
+  if (impl_->winsockStarted) {
+    ::WSACleanup();
+    impl_->winsockStarted = false;
+  }
+#endif
   // Let in-flight handlers finish (per the engine convention).
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }

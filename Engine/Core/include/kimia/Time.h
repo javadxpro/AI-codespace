@@ -19,6 +19,7 @@ public:
     return count;
   }
   f64 interpolation() const;
+  void reset() { accumulator_ = 0.0; }
 private:
   f64 stepSeconds_;
   f64 accumulator_ = 0.0;

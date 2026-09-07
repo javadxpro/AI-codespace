@@ -9,9 +9,9 @@
 
 namespace kimia {
 
-// Display/input surface. The display route is a CPU blit (present); GL
-// rendering happens offscreen (EGL pbuffer) and is captured to PNG for the
-// WebViewer, so the window itself never needs a GL context.
+// Display/input surface. The software/remote path uses present() as a CPU
+// blit; the Windows PC path can use nativeHandle() for D3D11 and keeps the
+// WebViewer capture independent from the native swap chain.
 class Window {
 public:
   virtual ~Window() = default;
@@ -26,6 +26,9 @@ public:
   virtual void present(const Image& image) = 0;
   virtual i32 width() const = 0;
   virtual i32 height() const = 0;
+  // Opaque native handle for a platform renderer. On Windows this is an HWND
+  // when the SDL backend is active; other backends may return nullptr.
+  virtual void* nativeHandle() const { return nullptr; }
   virtual void setTitle(const std::string& title) = 0;
 };
 

@@ -1,6 +1,6 @@
 // KIMIA World — the option-driven editor / object builder (spec section 8).
 //
-//   kimia_world [--port N] [--world <file.kimia>] [--assets DIR] [--profiles DIR]
+//   kimia_world [--desktop] [--port N] [--world <file.kimia>] [--assets DIR] [--profiles DIR]
 //
 // Start with an EMPTY ground and build your game with menus only: add a
 // player, a ball, blocks, walls, goals — each object asks a few plain
@@ -13,6 +13,7 @@
 #include <kimia/MathUtils.h>
 #include <kimia/Mesh.h>
 #include <kimia/Renderer.h>
+#include <kimia/RuntimeLoop.h>
 #include <kimia/WebViewer.h>
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
@@ -40,7 +41,9 @@
 using kimia::Engine;
 using kimia::EngineOptions;
 using kimia::EntityData;
+using kimia::GamepadButton;
 using kimia::Image;
+using kimia::MouseButton;
 using kimia::Key;
 using kimia::Mat4;
 using kimia::MeshData;
@@ -408,6 +411,9 @@ void printUsage() {
       "\n"
       "usage: kimia_world [options]\n"
       "  --port N          web port to serve the game on (default 8080)\n"
+      "  --bind ADDRESS    WebWorkbench bind address (default 127.0.0.1)\n"
+      "  --auth TOKEN      Bearer token required by the remote Workbench\n"
+      "  --desktop         open a native Windows/SDL window and use D3D11 when available\n"
       "  --world FILE      world file to save/load (default my_world.kimia)\n"
       "  --assets DIR      OBJ/FBX files you can place in a scene (default assets)\n"
       "  --profiles DIR    *.kimiaprofile game files (default profiles;\n"
@@ -426,15 +432,24 @@ void printUsage() {
 
 int main(int argc, char** argv) {
   int port = 8080;
+  std::string webBindAddress = "127.0.0.1";
+  std::string webAuthToken;
   std::string worldPath = "my_world.kimia";
   std::string assetsDir = "assets";
   std::string profilesDir = "profiles";
   std::string brandingDir;  // empty = look in Branding, ../Branding, ../../Branding
   std::string playWorld;    // non-empty = a published game, not the editor
+  bool desktopMode = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
       port = std::atoi(argv[++i]);
+    } else if (arg == "--bind" && i + 1 < argc) {
+      webBindAddress = argv[++i];
+    } else if (arg == "--auth" && i + 1 < argc) {
+      webAuthToken = argv[++i];
+    } else if (arg == "--desktop") {
+      desktopMode = true;
     } else if (arg == "--world" && i + 1 < argc) {
       worldPath = argv[++i];
     } else if (arg == "--assets" && i + 1 < argc) {
@@ -486,9 +501,15 @@ int main(int argc, char** argv) {
   }
 
   EngineOptions options;
-  options.headless = true;
+  options.headless = !desktopMode;
+  options.windowHidden = !desktopMode;
+  options.preferD3D11 = desktopMode;
+  options.windowWidth = 640;
+  options.windowHeight = 480;
   options.enableWeb = true;
   options.webPort = static_cast<u16>(port);
+  options.webBindAddress = webBindAddress;
+  options.webAuthToken = webAuthToken;
   options.windowTitle = "KIMIA World";
   Engine engine;
   if (!engine.initialize(options)) {
@@ -514,7 +535,7 @@ int main(int argc, char** argv) {
       "window.addEventListener('keyup',function(e){kmd(e,false);});";
 
   engine.server()->stop();
-  engine.server()->start(
+  if (!engine.server()->start(
       options.webPort,
       kimia::web::makePageHtml(
           publishedGame ? editor.world().name : std::string("KIMIA World"), {}, keymapJs,
@@ -523,12 +544,20 @@ int main(int argc, char** argv) {
               : std::string("everything is menus: tap 1-9 for the options, arrows move, Shift = fine, "
                             "r resets, b opens the menu, Space = jump (or hold to charge a shot), "
                             "hold c = dribble, hold q/e = curl, p = pass"),
-          !publishedGame));
+          !publishedGame),
+      kimia::web::ServerOptions{options.webBindAddress, options.webAuthToken})) {
+    std::printf("web server failed to restart on %s:%d\n", options.webBindAddress.c_str(), port);
+    return 1;
+  }
   // The intro film, if the Branding folder shipped with this build.
   const bool intro = kimia::web::loadIntroFrom(*engine.server(), brandingDir);
-  std::printf("KIMIA World %s serving on port %d | GL: %s | games: %d\n", kimia::kEngineVersion,
+  const std::string d3dStatus =
+      engine.d3d11Available()
+          ? engine.d3d11().adapterName() + " (FL " + engine.d3d11().featureLevelName() + ")"
+          : std::string("off");
+  std::printf("KIMIA World %s serving on port %d | GL: %s | D3D11: %s | games: %d\n", kimia::kEngineVersion,
               static_cast<i32>(engine.server()->port()), engine.glAvailable() ? "yes" : "no (software)",
-              static_cast<i32>(editor.profileCount()));
+              d3dStatus.c_str(), static_cast<i32>(editor.profileCount()));
   std::printf("intro: %s\n", intro ? "yes" : "no (no Branding/kimia-intro.mp4)");
 
   Renderer renderer;
@@ -572,8 +601,8 @@ int main(int argc, char** argv) {
   const MeshData cubeMesh = kimia::makeCube(1.0);
   const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
   const MeshData sphereMesh = kimia::makeSphere(16, 8);
-  const i32 width = 640;
-  const i32 height = 480;
+  i32 width = 640;
+  i32 height = 480;
 
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
@@ -590,6 +619,8 @@ int main(int argc, char** argv) {
   const auto frameStart = std::chrono::steady_clock::now();
   auto lastTime = frameStart;
   const std::chrono::microseconds frameBudget(33333);  // ~30 fps over the web
+  kimia::RuntimeLoop runtimeLoop;
+  bool d3dFailed = false;
 
   while (running.load() && !editor.quitRequested()) {
     const auto now = std::chrono::steady_clock::now();
@@ -599,6 +630,10 @@ int main(int argc, char** argv) {
     dt = clamp(dt, 0.0, 0.1);
 
     if (!engine.poll()) break;
+    if (desktopMode && engine.window() != nullptr) {
+      width = std::max<i32>(1, engine.window()->width());
+      height = std::max<i32>(1, engine.window()->height());
+    }
     kimia::InputState& input = engine.input();
 
     if (input.pressed(Key::Escape)) break;
@@ -624,12 +659,19 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Return) && editor.hasWorld() && !editor.playing()) editor.enterPlayMode();
     if (input.pressed(Key::Tab) && editor.playing()) editor.setPaused(!editor.paused());
     if (input.pressed(Key::Backspace) && editor.paused()) editor.stepOnce(1.0 / 60.0);
+    const bool padAction = input.gamepadDown(GamepadButton::A);
+    const bool padActionPressed = input.gamepadPressed(GamepadButton::A);
+    const bool mouseAction = input.mouseDown(MouseButton::Left);
+    const bool mouseActionPressed = input.mousePressed(MouseButton::Left);
     if (editor.shotMode()) {
-      // Golf-style: hold Space (the «شوت» pad) to charge, release to shoot.
-      editor.setShootHeld(input.down(Key::Space));
+      // Golf-style: hold Space, the left mouse button or gamepad A to charge;
+      // release to shoot. All three routes feed the same game action.
+      editor.setShootHeld(input.down(Key::Space) || mouseAction || padAction);
     } else {
       editor.setShootHeld(false);
-      if (input.pressed(Key::J) || input.pressed(Key::Space)) editor.jumpPressed();
+      if (input.pressed(Key::J) || input.pressed(Key::Space) || mouseActionPressed || padActionPressed) {
+        editor.jumpPressed();
+      }
     }
     // Ball control (stage 23): hold C to dribble, hold Q/E to curl the next
     // strike left/right, tap P to pass to the nearest team-mate ahead.
@@ -664,9 +706,23 @@ int main(int argc, char** argv) {
     editor.setLogicKeys(pressedNames, heldNames);
 
     // The input map turns a raw control into the game's own action, so a
-    // rule listens for "jump" rather than for a particular key.
+    // rule listens for "jump" rather than for a particular key. Native
+    // controller buttons use the same action map as WebWorkbench pads.
     for (const std::string& key : pressedNames) {
       const std::string action = editor.actionFromControl(kimia::Source::Key, key);
+      if (!action.empty()) editor.fireControl(action);
+    }
+    static const std::pair<GamepadButton, const char*> kGamepadButtons[] = {
+        {GamepadButton::A, "a"},          {GamepadButton::B, "b"},
+        {GamepadButton::X, "x"},          {GamepadButton::Y, "y"},
+        {GamepadButton::LeftShoulder, "l1"}, {GamepadButton::RightShoulder, "r1"},
+        {GamepadButton::Back, "back"},    {GamepadButton::Start, "start"},
+        {GamepadButton::DpadUp, "up"},     {GamepadButton::DpadDown, "down"},
+        {GamepadButton::DpadLeft, "left"}, {GamepadButton::DpadRight, "right"},
+    };
+    for (const auto& binding : kGamepadButtons) {
+      if (!input.gamepadPressed(binding.first)) continue;
+      const std::string action = editor.actionFromControl(kimia::Source::Pad, binding.second);
       if (!action.empty()) editor.fireControl(action);
     }
     // Skill moves (stage 26): tap N to nutmeg, O to roulette, U to juggle.
@@ -688,22 +744,32 @@ int main(int argc, char** argv) {
     if (input.down(Key::Right)) moveX += 1.0;
     if (input.down(Key::Up)) moveZ -= 1.0;
     if (input.down(Key::Down)) moveZ += 1.0;
+    const f64 stickX = input.gamepadAxis(kimia::GamepadAxis::LeftX);
+    const f64 stickY = input.gamepadAxis(kimia::GamepadAxis::LeftY);
+    if (std::abs(stickX) > std::abs(moveX)) moveX = stickX;
+    if (std::abs(stickY) > std::abs(moveZ)) moveZ = stickY;
     editor.setMoveInput(moveX, moveZ);
     editor.setFineMove(input.down(Key::Shift));
+    const f64 padLookX = input.gamepadAxis(kimia::GamepadAxis::RightX) * 90.0;
+    const f64 padLookY = input.gamepadAxis(kimia::GamepadAxis::RightY) * 70.0;
     if (editor.cameraControlled()) {
       // Orbit the camera with the arrows (and the mouse on desktop); the
       // same pads drive the ghost/player in placing, moving and playing.
-      orbitCamera.orbit((moveX * 1.1 + input.lookX * 0.006) * dt,
-                        (-moveZ * 0.9 + input.lookY * 0.006) * dt);
+      orbitCamera.orbit((moveX * 1.1 + input.lookX * 0.006 + padLookX) * dt,
+                        (-moveZ * 0.9 + input.lookY * 0.006 + padLookY) * dt);
       if (input.pressed(Key::Q)) orbitCamera.zoom(1.0 / 1.2);
       if (input.pressed(Key::E)) orbitCamera.zoom(1.2);
+      if (input.zoom != 0.0) orbitCamera.zoom(std::pow(1.2, -input.zoom));
       if (input.pressed(Key::C)) orbitCamera.reset();
       restingCameraDistance = orbitCamera.distance;  // remember the hand-set zoom
     } else {
-      orbitCamera.orbit(input.lookX * 0.006, input.lookY * 0.006);
+      orbitCamera.orbit(input.lookX * 0.006 + padLookX * dt, input.lookY * 0.006 + padLookY * dt);
+      if (input.zoom != 0.0) orbitCamera.zoom(std::pow(1.2, -input.zoom));
     }
 
-    editor.update(dt);
+    runtimeLoop.pause(editor.playing() && editor.paused());
+    runtimeLoop.tick(dt, [&editor](f64 fixedStep) { editor.update(fixedStep); });
+    runtimeLoop.beginRenderFrame();
     for (const WorldEditor::GameEvent event : editor.drainEvents()) {
       engine.server()->playSound(soundFor(event));
       // A component bound to "goal" or "kick" in the editor fires here,
@@ -915,6 +981,16 @@ int main(int argc, char** argv) {
       editor.setViewport(viewport);
     }
 
+    // The PC path renders directly to the native swap chain. The web view
+    // still receives a software/GL capture below, so hybrid editing works
+    // without making the browser the primary display.
+    if (!d3dFailed && engine.d3d11Available()) {
+      std::string d3dError;
+      if (!engine.d3d11().render(scene, width, height, d3dError)) {
+        std::printf("D3D11 frame failed; falling back to software: %s\n", d3dError.c_str());
+        d3dFailed = true;
+      }
+    }
     Image image;
     if (renderer.ready()) {
       renderer.render(scene, width, height);
@@ -951,6 +1027,9 @@ int main(int argc, char** argv) {
         kimia::font::fillRect(image, cx - radius / 3, cy - radius / 3, (radius / 3) * 2, (radius / 3) * 2,
                               Vec3{0.35, 0.45, 0.6}, 0.9);
       }
+    }
+    if (desktopMode && engine.window() != nullptr && (d3dFailed || !engine.d3d11Available())) {
+      engine.window()->present(image);
     }
     std::vector<u8> png = image.encodePNG();
 

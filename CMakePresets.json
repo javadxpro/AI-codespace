@@ -1,0 +1,52 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-pc-release",
+      "displayName": "KIMIA Windows PC Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/out/build/windows-pc-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "KIMIA_RENDER_BACKEND": "D3D11",
+        "KIMIA_BUILD_PC": "ON",
+        "KIMIA_BUILD_TESTS": "OFF",
+        "KIMIA_BUILD_TOOLS": "ON",
+        "KIMIA_ENABLE_D3D11": "ON",
+        "KIMIA_WERROR": "ON"
+      }
+    },
+    {
+      "name": "windows-pc-debug",
+      "displayName": "KIMIA Windows PC Debug",
+      "inherits": "windows-pc-release",
+      "binaryDir": "${sourceDir}/out/build/windows-pc-debug",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-pc-release",
+      "configurePreset": "windows-pc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-pc-debug",
+      "configurePreset": "windows-pc-debug",
+      "configuration": "Debug"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <kimia/D3D11Renderer.h>
 #include <kimia/EGL.h>
 #include <kimia/GLFunctions.h>
 #include <kimia/InputState.h>
@@ -14,8 +15,12 @@ namespace kimia {
 
 struct EngineOptions {
   bool headless = false;    // never create a window
+  bool windowHidden = false; // headless/remote callers can hide the native window explicitly
+  bool preferD3D11 = false;  // Windows PC path; false keeps legacy GL/software behavior
   bool enableWeb = false;   // start the WebViewer server
   u16 webPort = 8080;
+  std::string webBindAddress = "127.0.0.1";
+  std::string webAuthToken;
   std::string windowTitle = "KIMIA";
   i32 windowWidth = 640;
   i32 windowHeight = 480;
@@ -40,6 +45,8 @@ public:
   void endFrame() { input_.endFrame(); }
 
   bool glAvailable() const { return GLFunctions::instance().loaded() && eglContext_.valid(); }
+  bool d3d11Available() const { return d3d11_.ready(); }
+  D3D11Renderer& d3d11() { return d3d11_; }
   InputState& input() { return input_; }
   web::Server* server() { return server_.get(); }
   Window* window() { return window_.get(); }
@@ -48,8 +55,11 @@ private:
   EngineOptions options_;
   std::unique_ptr<Window> window_;
   std::unique_ptr<web::Server> server_;
+  D3D11Renderer d3d11_;
   EGLContext eglContext_;
   InputState input_;
+  i32 lastWindowWidth_ = 0;
+  i32 lastWindowHeight_ = 0;
 };
 
 }  // namespace kimia

@@ -2,7 +2,6 @@
 
 #include <kimia/Types.h>
 
-#include <map>
 #include <functional>
 #include <map>
 #include <memory>
@@ -40,14 +39,21 @@ struct DrainedInput {
 // Generates the touch-pad control page served on "/".
 // `showEditorLink` is false for a published game: the person you gave it
 // to is a player, and a route into the builder is a way to break it.
-// `showEditorLink` is false for a published game: the person you gave it
-// to is a player, and a route into the builder is a way to break it.
 std::string makePageHtml(const std::string& title, const std::vector<PadButton>& padButtons,
                          const std::string& keymapJs, const std::string& hint,
                          bool showEditorLink = true);
 
-// Tiny HTTP server on plain POSIX sockets + threads (no external HTTP lib).
-// Routes:
+struct ServerOptions {
+  // Loopback is intentional: the editor API can mutate files and a project, so
+  // it must not be exposed to a LAN by default. Use 0.0.0.0 only together with
+  // an auth token and an explicit firewall rule. Server::start rejects a
+  // non-loopback bind with an empty token.
+  std::string bindAddress = "127.0.0.1";
+  std::string authToken;
+};
+
+// Tiny HTTP server on native sockets + threads (Winsock on Windows, POSIX
+// sockets elsewhere; no external HTTP library). Routes:
 //   GET  /          -> 200 text/html (the control page)
 //   GET  /frame.png -> 200 image/png (latest published frame) or 503 if none
 //   GET  /stats     -> 200 text/plain (last stats line)
@@ -68,8 +74,10 @@ public:
   Server(const Server&) = delete;
   Server& operator=(const Server&) = delete;
 
-  // Binds 0.0.0.0:port (port 0 = ephemeral) and starts the accept thread.
+  // Starts the accept thread. The two-argument overload binds loopback only.
+  // `port == 0` asks the OS for an ephemeral port.
   bool start(u16 port, const std::string& pageHtml);
+  bool start(u16 port, const std::string& pageHtml, const ServerOptions& options);
   u16 port() const;
   bool running() const;
   void stop();

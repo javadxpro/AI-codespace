@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+typedef struct _SDL_GameController SDL_GameController;
 struct SDL_Window;
 
 namespace kimia {
@@ -26,6 +27,7 @@ public:
   void present(const Image& image) override;
   i32 width() const override;
   i32 height() const override;
+  void* nativeHandle() const override;
   void setTitle(const std::string& title) override;
 
 private:
@@ -33,6 +35,7 @@ private:
   bool init(const std::string& title, i32 width, i32 height, bool hidden);
 
   SDL_Window* window_ = nullptr;
+  SDL_GameController* controller_ = nullptr;
   i32 width_ = 0;
   i32 height_ = 0;
   bool hidden_ = false;
