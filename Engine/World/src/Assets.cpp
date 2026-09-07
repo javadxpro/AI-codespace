@@ -1,0 +1,112 @@
+#include <dirent.h>
+#include <sys/stat.h>
+
+#include <kimia/AssetPipeline.h>
+#include <kimia/Assets.h>
+
+#include <algorithm>
+
+namespace kimia {
+namespace assetscan {
+
+namespace {
+
+std::string lowered(const std::string& text) {
+  std::string out = text;
+  for (char& c : out) {
+    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+  }
+  return out;
+}
+
+bool endsWith(const std::string& text, const std::string& tail) {
+  return text.size() >= tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+std::string join(const std::string& folder, const std::string& file) {
+  if (folder.empty()) return file;
+  return folder.back() == '/' ? folder + file : folder + "/" + file;
+}
+
+}  // namespace
+
+const char* assetKindName(AssetKind kind) {
+  switch (kind) {
+    case AssetKind::Model: return "model";
+    case AssetKind::Texture: return "texture";
+    case AssetKind::Sound: return "sound";
+    case AssetKind::Unknown: break;
+  }
+  return "unknown";
+}
+
+AssetKind kindOfFile(const std::string& file) {
+  const std::string name = lowered(file);
+  if (endsWith(name, ".fbx") || endsWith(name, ".obj")) return AssetKind::Model;
+  if (endsWith(name, ".png") || endsWith(name, ".jpg") || endsWith(name, ".jpeg")) return AssetKind::Texture;
+  if (endsWith(name, ".wav") || endsWith(name, ".mp3") || endsWith(name, ".ogg") ||
+      endsWith(name, ".flac")) {
+    return AssetKind::Sound;
+  }
+  return AssetKind::Unknown;
+}
+
+std::vector<ScannedAsset> scan(const std::string& folder, bool deep) {
+  std::vector<ScannedAsset> found;
+  DIR* dir = ::opendir(folder.c_str());
+  if (dir == nullptr) return found;  // a missing folder is empty, not an error
+
+  while (dirent* entry = ::readdir(dir)) {
+    const std::string file = entry->d_name;
+    if (file == "." || file == "..") continue;
+    const AssetKind kind = kindOfFile(file);
+    // Anything the engine cannot use is left out: showing a list full of
+    // .txt and .zip would make the useful entries harder to find.
+    if (kind == AssetKind::Unknown) continue;
+
+    ScannedAsset asset;
+    asset.file = file;
+    asset.path = join(folder, file);
+    asset.kind = kind;
+    struct ::stat info {};
+    if (::stat(asset.path.c_str(), &info) == 0) asset.bytes = static_cast<u64>(info.st_size);
+    found.push_back(asset);
+  }
+  ::closedir(dir);
+
+  // Sorted so the list does not shuffle between scans: a person picking
+  // the third item should get the same file next time.
+  std::sort(found.begin(), found.end(),
+            [](const ScannedAsset& a, const ScannedAsset& b) { return a.file < b.file; });
+
+  if (!deep) return found;
+
+  // The slow part: open each model and see what is inside. This is why a
+  // deep scan is asked for rather than done on every listing.
+  for (ScannedAsset& asset : found) {
+    if (asset.kind != AssetKind::Model) continue;
+    std::string error;
+    auto skinned = assets::loadFBXSkinned(asset.path, error);
+    if (skinned.has_value()) {
+      asset.hasSkeleton = skinned->hasSkeleton();
+      asset.boneCount = static_cast<u32>(skinned->skinned.skeleton.boneCount());
+      for (const AnimationClip& clip : skinned->clips) {
+        // A clip with no name cannot be picked from a list, so it is
+        // given its position instead of being dropped.
+        asset.clips.push_back(clip.name.empty() ? ("clip " + std::to_string(asset.clips.size() + 1U))
+                                                : clip.name);
+      }
+      continue;
+    }
+    // No skeleton is the normal case for a prop, not a failure. Only say
+    // something when the file cannot be read at all.
+    std::string meshError;
+    if (!assets::loadMesh(asset.path, meshError).has_value()) {
+      asset.note = meshError.empty() ? std::string("cannot read this file") : meshError;
+    }
+  }
+  return found;
+}
+
+}  // namespace assetscan
+}  // namespace kimia

@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/Assets.h>
 #include <kimia/Studio.h>
 
 #include <algorithm>
@@ -304,6 +305,123 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
                                               (panel->y + panel->height * 0.5) * 1000.0);
     if (hit.empty()) return errorJson("the press missed");
     return okJson("pressed", hit);
+  }
+
+  // --- The asset folder: what the user dropped in ---
+
+  // Lists the folder and, when asked, looks inside each model to find
+  // its skeleton and clips. Deep is opt-in because opening every FBX is
+  // slow enough to notice on a phone.
+  if (path == "/api/assets") {
+    const bool deep = flagParam(params, "deep", false);
+    const std::vector<assetscan::ScannedAsset> found =
+        assetscan::scan(param(params, "folder", editor.importDirectory()), deep);
+    std::string out = "{\"ok\":true,\"deep\":" + std::string(deep ? "true" : "false");
+    out += ",\"assets\":[";
+    for (usize i = 0; i < found.size(); ++i) {
+      const assetscan::ScannedAsset& asset = found[i];
+      if (i > 0U) out += ",";
+      out += "{\"file\":" + quoted(asset.file);
+      out += ",\"path\":" + quoted(asset.path);
+      out += ",\"kind\":" + quoted(assetscan::assetKindName(asset.kind));
+      out += ",\"bytes\":" + std::to_string(asset.bytes);
+      out += ",\"skeleton\":" + std::string(asset.hasSkeleton ? "true" : "false");
+      out += ",\"bones\":" + std::to_string(asset.boneCount);
+      out += ",\"clips\":" + stringsJson(asset.clips);
+      out += ",\"note\":" + quoted(asset.note) + "}";
+    }
+    return out + "]}";
+  }
+
+  // Paint an image from the folder onto an object.
+  if (path == "/api/skin") {
+    const std::string name = param(params, "name");
+    const std::string image = param(params, "image");
+    if (image.empty()) {
+      if (!editor.clearEntityTexture(name)) return errorJson("nothing to remove");
+      return okJson();
+    }
+    if (!editor.setEntityTexture(name, image)) return errorJson("could not use that image");
+    return okJson();
+  }
+
+  // --- Controls: one action, many ways to do it ---
+
+  if (path == "/api/controls") {
+    const InputMap& map = editor.input();
+    std::string out = "{\"ok\":true,\"stick\":" + std::string(map.showStick ? "true" : "false");
+    out += ",\"controls\":[";
+    for (usize i = 0; i < map.controls.size(); ++i) {
+      const Control& control = map.controls[i];
+      if (i > 0U) out += ",";
+      out += "{\"name\":" + quoted(control.name);
+      out += ",\"label\":" + quoted(control.spot.label);
+      out += ",\"x\":" + number(control.spot.x) + ",\"y\":" + number(control.spot.y);
+      out += ",\"size\":" + number(control.spot.size);
+      out += ",\"clipFile\":" + quoted(control.clipFile);
+      out += ",\"clip\":" + quoted(control.clip);
+      out += ",\"sound\":" + quoted(control.sound);
+      out += ",\"bindings\":[";
+      for (usize b = 0; b < control.bindings.size(); ++b) {
+        if (b > 0U) out += ",";
+        out += "{\"source\":" + quoted(sourceName(control.bindings[b].source));
+        out += ",\"code\":" + quoted(control.bindings[b].code) + "}";
+      }
+      out += "]}";
+    }
+    return out + "]}";
+  }
+
+  // Add or edit a control, with its bindings in one go: "jump" is the
+  // space key AND an on-screen button AND the pad's A, all at once.
+  if (path == "/api/set-control") {
+    Control control;
+    control.name = param(params, "control");
+    if (control.name.empty()) return errorJson("a control needs a name");
+    control.spot.label = param(params, "label", control.name);
+    control.spot.x = numberParam(params, "x", 0.85);
+    control.spot.y = numberParam(params, "y", 0.8);
+    control.spot.size = numberParam(params, "size", 0.12);
+    control.clipFile = param(params, "clipfile");
+    control.clip = param(params, "clip");
+    control.sound = param(params, "sound");
+
+    const std::string key = param(params, "key");
+    if (!key.empty()) {
+      Binding binding;
+      binding.source = Source::Key;
+      binding.code = key;
+      control.bindings.push_back(binding);
+    }
+    if (flagParam(params, "touch", false)) {
+      Binding binding;
+      binding.source = Source::Touch;
+      binding.code = control.name;
+      control.bindings.push_back(binding);
+    }
+    const std::string pad = param(params, "pad");
+    if (!pad.empty()) {
+      Binding binding;
+      binding.source = Source::Pad;
+      binding.code = pad;
+      control.bindings.push_back(binding);
+    }
+    if (!editor.setControl(control)) return errorJson("could not set that control");
+    return okJson();
+  }
+
+  if (path == "/api/drop-control") {
+    if (!editor.removeControl(param(params, "control"))) return errorJson("no such control");
+    return okJson();
+  }
+  if (path == "/api/stick") {
+    editor.setShowStick(flagParam(params, "on", true));
+    return okJson();
+  }
+  // Fire a control from the Bench to check its clip and sound.
+  if (path == "/api/do") {
+    if (!editor.fireControl(param(params, "control"))) return errorJson("no such control");
+    return okJson();
   }
 
   // --- Particles ---
@@ -842,6 +960,14 @@ input[type=color]{padding:2px;height:30px}
     <div class="row"><input id="bpName" placeholder="save selected as...">
       <button class="go" onclick="keepBlueprint()">Keep</button></div>
 
+    <h2>Files</h2>
+    <div class="row">
+      <button onclick="loadAssets(0)">List</button>
+      <button onclick="loadAssets(1)">Scan</button>
+      <span class="hint" id="scanHint">Scan looks inside models</span>
+    </div>
+    <div id="assetList"></div>
+
     <h2>Bring in</h2>
     <div class="row"><input id="inFile" placeholder="assets/thing.obj"></div>
     <div class="row"><label>size</label><input id="inSize" type="number" value="1" step="0.1"></div>
@@ -1046,6 +1172,26 @@ input[type=color]{padding:2px;height:30px}
       <div class="row"><input id="pColor" type="color" value="#e6e6f2">
         <input id="pBack" type="color" value="#1a1f26"></div>
       <button class="go" style="width:100%" onclick="setPanel()">Place panel</button>
+
+      <h2>Controls</h2>
+      <div id="ctrlList"></div>
+      <div class="row"><input id="cName" placeholder="jump">
+        <input id="cLabel" placeholder="label"></div>
+      <div class="row"><label>key</label><input id="cKey" placeholder="space">
+        <label>pad</label><input id="cPad" placeholder="a"></div>
+      <div class="row"><label><input type="checkbox" id="cTouch" checked> on-screen button</label></div>
+      <div class="row"><label>at</label>
+        <input id="cX" type="number" step="0.01" value="0.85" title="x 0..1">
+        <input id="cY" type="number" step="0.01" value="0.78" title="y 0..1">
+        <input id="cSize" type="number" step="0.01" value="0.12" title="size"></div>
+      <div class="row"><label>clip</label>
+        <select id="cClipFile" onchange="clipsOf(this.value)"><option value="">— model —</option></select></div>
+      <div class="row"><select id="cClip"><option value="">— none —</option></select>
+        <input id="cSound" placeholder="sound"></div>
+      <div class="row">
+        <button class="go" style="flex:1" onclick="setControl()">Save control</button>
+        <button onclick="doControl()">Test</button></div>
+      <div class="row"><label><input type="checkbox" id="cStick" onchange="setStick()"> movement stick</label></div>
 
       <h2>Effects</h2>
       <div id="fxList"></div>
@@ -1372,6 +1518,7 @@ function showRules(){
   loadRules();
   loadPanels();
   loadEffects();
+  loadControls();
 }
 function hideRules(){ document.getElementById('rulesSheet').classList.remove('show'); }
 
@@ -1575,6 +1722,172 @@ function fireEffect(){
     function(d){ if (d && d.ok) flash(d.live + ' particles in flight'); });
 }
 
+// --- Files the user dropped into the asset folder ---
+var scanned = [];
+
+function loadAssets(deep){
+  document.getElementById('scanHint').textContent = deep ? 'reading models\u2026' : '';
+  api('assets', {deep: deep ? 1 : 0}, function(d){
+    if (!d) return;
+    scanned = d.assets || [];
+    document.getElementById('scanHint').textContent =
+      scanned.length + ' file' + (scanned.length === 1 ? '' : 's');
+    var box = document.getElementById('assetList');
+    box.innerHTML = '';
+    if (!scanned.length){
+      box.innerHTML = '<div class="hint">Copy models, images and sounds into ' +
+        'the assets folder, then press List.</div>';
+    }
+    scanned.forEach(function(a){
+      var el = document.createElement('div');
+      el.className = 'item';
+      var pip = document.createElement('span');
+      pip.className = 'pip' + (a.kind === 'model' ? ' solid' : (a.kind === 'texture' ? ' moving' : ''));
+      el.appendChild(pip);
+      var label = document.createElement('span');
+      label.textContent = a.file;
+      el.appendChild(label);
+      var tail = [];
+      if (a.skeleton) tail.push(a.bones + ' bones');
+      if (a.clips && a.clips.length) tail.push(a.clips.length + ' clips');
+      if (a.note) tail.push('!');
+      if (tail.length){
+        var mark = document.createElement('span');
+        mark.style.cssText = 'margin-right:auto;color:#8b97a5;font-size:10px';
+        mark.textContent = tail.join(' ');
+        el.appendChild(mark);
+      }
+      el.onclick = function(){ useAsset(a); };
+      box.appendChild(el);
+    });
+    fillClipFiles();
+  });
+}
+
+// Tapping a file does the obvious thing for its kind: a model comes into
+// the scene, an image goes onto whatever is selected.
+function useAsset(a){
+  if (a.kind === 'model'){
+    api('bring-in', {file: a.path, size: 1}, function(d){
+      if (d && d.ok){ flash('brought in ' + d.name); loadRack(); pick(d.name); }
+    });
+    return;
+  }
+  if (a.kind === 'texture'){
+    if (!picked){ flash('pick an object first, then tap an image', true); return; }
+    api('skin', {name: picked, image: a.path}, function(d){
+      if (d && d.ok) flash('painted ' + a.file + ' onto ' + picked);
+    });
+    return;
+  }
+  flash(a.file + ' is a sound \u2014 use it in a control or a rule');
+}
+
+function fillClipFiles(){
+  var sel = document.getElementById('cClipFile');
+  if (!sel) return;
+  var keep = sel.value;
+  sel.innerHTML = '<option value="">\u2014 model \u2014</option>';
+  scanned.forEach(function(a){
+    if (a.kind !== 'model' || !a.clips || !a.clips.length) return;
+    var o = document.createElement('option');
+    o.value = a.path;
+    o.textContent = a.file + ' (' + a.clips.length + ')';
+    sel.appendChild(o);
+  });
+  sel.value = keep;
+  clipsOf(sel.value);
+}
+function clipsOf(path){
+  var sel = document.getElementById('cClip');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">\u2014 none \u2014</option>';
+  scanned.forEach(function(a){
+    if (a.path !== path) return;
+    (a.clips || []).forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      sel.appendChild(o);
+    });
+  });
+}
+
+// --- Controls ---
+function loadControls(){
+  api('controls', {}, function(d){
+    if (!d) return;
+    document.getElementById('cStick').checked = !!d.stick;
+    var box = document.getElementById('ctrlList');
+    box.innerHTML = '';
+    if (!(d.controls || []).length){
+      box.innerHTML = '<div class="hint">No controls yet. One action can be ' +
+        'a key, a screen button and a pad button at once.</div>';
+    }
+    (d.controls || []).forEach(function(c){
+      var el = document.createElement('div');
+      el.className = 'wire';
+      el.style.cursor = 'pointer';
+      var how = (c.bindings || []).map(function(b){
+        return b.source === 'touch' ? 'screen' : (b.source + ':' + b.code);
+      }).join(' ');
+      el.innerHTML = '<i>' + c.name + (c.clip ? ' \u2192 ' + c.clip : '') +
+        '</i><span>' + (how || 'unbound') + '</span>';
+      el.onclick = function(){
+        document.getElementById('cName').value = c.name;
+        document.getElementById('cLabel').value = c.label;
+        document.getElementById('cX').value = c.x.toFixed(2);
+        document.getElementById('cY').value = c.y.toFixed(2);
+        document.getElementById('cSize').value = c.size.toFixed(2);
+        document.getElementById('cSound').value = c.sound;
+        document.getElementById('cClipFile').value = c.clipFile;
+        clipsOf(c.clipFile);
+        document.getElementById('cClip').value = c.clip;
+        var key = '', pad = '', touch = false;
+        (c.bindings || []).forEach(function(b){
+          if (b.source === 'key') key = b.code;
+          if (b.source === 'pad') pad = b.code;
+          if (b.source === 'touch') touch = true;
+        });
+        document.getElementById('cKey').value = key;
+        document.getElementById('cPad').value = pad;
+        document.getElementById('cTouch').checked = touch;
+      };
+      var x = document.createElement('b');
+      x.textContent = '\u00d7';
+      x.style.cssText = 'cursor:pointer;margin-right:8px;color:#8b97a5';
+      x.onclick = function(ev){
+        ev.stopPropagation();
+        api('drop-control', {control: c.name}, loadControls);
+      };
+      el.appendChild(x);
+      box.appendChild(el);
+    });
+  });
+}
+function setControl(){
+  api('set-control', {control: document.getElementById('cName').value,
+    label: document.getElementById('cLabel').value,
+    key: document.getElementById('cKey').value,
+    pad: document.getElementById('cPad').value,
+    touch: document.getElementById('cTouch').checked ? 1 : 0,
+    x: document.getElementById('cX').value, y: document.getElementById('cY').value,
+    size: document.getElementById('cSize').value,
+    clipfile: document.getElementById('cClipFile').value,
+    clip: document.getElementById('cClip').value,
+    sound: document.getElementById('cSound').value}, function(d){
+      if (d && d.ok){ flash('control saved'); loadControls(); }
+    });
+}
+function doControl(){
+  api('do', {control: document.getElementById('cName').value}, function(d){
+    if (d && d.ok) flash('fired');
+  });
+}
+function setStick(){
+  api('stick', {on: document.getElementById('cStick').checked ? 1 : 0}, function(){});
+}
+
 function setVar(){
   api('set-var', {variable: document.getElementById('vName').value,
     number: document.getElementById('vNum').value}, function(d){
@@ -1696,6 +2009,7 @@ setInterval(function(){
 if (window.innerWidth <= 900) document.getElementById('rackBtn').style.display = '';
 loadRack();
 loadLibrary();
+loadAssets(0);
 </script>
 </body>
 </html>)BENCH";

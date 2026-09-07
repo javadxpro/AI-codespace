@@ -95,6 +95,9 @@ struct EntityData {
   // for primitive entities. Rendering resolves this path at run time; the
   // primitive mesh acts as the fallback shape.
   std::string meshFile;
+  // An image painted onto this object, chosen from the asset folder.
+  // Empty means the model's own texture (or a flat colour).
+  std::string texture;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
 

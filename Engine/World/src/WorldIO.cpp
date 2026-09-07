@@ -135,6 +135,21 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
            << formatFixed6(emitter.colorEnd.x) << ' ' << formatFixed6(emitter.colorEnd.y) << ' '
            << formatFixed6(emitter.colorEnd.z) << ' ' << formatFixed6(emitter.drag) << '\n';
   }
+  // The game's controls. One line per control, then one per binding.
+  if (world.input.showStick) {
+    stream << "# stick " << formatFixed6(world.input.stickSpot.x) << ' '
+           << formatFixed6(world.input.stickSpot.y) << ' ' << formatFixed6(world.input.stickSpot.size)
+           << '\n';
+  }
+  for (const Control& control : world.input.controls) {
+    stream << "# control " << escapeWord(control.name) << ' ' << formatFixed6(control.spot.x) << ' '
+           << formatFixed6(control.spot.y) << ' ' << formatFixed6(control.spot.size) << ' '
+           << escapeWord(control.spot.label) << ' ' << escapeWord(control.clipFile) << ' '
+           << escapeWord(control.clip) << ' ' << escapeWord(control.sound) << '\n';
+    for (const Binding& binding : control.bindings) {
+      stream << "# bind " << sourceName(binding.source) << ' ' << escapeWord(binding.code) << '\n';
+    }
+  }
   for (const Rule& rule : world.logic.rules) {
     // One line per rule, then one per condition and action belonging to
     // it. Flat lines survive hand-editing far better than nesting does.
@@ -292,6 +307,38 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         emitter.colorEnd = Vec3{parseNumber(parts[14]), parseNumber(parts[15]), parseNumber(parts[16])};
         emitter.drag = parseNumber(parts[17]);
         out.emitters.emitters.push_back(emitter);
+      }
+    } else if (line.rfind("# stick ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(8U));
+      if (parts.size() >= 3U) {
+        out.input.showStick = true;
+        out.input.stickSpot.x = parseNumber(parts[0]);
+        out.input.stickSpot.y = parseNumber(parts[1]);
+        out.input.stickSpot.size = parseNumber(parts[2]);
+      }
+    } else if (line.rfind("# control ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(10U));
+      if (parts.size() >= 8U) {
+        Control control;
+        control.name = unescapeWord(parts[0]);
+        control.spot.x = parseNumber(parts[1]);
+        control.spot.y = parseNumber(parts[2]);
+        control.spot.size = parseNumber(parts[3]);
+        control.spot.label = unescapeWord(parts[4]);
+        control.clipFile = unescapeWord(parts[5]);
+        control.clip = unescapeWord(parts[6]);
+        control.sound = unescapeWord(parts[7]);
+        out.input.controls.push_back(control);
+      }
+    } else if (line.rfind("# bind ", 0) == 0) {
+      // Belongs to the control above it; a stray one is dropped rather
+      // than inventing a control to hang it on.
+      const std::vector<std::string> parts = splitWords(line.substr(7U));
+      if (parts.size() >= 2U && !out.input.controls.empty()) {
+        Binding binding;
+        if (!sourceFromName(parts[0], binding.source)) binding.source = Source::Key;
+        binding.code = unescapeWord(parts[1]);
+        out.input.controls.back().bindings.push_back(binding);
       }
     } else if (line.rfind("# rule ", 0) == 0) {
       const std::vector<std::string> parts = splitWords(line.substr(7U));

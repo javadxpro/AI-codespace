@@ -2,6 +2,7 @@
 
 #include <kimia/GameProfile.h>
 #include <kimia/Hud.h>
+#include <kimia/Input.h>
 #include <kimia/Library.h>
 #include <kimia/Particles.h>
 #include <kimia/Logic.h>
@@ -268,6 +269,8 @@ struct WorldData {
   HudLayout hud;
   // Particle recipes belonging to this game.
   EmitterBook emitters;
+  // The game's controls: actions and how they are triggered.
+  InputMap input;
   GameProfile profile;  // the game this world belongs to (copied on create)
   PlayerConfig player;
   BallConfig ball;
@@ -622,6 +625,28 @@ public:
   // Writes the game into `folder`: the world file plus a one-line script
   // that starts it. Returns the folder written, or empty with `error` set.
   std::string publish(const std::string& folder, std::string& error);
+
+  // --- Input: one action, many ways to do it ---
+  const InputMap& input() const { return world_.input; }
+  bool setControl(const Control& control);
+  bool removeControl(const std::string& name);
+  void setShowStick(bool show) { world_.input.showStick = show; }
+  // Raw control in, action name out. The app calls this for every key,
+  // pad button and touch, so a rule never has to know what hardware the
+  // player owns.
+  std::string actionFromControl(Source source, const std::string& code) const;
+  // Fires an action by name: plays its clip and its sound, and raises it
+  // as an event the rules can listen for.
+  bool fireControl(const std::string& name);
+  // Plays a clip straight from a scanned model file, with no component
+  // needed. This is what a button bound to an FBX clip uses.
+  void playClip(const std::string& file, const std::string& clip);
+
+  // --- Textures on objects ---
+  // Puts an image on an object. The path comes from the file list, so a
+  // person picks a texture rather than typing one.
+  bool setEntityTexture(const std::string& entityName, const std::string& imagePath);
+  bool clearEntityTexture(const std::string& entityName);
 
   // --- Particles ---
   // Recipes the user wrote, and the particles currently in flight.

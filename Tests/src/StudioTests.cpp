@@ -1,5 +1,6 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/Hud.h>
+#include <kimia/Input.h>
 #include <kimia/Library.h>
 #include <kimia/Studio.h>
 #include <kimia/WorldIO.h>
@@ -844,4 +845,138 @@ KIMIA_TEST(studio_a_published_game_opens_in_play_with_no_editor) {
   KIMIA_REQUIRE(!missing.playOnly());
 
   std::filesystem::remove_all(folder, ignored);
+}
+
+// --- Files, controls and textures, through the Workbench ---
+
+KIMIA_TEST(studio_scans_the_asset_folder_and_finds_clips) {
+  WorldEditor editor;
+  streetWorld(editor);
+  editor.setImportDirectory("Tests/assets");
+
+  // A plain listing is the fast path and opens nothing.
+  const std::string shallow = ask(editor, "/api/assets");
+  KIMIA_REQUIRE(has(shallow, "\"deep\":false"));
+  KIMIA_REQUIRE(has(shallow, "skinned_bar.fbx"));
+  KIMIA_REQUIRE(has(shallow, "\"kind\":\"texture\""));
+
+  // A deep scan looks inside, which is what lets a person PICK a clip
+  // from a list instead of typing its name from memory.
+  const std::string deep = ask(editor, "/api/assets", {{"deep", "1"}});
+  KIMIA_REQUIRE(has(deep, "\"deep\":true"));
+  KIMIA_REQUIRE(has(deep, "\"clips\":[\"Bend\"]"));
+  KIMIA_REQUIRE(has(deep, "\"bones\":2"));
+}
+
+KIMIA_TEST(studio_paints_an_image_from_the_file_list_onto_an_object) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/bring-in", {{"file", "Tests/assets/crate.obj"}, {"size", "1"}});
+  KIMIA_REQUIRE(editor.entity("Model_1")->texture.empty());
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/skin", {{"name", "Model_1"},
+                                              {"image", "Tests/assets/crate_skin.png"}}),
+                    "\"ok\":true"));
+  KIMIA_REQUIRE(editor.entity("Model_1")->texture == "Tests/assets/crate_skin.png");
+
+  // A file that is not an image is refused, rather than leaving a blank
+  // object and a person wondering why.
+  KIMIA_REQUIRE(has(ask(editor, "/api/skin", {{"name", "Model_1"},
+                                              {"image", "Tests/assets/crate.obj"}}),
+                    "\"ok\":false"));
+  // The good texture survived the failed attempt.
+  KIMIA_REQUIRE(editor.entity("Model_1")->texture == "Tests/assets/crate_skin.png");
+
+  // An empty image means "take it off".
+  KIMIA_REQUIRE(has(ask(editor, "/api/skin", {{"name", "Model_1"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.entity("Model_1")->texture.empty());
+}
+
+KIMIA_TEST(studio_one_control_serves_key_screen_and_gamepad) {
+  // The player might tap glass, press a key, or push a pad button. The
+  // game says "jump" once and the engine sorts out the hardware.
+  WorldEditor editor;
+  streetWorld(editor);
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-control",
+                        {{"control", "jump"}, {"label", "JUMP"}, {"key", "space"},
+                         {"pad", "a"}, {"touch", "1"},
+                         {"clipfile", "Tests/assets/skinned_bar.fbx"}, {"clip", "Bend"}}),
+                    "\"ok\":true"));
+
+  KIMIA_REQUIRE(editor.actionFromControl(kimia::Source::Key, "space") == "jump");
+  KIMIA_REQUIRE(editor.actionFromControl(kimia::Source::Pad, "a") == "jump");
+  KIMIA_REQUIRE(editor.actionFromControl(kimia::Source::Touch, "jump") == "jump");
+  KIMIA_REQUIRE(editor.actionFromControl(kimia::Source::Key, "z").empty());
+
+  // Firing it plays the clip the user chose from the scanned FBX. A clip
+  // picked this way has no animation component behind it, so it needs a
+  // path of its own — without which choosing a clip for a button did
+  // nothing at all.
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+  KIMIA_REQUIRE(has(ask(editor, "/api/do", {{"control", "jump"}}), "\"ok\":true"));
+  const std::vector<std::string> playing = editor.playingAnimations();
+  KIMIA_REQUIRE(playing.size() == 1U);
+  KIMIA_REQUIRE(playing[0] == "Tests/assets/skinned_bar.fbx:Bend");
+
+  // Pressing twice replays rather than stacking two copies.
+  ask(editor, "/api/do", {{"control", "jump"}});
+  KIMIA_REQUIRE(editor.playingAnimations().size() == 1U);
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/do", {{"control", "ghost"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/set-control", {{"key", "x"}}), "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_a_control_is_an_event_the_rules_can_use) {
+  // A button has to work before anyone attaches a clip to it, or the
+  // input system would only be useful to people who have models.
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/set-control", {{"control", "fire"}, {"key", "f"}, {"touch", "1"}});
+  ask(editor, "/api/add-rule", {{"rulename", "shoot"}, {"trigger", "event"}, {"subject", "fire"}});
+  ask(editor, "/api/add-action", {{"index", "0"}, {"act", "add"}, {"target", "shots"}, {"number", "1"}});
+
+  editor.choose(3);  // PLAY
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("shots") == 0.0);
+
+  ask(editor, "/api/do", {{"control", "fire"}});
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.logic().numberOf("shots") == 1.0);
+}
+
+KIMIA_TEST(studio_controls_survive_a_save_and_load) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/set-control", {{"control", "jump"}, {"label", "JUMP UP"}, {"key", "space"},
+                                   {"pad", "a"}, {"touch", "1"}, {"x", "0.7"}, {"y", "0.8"},
+                                   {"clipfile", "assets/hero.fbx"}, {"clip", "Leap"},
+                                   {"sound", "boing"}});
+  ask(editor, "/api/stick", {{"on", "1"}});
+
+  std::string text;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), text));
+  kimia::WorldData reloaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::WorldIO::load(text, reloaded, error));
+
+  KIMIA_REQUIRE(reloaded.input.showStick);
+  KIMIA_REQUIRE(reloaded.input.controls.size() == 1U);
+  const kimia::Control& back = reloaded.input.controls[0];
+  KIMIA_REQUIRE(back.name == "jump");
+  // A label with a space in it has to come back whole.
+  KIMIA_REQUIRE(back.spot.label == "JUMP UP");
+  KIMIA_REQUIRE(near(back.spot.x, 0.7));
+  KIMIA_REQUIRE(back.clipFile == "assets/hero.fbx");
+  KIMIA_REQUIRE(back.clip == "Leap");
+  KIMIA_REQUIRE(back.sound == "boing");
+  KIMIA_REQUIRE(back.bindings.size() == 3U);
+  KIMIA_REQUIRE(reloaded.input.actionFor(kimia::Source::Pad, "a") == "jump");
+
+  // A world with no controls still saves exactly as it always did.
+  WorldEditor plain;
+  streetWorld(plain);
+  std::string plainText;
+  kimia::WorldIO::save(plain.world(), plainText);
+  KIMIA_REQUIRE(plainText.find("# control ") == std::string::npos);
+  KIMIA_REQUIRE(plainText.find("# stick ") == std::string::npos);
 }

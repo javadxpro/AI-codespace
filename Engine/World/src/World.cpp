@@ -1300,6 +1300,60 @@ std::string WorldEditor::publish(const std::string& folder, std::string& error) 
   return out;
 }
 
+// --- Input ---
+
+bool WorldEditor::setControl(const Control& control) {
+  if (control.name.empty()) return false;
+  world_.input.set(control);
+  return true;
+}
+
+bool WorldEditor::removeControl(const std::string& name) { return world_.input.remove(name); }
+
+std::string WorldEditor::actionFromControl(Source source, const std::string& code) const {
+  return world_.input.actionFor(source, code);
+}
+
+bool WorldEditor::fireControl(const std::string& name) {
+  const Control* control = world_.input.find(name);
+  if (control == nullptr) return false;
+  // A control is an event first: rules listen for it by name, so a button
+  // works even before anyone has attached a clip to it.
+  hudEvents_.push_back(name);
+  // Fire any animation component wired to this control's name, which is
+  // how a clip attached to an object in the Dossier responds to it.
+  fireTrigger(name);
+  if (!control->clip.empty()) {
+    // And play the clip the control names directly. fireTrigger only
+    // matches components somebody attached by hand; a clip chosen from a
+    // scanned FBX has no component behind it, so without this the whole
+    // point of picking a clip for a button did nothing at all.
+    playClip(control->clipFile, control->clip);
+  }
+  if (!control->sound.empty()) triggeredSounds_.push_back(control->sound);
+  return true;
+}
+
+// --- Textures on objects ---
+
+bool WorldEditor::setEntityTexture(const std::string& entityName, const std::string& imagePath) {
+  EntityData* target = world_.scene.get(world_.scene.find(entityName));
+  if (target == nullptr || imagePath.empty()) return false;
+  // Refuse a file that is not an image rather than showing a blank object
+  // and leaving the person to wonder why.
+  std::string error;
+  if (!assets::loadImage(imagePath, error).has_value()) return false;
+  target->texture = imagePath;
+  return true;
+}
+
+bool WorldEditor::clearEntityTexture(const std::string& entityName) {
+  EntityData* target = world_.scene.get(world_.scene.find(entityName));
+  if (target == nullptr || target->texture.empty()) return false;
+  target->texture.clear();
+  return true;
+}
+
 // --- Particles ---
 
 bool WorldEditor::setEmitter(const Emitter& emitter) {
@@ -1930,6 +1984,25 @@ std::vector<std::string> WorldEditor::playingAnimations() const {
     playing.push_back(clip.entity + ":" + clip.clip);
   }
   return playing;
+}
+
+void WorldEditor::playClip(const std::string& file, const std::string& clip) {
+  if (clip.empty()) return;
+  // Restart rather than stack: pressing a button twice replays the move
+  // instead of running two copies of it.
+  for (PlayingClip& playing : playingClips_) {
+    if (playing.clip != clip) continue;
+    playing.timeLeft = kTriggerClipSeconds;
+    return;
+  }
+  PlayingClip playing;
+  // The file is remembered as the "entity" so the app knows which model
+  // the clip belongs to when it comes to pose it.
+  playing.entity = file.empty() ? std::string("control") : file;
+  playing.clip = clip;
+  playing.timeLeft = kTriggerClipSeconds;
+  playing.loop = false;
+  playingClips_.push_back(playing);
 }
 
 void WorldEditor::updateTriggers(f64 seconds) {

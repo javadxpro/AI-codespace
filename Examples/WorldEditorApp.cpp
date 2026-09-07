@@ -17,6 +17,7 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
 #include <kimia/Hud.h>
+#include <kimia/Input.h>
 #include <kimia/Particles.h>
 #include <kimia/Picking.h>
 #include <kimia/Skeleton.h>
@@ -644,6 +645,13 @@ int main(int argc, char** argv) {
       if (input.down(binding.first)) heldNames.push_back(binding.second);
     }
     editor.setLogicKeys(pressedNames, heldNames);
+
+    // The input map turns a raw control into the game's own action, so a
+    // rule listens for "jump" rather than for a particular key.
+    for (const std::string& key : pressedNames) {
+      const std::string action = editor.actionFromControl(kimia::Source::Key, key);
+      if (!action.empty()) editor.fireControl(action);
+    }
     // Skill moves (stage 26): tap N to nutmeg, O to roulette, U to juggle.
     // They are taps because you commit to them — there is no holding back
     // half way through a nutmeg.
@@ -736,6 +744,19 @@ int main(int argc, char** argv) {
           skin = loadedTextures.emplace(entity.meshFile, std::move(image)).first;
         }
         if (skin->second.width > 0 && skin->second.height > 0) texture = &skin->second;
+      }
+      // A texture the user put on this object beats the model's own, so a
+      // picture chosen from the file list actually shows up.
+      if (!entity.texture.empty()) {
+        auto chosen = loadedTextures.find(entity.texture);
+        if (chosen == loadedTextures.end()) {
+          kimia::Image image;
+          std::string imageError;
+          auto loadedImage = kimia::assets::loadImage(entity.texture, imageError);
+          if (loadedImage.has_value()) image = std::move(*loadedImage);
+          chosen = loadedTextures.emplace(entity.texture, std::move(image)).first;
+        }
+        if (chosen->second.width > 0 && chosen->second.height > 0) texture = &chosen->second;
       }
       // Crates follow the physics bodies while playing, and the player
       // entity follows the character controller so the play character is
@@ -846,6 +867,33 @@ int main(int argc, char** argv) {
     // The interface the USER laid out, over the engine's own corner text.
     // Drawn second so a panel can deliberately sit on top of it.
     kimia::drawHud(image, editor.hud(), editor.logic());
+
+    // The game's own on-screen controls. Drawn last so a finger always
+    // has something to aim at, whatever else is on screen.
+    if (editor.playing()) {
+      const kimia::InputMap& controls = editor.input();
+      const i32 shortSide = image.width < image.height ? image.width : image.height;
+      for (const kimia::Control* control : controls.touchControls()) {
+        const i32 radius = static_cast<i32>(control->spot.size * 0.5 * static_cast<f64>(shortSide));
+        const i32 cx = static_cast<i32>(control->spot.x * static_cast<f64>(image.width));
+        const i32 cy = static_cast<i32>(control->spot.y * static_cast<f64>(image.height));
+        kimia::font::fillRect(image, cx - radius, cy - radius, radius * 2, radius * 2,
+                              Vec3{0.12, 0.16, 0.22}, 0.65);
+        const std::string label = control->spot.label.empty() ? control->name : control->spot.label;
+        const i32 textW = kimia::font::textWidth(label, 2);
+        kimia::font::drawText(image, cx - textW / 2, cy - kimia::font::textHeight(2) / 2, label,
+                              Vec3{0.95, 0.95, 1.0}, 2);
+      }
+      if (controls.showStick) {
+        const i32 radius = static_cast<i32>(controls.stickSpot.size * 0.5 * static_cast<f64>(shortSide));
+        const i32 cx = static_cast<i32>(controls.stickSpot.x * static_cast<f64>(image.width));
+        const i32 cy = static_cast<i32>(controls.stickSpot.y * static_cast<f64>(image.height));
+        kimia::font::fillRect(image, cx - radius, cy - radius, radius * 2, radius * 2,
+                              Vec3{0.10, 0.13, 0.18}, 0.55);
+        kimia::font::fillRect(image, cx - radius / 3, cy - radius / 3, (radius / 3) * 2, (radius / 3) * 2,
+                              Vec3{0.35, 0.45, 0.6}, 0.9);
+      }
+    }
     std::vector<u8> png = image.encodePNG();
 
     // --- Menu (buttons the user sees) ---
