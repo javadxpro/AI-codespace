@@ -22,7 +22,7 @@ e "Cone1" mesh cube pos 0.000000 0.000000 1.500000 scale 1.000000 1.000000 1.000
 e "Cone2" mesh cube pos 0.300000 0.000000 0.500000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/cone.obj" rough 0.700000
 e "Cone3" mesh cube pos -0.300000 0.000000 -0.500000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/cone.obj" rough 0.700000
 e "Bench" mesh cube pos -5.800000 0.000000 3.600000 rot 0.000000 0.707107 0.000000 0.707107 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/bench.obj" rough 0.800000
-e "Ali" mesh cube pos 0.900000 0.000000 0.700000 rot 0.000000 -0.898315 0.000000 0.439351 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_ali.obj" rough 0.800000
+e "Player" mesh cube pos 0.000000 0.000000 2.200000 rot 0.000000 1.000000 0.000000 0.000000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_ali.obj" rough 0.800000
 e "Reza" mesh cube pos -1.300000 0.000000 -0.900000 rot 0.000000 0.464107 0.000000 0.885779 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_reza.obj" rough 0.800000
 e "Hassan" mesh cube pos -3.500000 0.000000 0.300000 rot 0.000000 0.707107 0.000000 0.707107 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_hassan.obj" rough 0.800000
 e "Karim" mesh cube pos -5.200000 0.000000 2.900000 rot 0.000000 0.862284 0.000000 0.506425 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_reza.obj" rough 0.800000

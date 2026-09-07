@@ -797,10 +797,15 @@ int main(int argc, char** argv) {
       // entity follows the character controller so the play character is
       // actually visible where the physics puts it (including mid-jump).
       const bool playCharacter = kind == ObjectKind::Player && editor.playing();
-      const Vec3 position =
+      Vec3 position =
           kind == ObjectKind::Crate
               ? editor.cratePosition(entity.name)
               : (playCharacter ? editor.playerPosition() : entity.transform.position);
+      // The character controller reports the body's CENTER, but a model
+      // file stands on its own feet (local y=0): sink a modeled player by
+      // the character's half height (0.5, see CharacterBody) so its feet
+      // touch the ground instead of floating.
+      if (playCharacter && !entity.meshFile.empty()) position.y -= 0.5;
       const Vec3 scale = entity.mesh == kimia::MeshKind::sphere ? entity.transform.scale * 0.5
                                                                 : entity.transform.scale;
       const Mat4 model =
@@ -822,7 +827,8 @@ int main(int argc, char** argv) {
       for (const auto& draw : draws) {
         scene.objects.push_back({draw.first, model, draw.second, entity.roughness, texture});
       }
-      if (kind == ObjectKind::Player) {
+      // A full-body model needs no extra block head; the bare cube does.
+      if (kind == ObjectKind::Player && entity.meshFile.empty()) {
         // A little head so the player reads as a character.
         scene.objects.push_back(
             {&cubeMesh, Mat4::translation(position + Vec3{0.0, 0.65, 0.0}) *
