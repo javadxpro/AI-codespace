@@ -423,11 +423,14 @@ public:
   // walk cycle freezes with the game instead of running in the menus.
   f64 figureClock() const { return figureClock_; }
 
-  // --- Match (stage 22) ---
-  // A profile is a match when it fields squads AND runs a clock. The two
-  // goals become team property: the one on -Z is team 2's, the one on +Z is
-  // team 1's, and a ball crossing a goal line scores for the OTHER side.
-  bool matchMode() const { return world_.profile.teamSize > 1U && world_.profile.matchSeconds > 0.0; }
+  // --- Match (stage 22; duels since 0.29) ---
+  // A profile is a match when it fields squads AND runs a clock. A lone
+  // player with a clock is a street duel: the human plus one opponent,
+  // the same two goals, the same whistle. Golf stays untouched: one
+  // player and NO clock is still just a kickabout, never a match.
+  // The two goals become team property: the one on -Z is team 2's, the one
+  // on +Z is team 1's, and a ball crossing a goal line scores for the OTHER side.
+  bool matchMode() const { return world_.profile.teamSize >= 1U && world_.profile.matchSeconds > 0.0; }
   u32 teamScore(u32 team) const;      // 0 for any team but 1 and 2
   f64 matchClock() const { return matchClock_; }  // seconds left (counts down)
   bool matchOver() const { return matchOver_; }

@@ -2286,13 +2286,14 @@ KIMIA_TEST(world_profile_team_key_round_trips_and_clamps) {
 
 // --- Stage 22: the match ---
 
-KIMIA_TEST(world_match_mode_needs_a_squad_and_a_clock) {
+KIMIA_TEST(world_match_mode_needs_a_side_and_a_clock) {
   // street: 5 a side, 5 minutes -> a match.
   WorldEditor street;
   createWorldFor(street, "street");
   KIMIA_REQUIRE(street.matchMode());
   KIMIA_REQUIRE(near(street.profile().matchSeconds, 300.0));
-  // golf: one player, no clock -> never a match.
+  // golf: one player, no clock -> never a match (a lone player WITH a
+  // clock is a duel: see world_duel_is_a_match_with_one_opponent).
   WorldEditor golf;
   createWorldFor(golf, "golf");
   KIMIA_REQUIRE(!golf.matchMode());
@@ -2417,6 +2418,107 @@ KIMIA_TEST(world_match_own_goal_scores_for_the_other_side) {
   KIMIA_REQUIRE(editor.teamScore(2U) == 1U);
   KIMIA_REQUIRE(editor.matchScoreText() == "MA 0 - 1 ANHA");
   KIMIA_REQUIRE(editor.matchWinner() == 2U);
+}
+
+// --- Stage 29: the street duel (1v1) ---
+
+u32 duelFoe(const WorldEditor& editor) {
+  for (const u32 id : editor.squadIds()) {
+    if (id != kimia::kPrimaryCharacter) return id;
+  }
+  return 0U;
+}
+
+KIMIA_TEST(world_duel_is_a_match_with_one_opponent) {
+  // One a side plus a clock: the human and a single opponent, timed.
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  kimia::GameProfile duel = editor.profile();
+  duel.teamSize = 1U;
+  duel.matchSeconds = 180.0;
+  duel.aiSkill = 0.6;
+  editor.createWorld(duel);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.matchMode());
+  KIMIA_REQUIRE(near(editor.matchClock(), 180.0));
+  KIMIA_REQUIRE(editor.matchClockText() == "3:00");
+  KIMIA_REQUIRE(editor.squadCount() == 2U);
+  KIMIA_REQUIRE(editor.squadTeam(kimia::kPrimaryCharacter) == 1U);
+  const u32 foe = duelFoe(editor);
+  KIMIA_REQUIRE(foe != 0U);
+  KIMIA_REQUIRE(editor.squadTeam(foe) == 2U);
+  KIMIA_REQUIRE(editor.squadPosition(foe).z < 0.0);  // the far half is theirs
+  // Golf is untouched: one player and NO clock is still just a kickabout.
+  WorldEditor golf;
+  createWorldFor(golf, "golf");
+  KIMIA_REQUIRE(!golf.matchMode());
+  addGolfBall(golf, Vec3{0.0, 0.0, 0.0});
+  exitPlace(golf);
+  golf.choose(3);
+  KIMIA_REQUIRE(golf.squadCount() == 1U);
+  KIMIA_REQUIRE(golf.squadTeam(kimia::kPrimaryCharacter) == 0U);
+}
+
+KIMIA_TEST(world_duel_goal_scores_and_kicks_off_again) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  kimia::GameProfile duel = editor.profile();
+  duel.teamSize = 1U;
+  duel.matchSeconds = 180.0;
+  duel.aiSkill = 0.0;  // about the credit and the restart, not beating a keeper
+  editor.createWorld(duel);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  addGoal(editor, 1, Vec3{0.0, 0.0, -2.0});  // the far net: team 2's goal
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  KIMIA_REQUIRE(editor.matchMode());
+  KIMIA_REQUIRE(editor.squadCount() == 2U);
+  editor.setPlayerPosition(Vec3{0.0, 0.5, 0.6});
+  editor.setMoveInput(0.0, -1.0);
+  editor.update(0.0);  // kick it toward -Z
+  bool scored = false;
+  for (i32 i = 0; i < 600; ++i) {
+    editor.update(1.0 / 60.0);
+    if (editor.celebrating()) {
+      scored = true;
+      break;
+    }
+  }
+  KIMIA_REQUIRE(scored);
+  KIMIA_REQUIRE(editor.teamScore(1U) == 1U);
+  KIMIA_REQUIRE(editor.teamScore(2U) == 0U);
+  KIMIA_REQUIRE(editor.matchScoreText() == "MA 1 - 0 ANHA");
+  // The celebration ends in a kick-off: ball on the spot, the duel re-laid.
+  editor.update(2.5);
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(!editor.celebrating());
+  KIMIA_REQUIRE(near3(editor.ballPosition(), Vec3{0.0, kWorldFantasyRadius, 0.0}, 1e-6));
+  KIMIA_REQUIRE(editor.squadCount() == 2U);
+  KIMIA_REQUIRE(editor.squadTeam(duelFoe(editor)) == 2U);
+  KIMIA_REQUIRE(editor.teamScore(1U) == 1U);
+}
+
+KIMIA_TEST(world_duel_opponent_comes_alive) {
+  WorldEditor editor;
+  createWorldFor(editor, "street");
+  kimia::GameProfile duel = editor.profile();
+  duel.teamSize = 1U;
+  duel.matchSeconds = 180.0;
+  duel.aiSkill = 0.6;
+  editor.createWorld(duel);
+  addGolfBall(editor, Vec3{0.0, 0.0, 0.0});
+  exitPlace(editor);
+  editor.choose(3);  // PLAY
+  const u32 foe = duelFoe(editor);
+  KIMIA_REQUIRE(foe != 0U);
+  const f64 startZ = editor.squadPosition(foe).z;
+  // A lone opponent goes for the ball rather than standing on the line.
+  KIMIA_REQUIRE(editor.aiRole(foe) == WorldEditor::AiRole::Defend);
+  for (i32 i = 0; i < 180; ++i) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.squadPosition(foe).z > startZ + 1.0);  // closing down the ball
 }
 
 KIMIA_TEST(world_match_score_is_saved_with_the_world) {

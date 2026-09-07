@@ -495,12 +495,24 @@ u32 WorldEditor::squadTeam(u32 id) const {
 // one third of the way out from the middle so nobody starts inside a wall.
 void WorldEditor::spawnSquads() {
   const u32 size = world_.profile.teamSize;
-  physics_.character()->team = size > 1U ? 1U : 0U;
-  if (size <= 1U) return;  // single-player profile: nothing to spawn
+  const bool duel = size == 1U && matchMode();
+  physics_.character()->team = (size > 1U || duel) ? 1U : 0U;
+  if (size == 0U) return;
+  if (size == 1U && !duel) return;  // single-player profile: nothing to spawn
 
   const CharacterBody shape;  // default half extents
   const f64 rowZ = world_.halfLength() / 3.0;
   const f64 feet = playerRest().y;
+  if (duel) {
+    // A street duel: just the human and one opponent, each in front of
+    // their own goal. The same call runs after every goal, so kickoff
+    // after a goal needs no special case.
+    CharacterBody foe = shape;
+    foe.team = 2U;
+    foe.position = Vec3{0.0, feet, -rowZ};
+    physics_.addCharacter(foe);
+    return;
+  }
   const f64 span = world_.halfWidth() - kPlayerMargin;
   for (u32 team = 1U; team <= 2U; ++team) {
     // Team 1 is a man short: the human player is already on the pitch.
