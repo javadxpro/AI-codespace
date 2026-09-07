@@ -17,6 +17,7 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/OrbitCamera.h>
 #include <kimia/Hud.h>
+#include <kimia/Particles.h>
 #include <kimia/Picking.h>
 #include <kimia/Skeleton.h>
 #include <kimia/Studio.h>
@@ -764,6 +765,18 @@ int main(int argc, char** argv) {
     // Ghost preview while placing, selection markers while managing, the
     // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
+    // Particles: small camera-facing cubes. A cube rather than a sprite
+    // because the software rasteriser has no billboard path, and at this
+    // size the difference is invisible.
+    for (const kimia::Particle& particle : editor.particles().particles()) {
+      const f64 size = particle.sizeNow();
+      if (size <= 0.001) continue;
+      scene.objects.push_back({&cubeMesh,
+                               Mat4::translation(particle.position) *
+                                   Mat4::scaling(Vec3{size, size, size}),
+                               particle.colorNow(), 1.0, nullptr});
+    }
+
     addSquads(scene, editor, cubeMesh);
     // Arena tracer: a thin line along the last shot, so a firefight is
     // readable instead of invisible.

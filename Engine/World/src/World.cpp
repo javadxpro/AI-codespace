@@ -826,6 +826,7 @@ void WorldEditor::update(f64 hostSeconds) {
 
     // The walk cycle only runs while the game does.
     figureClock_ += hostSeconds;
+    particles_.step(hostSeconds);
 
     // The rules that make this world a game.
     runLogic(hostSeconds);
@@ -1299,6 +1300,25 @@ std::string WorldEditor::publish(const std::string& folder, std::string& error) 
   return out;
 }
 
+// --- Particles ---
+
+bool WorldEditor::setEmitter(const Emitter& emitter) {
+  if (emitter.name.empty()) return false;
+  world_.emitters.set(emitter);
+  return true;
+}
+
+bool WorldEditor::removeEmitter(const std::string& name) { return world_.emitters.remove(name); }
+
+bool WorldEditor::playEffect(const std::string& name, const Vec3& at) {
+  const Emitter* emitter = world_.emitters.find(name);
+  if (emitter == nullptr) return false;
+  // A rising seed makes each burst scatter differently, while a single
+  // burst stays repeatable for a given seed.
+  particles_.burst(*emitter, at, effectSeed_++);
+  return true;
+}
+
 // --- The game's own interface ---
 
 bool WorldEditor::setPanel(const Panel& panel) {
@@ -1600,6 +1620,14 @@ void WorldEditor::runLogic(f64 seconds) {
       case Act::ShowMessage:
         logicMessage_ = effect.text;
         break;
+      case Act::Effect_: {
+        // At the named object if there is one, otherwise at the spot the
+        // rule gave — so "explode at the barrel" and "explode here" both
+        // read naturally.
+        const EntityData* where = entity(effect.target);
+        playEffect(effect.text, where != nullptr ? where->transform.position : effect.amount);
+        break;
+      }
       case Act::GoToScene:
         // A rule can send the player from a menu to a level, which is
         // what makes several stages worth having.

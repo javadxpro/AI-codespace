@@ -3,6 +3,7 @@
 #include <kimia/GameProfile.h>
 #include <kimia/Hud.h>
 #include <kimia/Library.h>
+#include <kimia/Particles.h>
 #include <kimia/Logic.h>
 #include <kimia/Picking.h>
 #include <kimia/Physics.h>
@@ -265,6 +266,8 @@ struct WorldData {
   // The interface the user laid out for their own game. Empty means the
   // engine's built-in HUD, exactly as before.
   HudLayout hud;
+  // Particle recipes belonging to this game.
+  EmitterBook emitters;
   GameProfile profile;  // the game this world belongs to (copied on create)
   PlayerConfig player;
   BallConfig ball;
@@ -620,6 +623,15 @@ public:
   // that starts it. Returns the folder written, or empty with `error` set.
   std::string publish(const std::string& folder, std::string& error);
 
+  // --- Particles ---
+  // Recipes the user wrote, and the particles currently in flight.
+  const EmitterBook& emitters() const { return world_.emitters; }
+  bool setEmitter(const Emitter& emitter);
+  bool removeEmitter(const std::string& name);
+  // Fires a burst by name. Returns false when there is no such recipe.
+  bool playEffect(const std::string& name, const Vec3& at);
+  const ParticleSystem& particles() const { return particles_; }
+
   // --- The game's own interface ---
   // A HUD the user laid out, rather than the fixed corner text the engine
   // writes for its own football match.
@@ -922,6 +934,8 @@ private:
 
   // Visual logic state.
   Library library_;
+  ParticleSystem particles_;
+  u32 effectSeed_ = 1U;
   bool playOnly_ = false;
   std::vector<std::string> hudEvents_;
   std::string currentStage_ = "Main";

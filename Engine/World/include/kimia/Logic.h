@@ -64,6 +64,7 @@ enum class Act {
   ShowMessage,    // put `text` on the HUD
   RaiseEvent,     // fire a named event other rules can listen for
   GoToScene,      // load another scene by name
+  Effect_,        // play a named particle burst at `target` (or at `amount`)
   Wait,           // pause this rule's remaining actions for `number` seconds
   EndGame,        // win or lose: `number` != 0 means win
 };

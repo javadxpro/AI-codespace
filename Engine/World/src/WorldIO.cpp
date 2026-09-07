@@ -123,6 +123,18 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
            << formatFixed6(panel.background.y) << ' ' << formatFixed6(panel.background.z) << ' '
            << formatFixed6(panel.opacity) << ' ' << panel.scale << '\n';
   }
+  // Particle recipes. Written only when the game has any.
+  for (const Emitter& emitter : world.emitters.emitters) {
+    stream << "# emitter " << escapeWord(emitter.name) << ' ' << emitter.count << ' '
+           << formatFixed6(emitter.life) << ' ' << formatFixed6(emitter.speed) << ' '
+           << formatFixed6(emitter.spread) << ' ' << formatFixed6(emitter.direction.x) << ' '
+           << formatFixed6(emitter.direction.y) << ' ' << formatFixed6(emitter.direction.z) << ' '
+           << formatFixed6(emitter.gravity) << ' ' << formatFixed6(emitter.size) << ' '
+           << formatFixed6(emitter.shrink) << ' ' << formatFixed6(emitter.colorStart.x) << ' '
+           << formatFixed6(emitter.colorStart.y) << ' ' << formatFixed6(emitter.colorStart.z) << ' '
+           << formatFixed6(emitter.colorEnd.x) << ' ' << formatFixed6(emitter.colorEnd.y) << ' '
+           << formatFixed6(emitter.colorEnd.z) << ' ' << formatFixed6(emitter.drag) << '\n';
+  }
   for (const Rule& rule : world.logic.rules) {
     // One line per rule, then one per condition and action belonging to
     // it. Flat lines survive hand-editing far better than nesting does.
@@ -262,6 +274,24 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         panel.opacity = parseNumber(parts[17]);
         if (parts.size() >= 19U) panel.scale = static_cast<i32>(parseNumber(parts[18]));
         out.hud.panels.push_back(panel);
+      }
+    } else if (line.rfind("# emitter ", 0) == 0) {
+      const std::vector<std::string> parts = splitWords(line.substr(10U));
+      if (parts.size() >= 18U) {
+        Emitter emitter;
+        emitter.name = unescapeWord(parts[0]);
+        emitter.count = static_cast<u32>(parseNumber(parts[1]));
+        emitter.life = parseNumber(parts[2]);
+        emitter.speed = parseNumber(parts[3]);
+        emitter.spread = parseNumber(parts[4]);
+        emitter.direction = Vec3{parseNumber(parts[5]), parseNumber(parts[6]), parseNumber(parts[7])};
+        emitter.gravity = parseNumber(parts[8]);
+        emitter.size = parseNumber(parts[9]);
+        emitter.shrink = parseNumber(parts[10]);
+        emitter.colorStart = Vec3{parseNumber(parts[11]), parseNumber(parts[12]), parseNumber(parts[13])};
+        emitter.colorEnd = Vec3{parseNumber(parts[14]), parseNumber(parts[15]), parseNumber(parts[16])};
+        emitter.drag = parseNumber(parts[17]);
+        out.emitters.emitters.push_back(emitter);
       }
     } else if (line.rfind("# rule ", 0) == 0) {
       const std::vector<std::string> parts = splitWords(line.substr(7U));

@@ -306,6 +306,63 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     return okJson("pressed", hit);
   }
 
+  // --- Particles ---
+
+  if (path == "/api/effects") {
+    std::string out = "{\"ok\":true,\"live\":" + std::to_string(editor.particles().count());
+    out += ",\"effects\":[";
+    const EmitterBook& book = editor.emitters();
+    for (usize i = 0; i < book.emitters.size(); ++i) {
+      const Emitter& emitter = book.emitters[i];
+      if (i > 0U) out += ",";
+      out += "{\"name\":" + quoted(emitter.name);
+      out += ",\"count\":" + std::to_string(emitter.count);
+      out += ",\"life\":" + number(emitter.life);
+      out += ",\"speed\":" + number(emitter.speed);
+      out += ",\"spread\":" + number(emitter.spread);
+      out += ",\"gravity\":" + number(emitter.gravity);
+      out += ",\"size\":" + number(emitter.size);
+      out += ",\"from\":" + vec3Json(emitter.colorStart);
+      out += ",\"to\":" + vec3Json(emitter.colorEnd) + "}";
+    }
+    return out + "]}";
+  }
+
+  if (path == "/api/set-effect") {
+    Emitter emitter;
+    emitter.name = param(params, "effect");
+    if (emitter.name.empty()) return errorJson("an effect needs a name");
+    emitter.count = static_cast<u32>(numberParam(params, "count", 24.0));
+    emitter.life = numberParam(params, "life", 0.8);
+    emitter.speed = numberParam(params, "speed", 3.0);
+    emitter.spread = numberParam(params, "spread", 1.0);
+    emitter.direction = Vec3{numberParam(params, "dx", 0.0), numberParam(params, "dy", 1.0),
+                             numberParam(params, "dz", 0.0)};
+    emitter.gravity = numberParam(params, "gravity", -4.0);
+    emitter.size = numberParam(params, "size", 0.12);
+    emitter.shrink = numberParam(params, "shrink", 1.0);
+    emitter.colorStart = Vec3{numberParam(params, "r", 1.0), numberParam(params, "g", 0.75),
+                              numberParam(params, "b", 0.2)};
+    emitter.colorEnd = Vec3{numberParam(params, "r2", 0.5), numberParam(params, "g2", 0.1),
+                            numberParam(params, "b2", 0.0)};
+    emitter.drag = numberParam(params, "drag", 0.0);
+    if (!editor.setEmitter(emitter)) return errorJson("could not set that effect");
+    return okJson();
+  }
+
+  if (path == "/api/drop-effect") {
+    if (!editor.removeEmitter(param(params, "effect"))) return errorJson("no such effect");
+    return okJson();
+  }
+
+  // Fire one from the Bench, to see it without playing the game.
+  if (path == "/api/fire-effect") {
+    const Vec3 at{numberParam(params, "x", 0.0), numberParam(params, "y", 1.0),
+                  numberParam(params, "z", 0.0)};
+    if (!editor.playEffect(param(params, "effect"), at)) return errorJson("no such effect");
+    return "{\"ok\":true,\"live\":" + std::to_string(editor.particles().count()) + "}";
+  }
+
   // --- Publishing: handing the game to somebody else ---
   if (path == "/api/publish") {
     std::string error;
@@ -952,6 +1009,7 @@ input[type=color]{padding:2px;height:30px}
           <option value="animate">play animation</option>
           <option value="message">show message</option>
           <option value="raise">raise event</option>
+          <option value="effect">play effect</option>
           <option value="wait">wait</option>
           <option value="end-game">end the game</option>
         </select></div>
@@ -988,6 +1046,20 @@ input[type=color]{padding:2px;height:30px}
       <div class="row"><input id="pColor" type="color" value="#e6e6f2">
         <input id="pBack" type="color" value="#1a1f26"></div>
       <button class="go" style="width:100%" onclick="setPanel()">Place panel</button>
+
+      <h2>Effects</h2>
+      <div id="fxList"></div>
+      <div class="row"><input id="fxName" placeholder="explosion">
+        <button onclick="fireEffect()">Test</button></div>
+      <div class="row"><label>count</label><input id="fxCount" type="number" value="24">
+        <label>life</label><input id="fxLife" type="number" step="0.1" value="0.8"></div>
+      <div class="row"><label>speed</label><input id="fxSpeed" type="number" step="0.5" value="3">
+        <label>spread</label><input id="fxSpread" type="number" step="0.1" value="1"></div>
+      <div class="row"><label>gravity</label><input id="fxGrav" type="number" step="0.5" value="-4">
+        <label>size</label><input id="fxSize" type="number" step="0.02" value="0.12"></div>
+      <div class="row"><input id="fxFrom" type="color" value="#ffbf33">
+        <input id="fxTo" type="color" value="#801a00"></div>
+      <button class="go" style="width:100%" onclick="setEffect()">Save effect</button>
 
       <h2>Variables</h2>
       <div id="varList"></div>
@@ -1299,6 +1371,7 @@ function showRules(){
   document.getElementById('rulesSheet').classList.add('show');
   loadRules();
   loadPanels();
+  loadEffects();
 }
 function hideRules(){ document.getElementById('rulesSheet').classList.remove('show'); }
 
@@ -1451,6 +1524,55 @@ function setPanel(){
     br: hexPart(b,1), bg: hexPart(b,3), bb: hexPart(b,5)}, function(d){
       if (d && d.ok){ flash('panel placed'); loadPanels(); }
     });
+}
+
+function loadEffects(){
+  api('effects', {}, function(d){
+    if (!d) return;
+    var box = document.getElementById('fxList');
+    box.innerHTML = '';
+    if (!(d.effects || []).length){
+      box.innerHTML = '<div class="hint">No effects yet. An explosion or a ' +
+        'puff of dust makes a game read as a game.</div>';
+    }
+    (d.effects || []).forEach(function(fx){
+      var el = document.createElement('div');
+      el.className = 'wire';
+      el.style.cursor = 'pointer';
+      el.innerHTML = '<i>' + fx.name + '</i><span>' + fx.count + ' &times; ' +
+        fx.life.toFixed(1) + 's</span>';
+      el.onclick = function(){
+        document.getElementById('fxName').value = fx.name;
+        document.getElementById('fxCount').value = fx.count;
+        document.getElementById('fxLife').value = fx.life;
+        document.getElementById('fxSpeed').value = fx.speed;
+        document.getElementById('fxSpread').value = fx.spread;
+        document.getElementById('fxGrav').value = fx.gravity;
+        document.getElementById('fxSize').value = fx.size;
+      };
+      box.appendChild(el);
+    });
+  });
+}
+function setEffect(){
+  var f = document.getElementById('fxFrom').value;
+  var t = document.getElementById('fxTo').value;
+  var part = function(v, at){ return parseInt(v.substr(at, 2), 16) / 255; };
+  api('set-effect', {effect: document.getElementById('fxName').value,
+    count: document.getElementById('fxCount').value,
+    life: document.getElementById('fxLife').value,
+    speed: document.getElementById('fxSpeed').value,
+    spread: document.getElementById('fxSpread').value,
+    gravity: document.getElementById('fxGrav').value,
+    size: document.getElementById('fxSize').value,
+    r: part(f,1), g: part(f,3), b: part(f,5),
+    r2: part(t,1), g2: part(t,3), b2: part(t,5)}, function(d){
+      if (d && d.ok){ flash('effect saved'); loadEffects(); }
+    });
+}
+function fireEffect(){
+  api('fire-effect', {effect: document.getElementById('fxName').value, x: 0, y: 1, z: 0},
+    function(d){ if (d && d.ok) flash(d.live + ' particles in flight'); });
 }
 
 function setVar(){

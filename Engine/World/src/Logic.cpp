@@ -40,7 +40,8 @@ const ActName kActs[] = {
     {Act::Destroy, "destroy"},        {Act::PlaySound, "sound"},
     {Act::PlayAnimation, "animate"},  {Act::ShowMessage, "message"},
     {Act::RaiseEvent, "raise"},       {Act::GoToScene, "scene"},
-    {Act::Wait, "wait"},              {Act::EndGame, "end-game"},
+    {Act::Effect_, "effect"},         {Act::Wait, "wait"},
+    {Act::EndGame, "end-game"},
 };
 
 std::string trimZeros(f64 value) {
