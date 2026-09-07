@@ -173,6 +173,16 @@ cmake -S . -B build-pc -G "Visual Studio 17 2022" -A x64 ^
 cmake --build build-pc --config Release --parallel
 ```
 
+برای staging و zip خودکفا از PowerShell استفاده کن:
+
+```powershell
+pwsh Tools/package_pc_release.ps1
+```
+
+این script از `cmake --install` استفاده می‌کند، profileها و SDL2 runtime را کنار
+executable می‌گذارد، manifest هش می‌سازد و قبل از zip، smoke سیصد فریمی D3D11 را
+اجرا می‌کند.
+
 smoke target را روی سیستم هدف اجرا و خروجی adapter، feature level، FPS و memory را
 ثبت کن. نمونهٔ پیشنهادی:
 

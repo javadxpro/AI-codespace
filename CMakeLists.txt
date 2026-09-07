@@ -442,3 +442,19 @@ if(KIMIA_BUILD_TESTS)
   # where those files do not exist.
   add_test(NAME kimia_tests COMMAND kimia_tests WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
+
+# Release staging. The PowerShell PC packager uses this install graph so the
+# executable/profile layout is identical to the layout tested in development.
+include(GNUInstallDirs)
+install(TARGETS kimia_world_app RUNTIME DESTINATION .)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Profiles/ DESTINATION profiles)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Branding)
+  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/Branding/ DESTINATION Branding)
+endif()
+if(WIN32 AND KIMIA_BUILD_PC AND KIMIA_ENABLE_D3D11)
+  install(TARGETS kimia_pc_d3d11_smoke RUNTIME DESTINATION .)
+endif()
+if(TARGET SDL2::SDL2)
+  # Shared SDL2 builds need the runtime DLL beside kimia_world.exe.
+  install(FILES $<TARGET_FILE:SDL2::SDL2> DESTINATION .)
+endif()

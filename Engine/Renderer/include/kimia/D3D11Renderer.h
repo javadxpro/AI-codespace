@@ -46,6 +46,7 @@ public:
   bool vsync() const;
   const std::string& adapterName() const;
   const std::string& featureLevelName() const;
+  u64 dedicatedVideoMemoryBytes() const;
 
 private:
   struct Impl;

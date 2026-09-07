@@ -151,9 +151,9 @@ u64 textureSignature(const Image& image) {
 const char* featureLevelString(D3D_FEATURE_LEVEL level) {
   switch (level) {
     case D3D_FEATURE_LEVEL_11_1:
-      return "11.1";
+      return "11_1";
     case D3D_FEATURE_LEVEL_11_0:
-      return "11.0";
+      return "11_0";
     default:
       return "unknown";
   }
@@ -187,6 +187,7 @@ struct D3D11Renderer::Impl {
   std::unordered_map<const Image*, TextureGpu> textures;
   std::string adapter;
   std::string featureLevel = "D3D_FEATURE_LEVEL_11_0";
+  u64 dedicatedVideoMemory = 0U;
   bool initialized = false;
 
   bool createTargets(i32 width, i32 height, std::string& error) {
@@ -360,6 +361,10 @@ bool D3D11Renderer::initialize(const D3D11Options& options, std::string& error) 
     error = "D3D11 requires a native HWND";
     return false;
   }
+  if (options.width <= 0 || options.height <= 0) {
+    error = "D3D11 target size must be positive";
+    return false;
+  }
 
   UINT flags = 0U;
   if (options.debugLayer) flags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -409,6 +414,7 @@ bool D3D11Renderer::initialize(const D3D11Options& options, std::string& error) 
   if (SUCCEEDED(impl_->device.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) &&
       SUCCEEDED(adapter->GetDesc(&adapterDescription))) {
     impl_->adapter = narrowAdapterName(adapterDescription);
+    impl_->dedicatedVideoMemory = static_cast<u64>(adapterDescription.DedicatedVideoMemory);
   } else {
     impl_->adapter = "D3D11 hardware adapter";
   }
@@ -485,6 +491,7 @@ void D3D11Renderer::shutdown() {
   impl_->device.Reset();
   impl_->adapter.clear();
   impl_->featureLevel = "D3D_FEATURE_LEVEL_11_0";
+  impl_->dedicatedVideoMemory = 0U;
 }
 
 bool D3D11Renderer::ready() const { return impl_ != nullptr && impl_->initialized; }
@@ -645,6 +652,10 @@ const std::string& D3D11Renderer::featureLevelName() const {
   return impl_ != nullptr ? impl_->featureLevel : unavailable;
 }
 
+u64 D3D11Renderer::dedicatedVideoMemoryBytes() const {
+  return impl_ != nullptr ? impl_->dedicatedVideoMemory : 0U;
+}
+
 }  // namespace kimia
 
 #else
@@ -681,6 +692,7 @@ const std::string& D3D11Renderer::featureLevelName() const {
   static const std::string unavailable = "D3D11 unavailable";
   return unavailable;
 }
+u64 D3D11Renderer::dedicatedVideoMemoryBytes() const { return 0U; }
 
 }  // namespace kimia
 

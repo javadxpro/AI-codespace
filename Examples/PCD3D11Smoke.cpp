@@ -96,8 +96,9 @@ int main(int argc, char** argv) {
     ::DestroyWindow(gWindow);
     return 2;
   }
-  std::printf("KIMIA PC D3D11 | adapter: %s | feature level: %s | %dx%d | vsync: %s | debug: %s\n",
-              renderer.adapterName().c_str(), renderer.featureLevelName().c_str(), width, height,
+  const double memoryGiB = static_cast<double>(renderer.dedicatedVideoMemoryBytes()) / (1024.0 * 1024.0 * 1024.0);
+  std::printf("KIMIA PC D3D11 | adapter: %s | feature level: %s | VRAM: %.2f GiB | %dx%d | vsync: %s | debug: %s\n",
+              renderer.adapterName().c_str(), renderer.featureLevelName().c_str(), memoryGiB, width, height,
               vsync ? "on" : "off", debugLayer ? "on" : "off");
 
   const kimia::MeshData cube = kimia::makeCube(1.5);
