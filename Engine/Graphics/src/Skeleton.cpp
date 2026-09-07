@@ -1,5 +1,7 @@
 #include <kimia/Skeleton.h>
 
+#include <kimia/Mesh.h>
+
 #include <cmath>
 
 namespace kimia {
@@ -207,6 +209,85 @@ bool poseMesh(const SkinnedMesh& mesh, const AnimationClip& clip, f64 time, Mesh
   std::vector<Mat4> matrices;
   computeSkinMatrices(mesh.skeleton, pose, matrices);
   return skinMesh(mesh, matrices, out);
+}
+
+MeshData skeletonStickMesh(const Skeleton& skeleton, const std::vector<Vec3>& joints, f64 thickness) {
+  MeshData out;
+  out.name = "stick";
+  if (skeleton.bones.size() != joints.size()) return out;
+  f64 stick = thickness;
+  if (!(stick > 1e-9)) {
+    // Auto: 2% of the figure's own span, so the unit the file was
+    // authored in (Mixamo ships centimetres) never matters.
+    f64 span = 0.0;
+    for (const Vec3& a : joints) {
+      for (const Vec3& b : joints) {
+        const Vec3 d{b.x - a.x, b.y - a.y, b.z - a.z};
+        span = std::max(span, d.length());
+      }
+    }
+    stick = span > 1e-9 ? span * 0.02 : 0.035;
+  }
+  // Every box is a transformed unit cube, so the winding stays correct.
+  const MeshData unit = makeCube(1.0);
+  const auto addBox = [&out, &unit](const Mat4& box) {
+    const u32 base = static_cast<u32>(out.positions.size());
+    for (const Vec3& corner : unit.positions) out.positions.push_back(box * corner);
+    for (const Vec3& normal : unit.normals) {
+      const Vec3 turned = box.transformDirection(normal);
+      const f64 length = turned.length();
+      out.normals.push_back(length > kEpsilon ? turned * (1.0 / length) : normal);
+    }
+    out.uvs.insert(out.uvs.end(), unit.uvs.begin(), unit.uvs.end());
+    for (const u32 index : unit.indices) out.indices.push_back(base + index);
+  };
+  // One stretched box per bone, running from the parent joint to the bone.
+  for (usize b = 0; b < skeleton.bones.size(); ++b) {
+    const i32 parent = skeleton.bones[b].parent;
+    if (parent < 0 || static_cast<usize>(parent) >= joints.size()) continue;
+    const Vec3 from = joints[static_cast<usize>(parent)];
+    const Vec3 to = joints[b];
+    const Vec3 run = to - from;
+    const f64 length = run.length();
+    if (!(length > 1e-9)) continue;
+    const Vec3 axis = run * (1.0 / length);
+    const Vec3 helper =
+        std::abs(axis.y) > 0.9 ? Vec3{1.0, 0.0, 0.0} : Vec3{0.0, 1.0, 0.0};
+    const Vec3 side = cross(helper, axis).normalized();
+    const Vec3 up = cross(side, axis);
+    Mat4 basis;  // columns: side, axis, up — the box's Y runs along the bone
+    basis.at(0, 0) = side.x;
+    basis.at(0, 1) = side.y;
+    basis.at(0, 2) = side.z;
+    basis.at(1, 0) = axis.x;
+    basis.at(1, 1) = axis.y;
+    basis.at(1, 2) = axis.z;
+    basis.at(2, 0) = up.x;
+    basis.at(2, 1) = up.y;
+    basis.at(2, 2) = up.z;
+    const Vec3 mid{(from.x + to.x) * 0.5, (from.y + to.y) * 0.5, (from.z + to.z) * 0.5};
+    addBox(Mat4::translation(mid) * basis * Mat4::scaling(Vec3{stick, length, stick}));
+  }
+  // A cube on every joint so the figure reads at a glance.
+  for (const Vec3& joint : joints) {
+    addBox(Mat4::translation(joint) *
+           Mat4::scaling(Vec3{stick * 1.6, stick * 1.6, stick * 1.6}));
+  }
+  return out;
+}
+
+std::vector<Vec3> restJointPositions(const Skeleton& skeleton) {
+  std::vector<Transform3D> rest;
+  rest.reserve(skeleton.bones.size());
+  for (const Bone& bone : skeleton.bones) rest.push_back(bone.restPose);
+  std::vector<Mat4> world;
+  computeWorldMatrices(skeleton, rest, world);
+  std::vector<Vec3> joints;
+  joints.reserve(world.size());
+  for (const Mat4& matrix : world) {
+    joints.push_back(Vec3{matrix.at(3, 0), matrix.at(3, 1), matrix.at(3, 2)});
+  }
+  return joints;
 }
 
 // --- Posing a figure without a model (stage 33) ---

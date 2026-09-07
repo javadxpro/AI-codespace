@@ -282,6 +282,132 @@ void WorldEditor::confirmPlace() {
   // Stay in Place so several objects can be placed in a row.
 }
 
+bool WorldEditor::duplicateEntity(const std::string& name, std::string& outNewName) {
+  const EntityData* source = entity(name);
+  if (source == nullptr) return false;
+  // Numbered families keep their numbering (Block_1 -> Block_2); anything
+  // else gets a _2 suffix, so two copies are always two objects.
+  static const char* kPrefixes[] = {"Block_", "Wall_", "Goal_", "Crate_", "Hole_", "Model_"};
+  EntityData copy = *source;
+  for (const char* prefix : kPrefixes) {
+    if (nameNumber(name, prefix) > 0U) {
+      copy.name = std::string(prefix) + std::to_string(nextNumber(world_.scene, prefix));
+      break;
+    }
+  }
+  if (copy.name == name) copy.name = uniqueName(world_.scene, name);
+  world_.scene.create(copy);
+  rebuildPhysics();
+  refreshManaged();
+  selected_ = copy.name;  // Unity selects the new copy
+  outNewName = copy.name;
+  return true;
+}
+
+bool WorldEditor::renameEntity(const std::string& oldName, const std::string& newName) {
+  if (newName.empty() || newName == oldName) return !newName.empty() && entity(oldName) != nullptr;
+  if (entity(newName) != nullptr) return false;  // taken
+  // Behaviour is bound to these names (physics spawn, picking, ball rest):
+  // renaming them would break the game without a sound.
+  if (oldName == "Player" || oldName == "Ball" || oldName == "Ground") return false;
+  if (newName == "Player" || newName == "Ball" || newName == "Ground") return false;
+  EntityData* target = world_.scene.get(world_.scene.find(oldName));
+  if (target == nullptr) return false;
+  target->name = newName;
+  if (selected_ == oldName) selected_ = newName;
+  rebuildPhysics();  // a Block_1 renamed to a decoration stops blocking, and back
+  refreshManaged();
+  return true;
+}
+
+std::string WorldEditor::createObject(const std::string& kind, const Vec3& at) {
+  if (!hasWorld_) return std::string();
+  // Inside the field; the height sits each kind on the ground like the
+  // builder's own ghost does.
+  const f64 x = std::clamp(at.x, -world_.halfWidth(), world_.halfWidth());
+  const f64 z = std::clamp(at.z, -world_.halfLength(), world_.halfLength());
+  EntityData made;
+  made.mesh = MeshKind::cube;
+  bool needsPhysics = false;
+  if (kind == "cube" || kind == "sphere" || kind == "plane") {
+    made.name = uniqueName(world_.scene, kind == "cube" ? "Cube" : (kind == "sphere" ? "Sphere" : "Plane"));
+    made.mesh = kind == "cube" ? MeshKind::cube : (kind == "sphere" ? MeshKind::sphere : MeshKind::plane);
+    made.transform.position =
+        kind == "plane" ? Vec3{x, 0.02, z} : Vec3{x, 0.5, z};  // a plane floats just over the grass
+    made.transform.scale = kind == "plane" ? Vec3{2.0, 1.0, 2.0} : Vec3{1.0, 1.0, 1.0};
+    made.color = Vec3{0.8, 0.8, 0.8};
+    made.roughness = 0.5;
+  } else if (kind == "block" || kind == "wall" || kind == "goal" || kind == "crate" || kind == "hole") {
+    const f64 size = kind == "wall" ? kWorldWallMedium : (kind == "goal" ? kWorldGoalMedium : 1.0);
+    if (kind == "block") {
+      made.name = "Block_" + std::to_string(nextNumber(world_.scene, "Block_"));
+      made.transform.position = Vec3{x, size * 0.5, z};
+      made.transform.scale = Vec3{size, size, size};
+      made.color = Vec3{kBlockColor, kBlockColor, kBlockColor};
+    } else if (kind == "wall") {
+      made.name = "Wall_" + std::to_string(nextNumber(world_.scene, "Wall_"));
+      made.transform.position = Vec3{x, 0.5, z};
+      made.transform.scale = Vec3{0.5, 1.0, size};
+      made.color = Vec3{kWallColorR, kWallColorG, kWallColorB};
+    } else if (kind == "goal") {
+      made.name = "Goal_" + std::to_string(nextNumber(world_.scene, "Goal_"));
+      made.transform.position = Vec3{x, kWorldGoalHeight * 0.5, z};
+      made.transform.scale = Vec3{size, kWorldGoalHeight, 0.12};
+      made.color = Vec3{0.9, 0.9, 0.9};
+    } else if (kind == "crate") {
+      made.name = "Crate_" + std::to_string(nextNumber(world_.scene, "Crate_"));
+      made.transform.position = Vec3{x, kWorldCrateSize * 0.5, z};
+      made.transform.scale = Vec3{kWorldCrateSize, kWorldCrateSize, kWorldCrateSize};
+      made.color = Vec3{kCrateColorR, kCrateColorG, kCrateColorB};
+    } else {
+      made.name = "Hole_" + std::to_string(nextNumber(world_.scene, "Hole_"));
+      made.mesh = MeshKind::sphere;
+      made.transform.position = Vec3{x, kWorldHoleDepth * 0.5, z};
+      made.transform.scale = Vec3{kWorldHoleRadius * 2.0, kWorldHoleDepth, kWorldHoleRadius * 2.0};
+      made.color = Vec3{kHoleColor, kHoleColor, kHoleColor};
+    }
+    made.roughness = kind == "hole" ? 1.0 : (kind == "goal" ? 0.4 : 0.5);
+    needsPhysics = kind != "hole";
+  } else if (kind == "player" || kind == "ball") {
+    const EntityHandle existing = world_.scene.find(kind == "player" ? "Player" : "Ball");
+    if (existing != kNullEntity) {
+      // Singletons: creating again just moves them, like the catalog does.
+      EntityData* current = world_.scene.get(existing);
+      if (kind == "player") {
+        current->transform.position = Vec3{x, 0.5, z};
+      } else {
+        current->transform.position = Vec3{x, world_.ball.radius, z};
+        rebuildPhysics();
+      }
+      selected_ = current->name;
+      return current->name;
+    }
+    if (kind == "player") {
+      made.name = "Player";
+      made.transform.position = Vec3{x, 0.5, z};
+      made.transform.scale = Vec3{0.6, 1.0, 0.6};
+      made.color = world_.player.color;
+      made.roughness = 0.5;
+    } else {
+      made.name = "Ball";
+      made.mesh = MeshKind::sphere;
+      made.transform.position = Vec3{x, world_.ball.radius, z};
+      const f64 diameter = world_.ball.radius * 2.0;
+      made.transform.scale = Vec3{diameter, diameter, diameter};
+      made.color = world_.ball.color;
+      made.roughness = 0.3;
+      needsPhysics = true;
+    }
+  } else {
+    return std::string();  // unknown kind: nothing made, no crash
+  }
+  world_.scene.create(made);
+  if (needsPhysics) rebuildPhysics();
+  refreshManaged();
+  selected_ = made.name;
+  return made.name;
+}
+
 void WorldEditor::deleteManaged() {
   if (managedIndex_ >= managed_.size()) return;
   const EntityHandle handle = managed_[managedIndex_];

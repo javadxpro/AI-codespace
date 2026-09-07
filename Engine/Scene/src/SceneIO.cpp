@@ -146,6 +146,13 @@ bool SceneIO::save(const Scene& scene, std::string& out) {
     if (!entity.texture.empty()) stream << " texture " << quoteName(entity.texture);
     stream << " pos " << format(t.position.x) << ' ' << format(t.position.y) << ' ' << format(t.position.z);
     stream << " scale " << format(t.scale.x) << ' ' << format(t.scale.y) << ' ' << format(t.scale.z);
+    // Rotation (the Unity-style rotate tool). Written only when the entity
+    // is actually turned, so every scene saved before this existed still
+    // saves byte-identically.
+    const Quat& r = t.rotation;
+    if (r.x != 0.0 || r.y != 0.0 || r.z != 0.0 || r.w != 1.0) {
+      stream << " rot " << format(r.x) << ' ' << format(r.y) << ' ' << format(r.z) << ' ' << format(r.w);
+    }
     stream << " color " << format(entity.color.x) << ' ' << format(entity.color.y) << ' ' << format(entity.color.z);
     stream << " rough " << format(entity.roughness);
     // Components (stage 31). Each is optional, so a scene that uses none
@@ -348,6 +355,21 @@ bool SceneIO::load(const std::string& text, Scene& out, std::string& error) {
           break;
         }
         entity.transform.scale = value;
+        continue;
+      }
+      if (keyword == "rot") {
+        if (i + 4U >= tokens.size()) {
+          complete = false;
+          break;
+        }
+        f64 x = 0.0, y = 0.0, z = 0.0, w = 1.0;
+        if (!parseF64(tokens[i + 1U], x) || !parseF64(tokens[i + 2U], y) || !parseF64(tokens[i + 3U], z) ||
+            !parseF64(tokens[i + 4U], w)) {
+          complete = false;
+          break;
+        }
+        entity.transform.rotation = Quat{x, y, z, w}.normalized();
+        i += 5U;
         continue;
       }
       if (keyword == "color") {

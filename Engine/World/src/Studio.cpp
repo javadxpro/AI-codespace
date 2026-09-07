@@ -1,5 +1,6 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/Assets.h>
+#include <kimia/MathUtils.h>
 #include <kimia/Studio.h>
 
 #include <algorithm>
@@ -120,10 +121,22 @@ f64 entitySpan(const EntityData& entity) {
   if (entity.meshFile.empty()) return largest;
   std::string error;
   auto loaded = assets::loadMesh(entity.meshFile, error);
-  if (!loaded.has_value() || loaded->mesh.positions.empty()) return largest;
-  Vec3 lo = loaded->mesh.positions[0];
+  // A bare rig (an animation-only FBX) has no vertices; its rest-pose
+  // joints measure it instead.
+  std::vector<Vec3> rigJoints;
+  if (!loaded.has_value() || loaded->mesh.positions.empty()) {
+    std::string rigError;
+    auto rigged = assets::loadFBXSkinned(entity.meshFile, rigError);
+    if (rigged.has_value() && !rigged->skinned.skeleton.isEmpty()) {
+      rigJoints = restJointPositions(rigged->skinned.skeleton);
+    }
+  }
+  const bool bareRig = !rigJoints.empty();
+  if (!bareRig && (!loaded.has_value() || loaded->mesh.positions.empty())) return largest;
+  const std::vector<Vec3>& points = bareRig ? rigJoints : loaded->mesh.positions;
+  Vec3 lo = points[0];
   Vec3 hi = lo;
-  for (const Vec3& p : loaded->mesh.positions) {
+  for (const Vec3& p : points) {
     lo.x = std::min(lo.x, p.x);
     lo.y = std::min(lo.y, p.y);
     lo.z = std::min(lo.z, p.z);
@@ -136,11 +149,12 @@ f64 entitySpan(const EntityData& entity) {
 }
 
 // One object's full Dossier, as the panel shows it.
-std::string dossierJson(const EntityData& entity) {
+std::string dossierJson(const EntityData& entity, const Vec3& rotationDegrees) {
   std::string out = "{";
   out += "\"name\":" + quoted(entity.name);
   out += ",\"mesh\":" + quoted(entity.meshFile);
   out += ",\"position\":" + vec3Json(entity.transform.position);
+  out += ",\"rotation\":" + vec3Json(rotationDegrees);
   out += ",\"scale\":" + vec3Json(entity.transform.scale);
   // A raw scale multiplier is meaningless for an imported model: after
   // bring-in auto-fits the file, "3" means three times the original, not
@@ -198,6 +212,41 @@ std::string dossierJson(const EntityData& entity) {
   return out + "}";
 }
 
+// A name the browser may touch on disk: bare, no folders, no tricks.
+bool plainFileName(const std::string& name) {
+  if (name.empty() || name.size() > 255U) return false;
+  if (name == "." || name == "..") return false;
+  for (const char c : name) {
+    if (c == '/' || c == '\\' || c == '\0') return false;
+  }
+  return true;
+}
+
+// A path the browser may touch UNDER the import folder: "actions/Kick.fbx"
+// is fine, but every segment must be plain, so "..", absolute paths and
+// backslashes never reach the filesystem. The editor joins it onto the
+// import folder itself.
+bool safeAssetPath(const std::string& path) {
+  if (path.empty() || path.size() > 1024U) return false;
+  if (path.front() == '/' || path.front() == '\\') return false;
+  usize begin = 0U;
+  for (;;) {
+    const usize slash = path.find('/', begin);
+    const std::string part = path.substr(begin, slash == std::string::npos ? slash : slash - begin);
+    if (!plainFileName(part)) return false;
+    if (slash == std::string::npos) return true;
+    begin = slash + 1U;
+  }
+}
+
+bool fileExists(const std::string& path) {
+  if (std::FILE* found = std::fopen(path.c_str(), "rb")) {
+    std::fclose(found);
+    return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 std::string handleApi(WorldEditor& editor, const std::string& path,
@@ -231,7 +280,8 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
   if (path == "/api/dossier") {
     const EntityData* entity = editor.entity(param(params, "name"));
     if (entity == nullptr) return errorJson("no such object");
-    return "{\"ok\":true,\"dossier\":" + dossierJson(*entity) + "}";
+    return "{\"ok\":true,\"dossier\":" +
+           dossierJson(*entity, editor.entityEulerDegrees(entity->name)) + "}";
   }
 
   // Everything carrying a label — the point of labels is addressing a
@@ -826,190 +876,358 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
   if (path == "/api/pulse") {
     std::string out = "{\"ok\":true";
     out += ",\"playing\":" + std::string(editor.playing() ? "true" : "false");
+    out += ",\"paused\":" + std::string(editor.paused() ? "true" : "false");
     out += ",\"clips\":" + stringsJson(editor.playingAnimations());
     out += ",\"stats\":" + quoted(editor.statsLine());
     return out + "}";
   }
 
+  // --- Unity-style object control (the Hierarchy panel's verbs) ---
+
+  if (path == "/api/object/create") {
+    const std::string name = editor.createObject(
+        param(params, "kind"), Vec3{numberParam(params, "x", 0.0), 0.0, numberParam(params, "z", 0.0)});
+    if (name.empty()) return errorJson("unknown kind, or no world is open");
+    return okJson("name", name);
+  }
+  if (path == "/api/object/duplicate") {
+    std::string copy;
+    if (!editor.duplicateEntity(param(params, "name"), copy)) return errorJson("no such object");
+    return okJson("name", copy);
+  }
+  if (path == "/api/object/rename") {
+    if (!editor.renameEntity(param(params, "name"), param(params, "to")))
+      return errorJson("cannot rename that (the Player, Ball and Ground keep their names)");
+    return okJson();
+  }
+  // Turntable yaw + tilt in DEGREES, the units the Inspector shows; the
+  // page drags in pixels and converts, so the route speaks human units.
+  if (path == "/api/object/rotate") {
+    const std::string name = param(params, "name");
+    if (!editor.rotateEntity(name, radians(numberParam(params, "dyaw", 0.0)),
+                            radians(numberParam(params, "dpitch", 0.0)))) {
+      return errorJson("no such object");
+    }
+    return "{\"ok\":true,\"rotation\":" + vec3Json(editor.entityEulerDegrees(name)) + "}";
+  }
+  if (path == "/api/object/scale") {
+    const std::string name = param(params, "name");
+    if (!editor.scaleEntity(name, numberParam(params, "factor", 1.0)))
+      return errorJson("cannot scale that");
+    const EntityData* grown = editor.entity(name);
+    if (grown == nullptr) return errorJson("no such object");
+    return "{\"ok\":true,\"scale\":" + vec3Json(grown->transform.scale) + "}";
+  }
+  if (path == "/api/object/euler") {
+    if (!editor.setEntityEulerDegrees(param(params, "name"),
+                                      Vec3{numberParam(params, "x", 0.0), numberParam(params, "y", 0.0),
+                                           numberParam(params, "z", 0.0)})) {
+      return errorJson("no such object");
+    }
+    return okJson();
+  }
+  // The Inspector's Animation section: which clips this object's own file
+  // holds, and whether there is a skeleton to play them on.
+  if (path == "/api/object/clips") {
+    const std::string name = param(params, "name");
+    std::string out = "{\"ok\":true";
+    out += ",\"skeleton\":" + std::string(editor.hasSkeleton(name) ? "true" : "false");
+    out += ",\"clips\":" + stringsJson(editor.animationClips(name));
+    return out + "}";
+  }
+  if (path == "/api/object/play-clip") {
+    const EntityData* target = editor.entity(param(params, "name"));
+    if (target == nullptr || target->meshFile.empty()) return errorJson("that object has no model file");
+    editor.playClip(target->meshFile, param(params, "clip"));
+    return okJson();
+  }
+  if (path == "/api/object/stop-clips") {
+    const bool stopped = editor.stopEntityClips(param(params, "name"));
+    return "{\"ok\":true,\"stopped\":" + std::string(stopped ? "true" : "false") + "}";
+  }
+
+  // --- Transport: the toolbar's Play/Pause/Step ---
+
+  if (path == "/api/transport/play") {
+    if (!editor.enterPlayMode()) return errorJson("no world is open");
+    return "{\"ok\":true,\"playing\":true}";
+  }
+  if (path == "/api/transport/pause") {
+    editor.setPaused(flagParam(params, "paused", true));
+    return "{\"ok\":true,\"paused\":" + std::string(editor.paused() ? "true" : "false") + "}";
+  }
+  if (path == "/api/transport/step") {
+    editor.stepOnce(1.0 / 60.0);
+    return okJson();
+  }
+  if (path == "/api/transport/state") {
+    std::string out = "{\"ok\":true";
+    out += ",\"playing\":" + std::string(editor.playing() ? "true" : "false");
+    out += ",\"paused\":" + std::string(editor.paused() ? "true" : "false");
+    return out + "}";
+  }
+
+  // --- Asset files: the Project panel's file manager ---
+
+  if (path == "/api/asset/rename") {
+    const std::string from = param(params, "file");
+    const std::string to = param(params, "to");
+    // `to` stays a bare name: a rename never moves a file between folders.
+    if (!safeAssetPath(from) || !plainFileName(to)) return errorJson("a plain file name, no tricks");
+    const std::string oldPath = editor.importDirectory() + "/" + from;
+    const usize slash = from.find_last_of('/');
+    const std::string folder =
+        slash == std::string::npos ? editor.importDirectory() : editor.importDirectory() + "/" + from.substr(0U, slash);
+    const std::string newPath = folder + "/" + to;
+    if (!fileExists(oldPath)) return errorJson("no such file");
+    if (fileExists(newPath)) return errorJson("that name is taken");
+    if (std::rename(oldPath.c_str(), newPath.c_str()) != 0) return errorJson("could not rename that file");
+    return okJson();
+  }
+  if (path == "/api/asset/delete") {
+    const std::string file = param(params, "file");
+    if (!safeAssetPath(file)) return errorJson("a plain file name, no tricks");
+    const std::string target = editor.importDirectory() + "/" + file;
+    if (!fileExists(target)) return errorJson("no such file");
+    if (std::remove(target.c_str()) != 0) return errorJson("could not delete that file");
+    return okJson();
+  }
+
   return errorJson("unknown request: " + path);
+}
+
+std::string saveAssetFile(WorldEditor& editor, const std::map<std::string, std::string>& params,
+                          const std::string& bytes) {
+  const std::string name = param(params, "name");
+  if (!plainFileName(name)) return errorJson("a plain file name, no folders");
+  const std::string target = editor.importDirectory() + "/" + name;
+  // Never overwrite: an upload landing on an existing model would silently
+  // swap every scene that uses it. Rename or delete first, on purpose.
+  if (fileExists(target)) return errorJson("that name is taken (rename or delete it first)");
+  std::FILE* out = std::fopen(target.c_str(), "wb");
+  if (out == nullptr) return errorJson("could not write that file");
+  const usize written = bytes.empty() ? 0U : std::fwrite(bytes.data(), 1U, bytes.size(), out);
+  std::fclose(out);
+  if (written != bytes.size()) {
+    std::remove(target.c_str());  // a half-written model is worse than none
+    return errorJson("could not write that file");
+  }
+  return okJson("file", name);
 }
 
 
 std::string benchPage() {
-  // One self-contained document: no external files, so the Bench works
-  // offline on a phone exactly as it does on a desktop.
+  // One self-contained document: no external files, so the editor works
+  // offline on a phone exactly as it does on a desktop. The layout copies
+  // Unity (Hierarchy | Inspector | Game, transport on top, Project and
+  // Console below) with Unity terms; every line of markup, style and
+  // script is written from scratch for this engine.
   return R"BENCH(<!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>KIMIA Workbench</title>
+<title>KIMIA Editor</title>
 <style>
 :root{
-  --steel:#1b1f24; --steel2:#22272e; --edge:#333b45; --ink:#e8edf2;
-  --dim:#8b97a5; --brass:#d9a441; --weld:#4bb3a5; --hot:#e2574c;
+  --bg:#1e1e1e; --panel:#252526; --panel2:#2d2d30; --edge:#3e3e42;
+  --ink:#d4d4d4; --dim:#9a9a9a; --accent:#4aa3ff; --go:#6abf6a; --bad:#e06c5b;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;background:var(--steel);color:var(--ink);
-  font:14px/1.5 ui-monospace,"DejaVu Sans Mono",Menlo,monospace;overflow:hidden}
-#bench{display:grid;height:100vh;
-  grid-template-columns:230px 1fr 300px;
-  grid-template-rows:44px 1fr 26px;
-  grid-template-areas:"top top top" "rack stage dossier" "strip strip strip"}
-@media(max-width:900px){
-  #bench{grid-template-columns:1fr;
-    grid-template-rows:44px 38vh 1fr 26px;
-    grid-template-areas:"top" "stage" "dossier" "strip"}
-  #rack{display:none}
-  #rack.show{display:block;position:fixed;inset:44px 0 26px 0;z-index:20}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:13px/1.45 "Segoe UI",system-ui,Roboto,sans-serif;overflow:hidden}
+#editor{display:grid;height:100vh;
+  grid-template-columns:232px 308px 1fr;
+  grid-template-rows:46px 1fr 188px;
+  grid-template-areas:"top top top" "hier insp game" "proj proj console"}
+@media(max-width:1100px){
+  #editor{grid-template-columns:200px 260px 1fr}
 }
-#top{grid-area:top;display:flex;align-items:center;gap:10px;padding:0 12px;
-  background:var(--steel2);border-bottom:1px solid var(--edge)}
-.brand{font-weight:700;letter-spacing:.14em;color:var(--brass)}
+@media(max-width:900px){
+  #editor{grid-template-columns:1fr;grid-template-rows:46px 30vh 1fr 150px;
+    grid-template-areas:"top" "game" "insp" "console"}
+  #hier{display:none}
+  #hier.show{display:block;position:fixed;inset:46px 0 0 0;z-index:20}
+  #proj{display:none}
+}
+#top{grid-area:top;display:flex;align-items:center;gap:8px;padding:0 10px;
+  background:var(--panel2);border-bottom:1px solid var(--edge);overflow-x:auto}
+.brand{font-weight:700;letter-spacing:.12em;color:var(--accent);white-space:nowrap}
 .brand small{color:var(--dim);font-weight:400;letter-spacing:0}
-#rack{grid-area:rack;background:var(--steel2);border-left:1px solid var(--edge);
-  overflow:auto;padding:8px}
-#stage{grid-area:stage;position:relative;background:#0e1114;display:flex;
-  align-items:center;justify-content:center;overflow:hidden}
-#stage img{max-width:100%;max-height:100%;image-rendering:pixelated;
+#hier{grid-area:hier;background:var(--panel);border-right:1px solid var(--edge);
+  overflow:auto;padding:8px;min-height:0}
+#insp{grid-area:insp;background:var(--panel);border-right:1px solid var(--edge);
+  overflow:auto;padding:10px;min-height:0}
+#game{grid-area:game;position:relative;background:#101010;display:flex;
+  align-items:center;justify-content:center;overflow:hidden;min-width:0}
+#game img{max-width:100%;max-height:100%;image-rendering:pixelated;
   touch-action:none;user-select:none;-webkit-user-drag:none}
-#stagebar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:12px;
-  align-items:center;padding:6px 10px;background:rgba(18,22,26,.82);
+#gamebar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:12px;
+  align-items:center;padding:6px 10px;background:rgba(20,20,20,.85);
   border-top:1px solid var(--edge);font-size:11px;color:var(--dim)}
-#stagebar label{display:flex;gap:5px;align-items:center}
-#stagebar select{width:auto;padding:2px 5px}
-#tapHint{margin-right:auto;color:var(--brass)}
-#dossier{grid-area:dossier;background:var(--steel2);border-right:1px solid var(--edge);
-  overflow:auto;padding:10px}
-#strip{grid-area:strip;background:#12161a;border-top:1px solid var(--edge);
-  color:var(--dim);font-size:11px;padding:4px 12px;white-space:nowrap;overflow:hidden}
-h2{font-size:11px;letter-spacing:.18em;color:var(--dim);margin:14px 0 6px;
+#gametool{color:var(--accent);font-weight:600}
+#tapHint{margin-left:auto;color:var(--go)}
+#proj{grid-area:proj;background:var(--panel);border-top:1px solid var(--edge);
+  border-right:1px solid var(--edge);overflow:auto;padding:8px 10px;min-height:0}
+#console{grid-area:console;background:#141414;border-top:1px solid var(--edge);
+  display:flex;flex-direction:column;min-height:0}
+#conbar{display:flex;align-items:center;gap:8px;padding:6px 10px;
+  border-bottom:1px solid var(--edge);font-size:11px;color:var(--dim)}
+#conlog{flex:1;overflow:auto;padding:6px 10px;font-family:ui-monospace,Menlo,monospace;
+  font-size:11px}
+#conlog div{white-space:nowrap}
+#conlog .t{color:#5a5a5a;margin-right:8px}
+h2{font-size:11px;letter-spacing:.14em;color:var(--dim);margin:12px 0 6px;
   text-transform:uppercase;font-weight:600}
 h2:first-child{margin-top:0}
 .row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
-.row label{color:var(--dim);min-width:52px;font-size:12px}
-button{background:#2c333b;color:var(--ink);border:1px solid var(--edge);
-  border-radius:5px;padding:6px 10px;cursor:pointer;font:inherit;font-size:12px}
-button:hover{border-color:var(--brass)}
-button.go{background:var(--weld);border-color:var(--weld);color:#08201d;font-weight:700}
-button.bad{background:#3a2320;border-color:#5c332e;color:#f0b5ae}
-input,select{background:#141a1f;color:var(--ink);border:1px solid var(--edge);
-  border-radius:5px;padding:5px 7px;font:inherit;font-size:12px;width:100%;min-width:0}
-input[type=color]{padding:2px;height:30px}
-.item{padding:6px 8px;border:1px solid transparent;border-radius:5px;cursor:pointer;
+.row label{color:var(--dim);min-width:48px;font-size:12px}
+button{background:#3c3c3c;color:var(--ink);border:1px solid var(--edge);
+  border-radius:4px;padding:5px 9px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap}
+button:hover{border-color:var(--accent)}
+button.on{background:#094771;border-color:var(--accent)}
+button.go{background:#245a24;border-color:#3c7a3c;font-weight:600}
+button.bad{background:#5a2323;border-color:#7a3c3c}
+button:disabled{opacity:.4;cursor:default}
+input,select{background:#141414;color:var(--ink);border:1px solid var(--edge);
+  border-radius:4px;padding:4px 6px;font:inherit;font-size:12px;width:100%;min-width:0}
+input[type=color]{padding:1px;height:26px}
+input[type=checkbox]{width:auto}
+.item{padding:5px 7px;border:1px solid transparent;border-radius:4px;cursor:pointer;
   display:flex;align-items:center;gap:6px;font-size:12px}
-.item:hover{background:#2a3039}
-.item.on{background:#2d3742;border-color:var(--brass)}
-.pip{width:7px;height:7px;border-radius:50%;background:#4a545f;flex:none}
-.pip.solid{background:var(--brass)}
-.pip.moving{background:var(--weld)}
-.tag{display:inline-flex;align-items:center;gap:4px;background:#2c333b;
-  border:1px solid var(--edge);border-radius:11px;padding:2px 8px;font-size:11px;margin:0 0 4px 4px}
+.item:hover{background:#2a2d2e}
+.item.on{background:#094771;border-color:var(--accent)}
+.item button{padding:1px 7px;font-size:10px}
+.pip{width:7px;height:7px;border-radius:50%;background:#4a4a4a;flex:none}
+.pip.solid{background:var(--accent)}
+.pip.moving{background:var(--go)}
+.tag{display:inline-flex;align-items:center;gap:4px;background:#3c3c3c;
+  border:1px solid var(--edge);border-radius:10px;padding:1px 7px;font-size:11px;margin:0 4px 4px 0}
 .tag b{cursor:pointer;color:var(--dim)}
-.tag b:hover{color:var(--hot)}
+.tag b:hover{color:var(--bad)}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-.wire{background:#1a2026;border:1px solid var(--edge);border-radius:5px;
-  padding:5px 7px;margin-bottom:4px;font-size:11px;display:flex;justify-content:space-between}
-.wire span{color:var(--brass)}
+.wire{background:#1a1a1a;border:1px solid var(--edge);border-radius:4px;
+  padding:4px 6px;margin-bottom:4px;font-size:11px;display:flex;justify-content:space-between;gap:6px}
+.wire span{color:var(--accent)}
 .hint{color:var(--dim);font-size:11px;line-height:1.6}
-#rulesSheet{display:none;position:fixed;inset:0;background:var(--steel);z-index:40;
+.projcols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:1100px){.projcols{grid-template-columns:1fr 1fr}}
+#rulesSheet{display:none;position:fixed;inset:0;background:var(--bg);z-index:40;
   flex-direction:column}
 #rulesSheet.show{display:flex}
 .sheetbar{display:flex;align-items:center;gap:10px;padding:10px 14px;
-  background:var(--steel2);border-bottom:1px solid var(--edge)}
+  background:var(--panel2);border-bottom:1px solid var(--edge)}
 .sheetbody{flex:1;overflow:auto;display:grid;gap:14px;padding:14px;
   grid-template-columns:1fr 1fr 1fr 1fr}
 @media(max-width:1200px){.sheetbody{grid-template-columns:1fr 1fr}}
 @media(max-width:900px){.sheetbody{grid-template-columns:1fr}}
-.col{background:var(--steel2);border:1px solid var(--edge);border-radius:7px;padding:10px}
-.rule{background:#1a2026;border:1px solid var(--edge);border-radius:5px;
-  padding:7px 9px;margin-bottom:5px;font-size:11px;cursor:pointer;line-height:1.5}
-.rule.on{border-color:var(--brass)}
+.col{background:var(--panel);border:1px solid var(--edge);border-radius:6px;padding:10px}
+.rule{background:#1a1a1a;border:1px solid var(--edge);border-radius:4px;
+  padding:6px 8px;margin-bottom:5px;font-size:11px;cursor:pointer;line-height:1.5}
+.rule.on{border-color:var(--accent)}
 .rule.off{opacity:.45}
 .rule .tools{display:flex;gap:4px;margin-top:5px}
-.rule .tools button{padding:2px 7px;font-size:10px}
-#flash{position:fixed;bottom:34px;left:50%;transform:translateX(-50%);
-  background:#12161a;border:1px solid var(--brass);border-radius:6px;
+.rule .tools button{padding:1px 6px;font-size:10px}
+#flash{position:fixed;bottom:200px;left:50%;transform:translateX(-50%);
+  background:#141414;border:1px solid var(--accent);border-radius:6px;
   padding:7px 14px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
 #flash.on{opacity:1}
-#flash.err{border-color:var(--hot);color:#f0b5ae}
+#flash.err{border-color:var(--bad);color:#f0b5ae}
+.toolbar-group{display:flex;gap:4px;align-items:center;padding:0 8px;
+  border-left:1px solid var(--edge);border-right:1px solid var(--edge)}
+.toolbar-group:first-of-type{border-left:none}
 </style>
 </head>
 <body>
-<div id="bench">
+<div id="editor">
   <div id="top">
-    <div class="brand">KIMIA <small>Workbench</small></div>
-    <button onclick="toggleRack()" id="rackBtn" style="display:none">Rack</button>
+    <div class="brand">KIMIA <small>Editor</small></div>
+    <button onclick="toggleHier()" id="hierBtn" style="display:none">Hierarchy</button>
+    <div class="toolbar-group" title="Transform tools (Q/W/E/R)">
+      <button id="toolSelect" class="on" onclick="setTool('select')">Select</button>
+      <button id="toolMove" onclick="setTool('move')">Move</button>
+      <button id="toolRotate" onclick="setTool('rotate')">Rotate</button>
+      <button id="toolScale" onclick="setTool('scale')">Scale</button>
+    </div>
+    <div class="toolbar-group" title="Play controls">
+      <button id="btnPlay" class="go" onclick="transportPlay()">&#9654; Play</button>
+      <button id="btnPause" onclick="transportPause()">&#10073;&#10073; Pause</button>
+      <button id="btnStep" onclick="transportStep()">Step &#9654;|</button>
+    </div>
+    <div class="toolbar-group" title="Snapping">
+      <label style="font-size:11px;color:var(--dim)"><input type="checkbox" id="snapOn"> snap</label>
+      <select id="snapVal" style="width:auto">
+        <option value="0.1">0.1</option><option value="0.25">0.25</option>
+        <option value="0.5" selected>0.5</option><option value="1">1</option>
+      </select>
+    </div>
+    <div class="toolbar-group" title="Create a game object at the origin">
+      <select id="createKind" style="width:auto">
+        <option value="cube">Cube</option><option value="sphere">Sphere</option>
+        <option value="plane">Plane</option><option value="block">Block</option>
+        <option value="wall">Wall</option><option value="goal">Goal</option>
+        <option value="crate">Crate</option><option value="hole">Hole</option>
+        <option value="player">Player</option><option value="ball">Ball</option>
+      </select>
+      <button class="go" onclick="createObject()">+ Create</button>
+    </div>
     <div style="flex:1"></div>
     <span class="hint" id="worldName">-</span>
-    <button id="rulesBtn" onclick="showRules()">Rules</button>
+    <button onclick="showRules()">Rules</button>
     <button class="go" onclick="publish()">Publish</button>
-    <button onclick="location.href='/'">Play &rsaquo;</button>
+    <button onclick="location.href='/'">Game &rsaquo;</button>
   </div>
 
-  <div id="rack">
-    <h2>Rack</h2>
-    <div id="rackList"></div>
-    <h2>Stages</h2>
-    <div id="stageList"></div>
-    <div class="row"><input id="newStage" placeholder="Level 2">
-      <button onclick="addStage()">Add</button></div>
-
-    <h2>Blueprints</h2>
-    <div id="bpList"></div>
-    <div class="row"><input id="bpName" placeholder="save selected as...">
-      <button class="go" onclick="keepBlueprint()">Keep</button></div>
-
-    <h2>Files</h2>
+  <div id="hier">
+    <h2>Hierarchy</h2>
     <div class="row">
-      <button onclick="loadAssets(0)">List</button>
-      <button onclick="loadAssets(1)">Scan</button>
-      <span class="hint" id="scanHint">Scan looks inside models</span>
+      <button style="flex:1" onclick="duplicate()" title="Ctrl+D">Duplicate</button>
+      <button class="bad" style="flex:1" onclick="scrap()">Delete</button>
     </div>
-    <div id="assetList"></div>
-
-    <h2>Bring in</h2>
-    <div class="row"><input id="inFile" placeholder="assets/thing.obj"></div>
-    <div class="row"><label>size</label><input id="inSize" type="number" value="1" step="0.1"></div>
-    <button class="go" style="width:100%" onclick="bringIn()">Bring in</button>
+    <div id="hierList"></div>
+    <div class="hint">Click to select. Ctrl+D duplicates, Delete removes.</div>
   </div>
 
-  <div id="stage">
-    <img id="view" alt="world">
-    <div id="stagebar">
-      <label><input type="checkbox" id="dragOn" checked> drag</label>
-      <label>grid <select id="gridStep">
-        <option value="0">off</option><option value="0.25">0.25</option>
-        <option value="0.5" selected>0.5</option><option value="1">1</option>
-      </select></label>
-      <span id="tapHint">tap an object to select it</span>
-    </div>
-  </div>
-
-  <div id="dossier">
-    <div id="empty" class="hint">Pick something from the Rack to open its Dossier.</div>
+  <div id="insp">
+    <div id="empty" class="hint">Select something in the Hierarchy to inspect it.</div>
     <div id="sheet" style="display:none">
-      <h2>Dossier</h2>
-      <div class="row"><b id="dName"></b></div>
+      <h2>Inspector</h2>
+      <div class="row"><input id="dName"><button onclick="rename()">Rename</button></div>
       <div class="hint" id="dMesh"></div>
 
-      <h2>Placement</h2>
+      <h2>Transform</h2>
+      <div class="row"><label>Position</label></div>
       <div class="grid3">
         <input id="px" type="number" step="0.1" title="x">
         <input id="py" type="number" step="0.1" title="y">
         <input id="pz" type="number" step="0.1" title="z">
       </div>
-      <div class="grid3" style="margin-top:4px">
+      <div class="row" style="margin-top:6px"><label>Rotation</label></div>
+      <div class="grid3">
+        <input id="rx" type="number" step="1" title="pitch degrees">
+        <input id="ry" type="number" step="1" title="yaw degrees">
+        <input id="rz" type="number" step="1" title="roll degrees">
+      </div>
+      <div class="row" style="margin-top:6px"><label>Scale</label></div>
+      <div class="grid3">
         <input id="sx" type="number" step="0.1" title="width">
         <input id="sy" type="number" step="0.1" title="height">
         <input id="sz" type="number" step="0.1" title="depth">
       </div>
       <div class="row" style="margin-top:6px">
-        <input id="tint" type="color">
-        <button class="go" onclick="place()">Set</button>
+        <input id="tint" type="color" style="max-width:52px">
+        <button class="go" style="flex:1" onclick="applyTransform()">Apply</button>
       </div>
 
-      <h2>Fittings &mdash; Body</h2>
+      <h2>Animation</h2>
+      <div class="hint" id="animStat">-</div>
+      <div class="row"><select id="clipSel"></select></div>
+      <div class="row">
+        <button class="go" style="flex:1" onclick="playClip()">Play clip</button>
+        <button style="flex:1" onclick="stopClips()">Stop</button>
+      </div>
+
+      <h2>Body</h2>
       <div class="row"><label>kind</label>
         <select id="bKind">
           <option value="off">none (scenery)</option>
@@ -1020,9 +1238,9 @@ input[type=color]{padding:2px;height:30px}
       <div class="row"><label>mass</label><input id="bMass" type="number" step="0.1" value="1"></div>
       <div class="row"><label>grip</label><input id="bFric" type="number" step="0.05" value="0.4"></div>
       <div class="row"><label>bounce</label><input id="bBounce" type="number" step="0.05" value="0.3"></div>
-      <button class="go" style="width:100%" onclick="fitBody()">Bolt on</button>
+      <button class="go" style="width:100%" onclick="fitBody()">Apply body</button>
 
-      <h2>Labels</h2>
+      <h2>Tags</h2>
       <div id="labels"></div>
       <div class="row"><input id="newLabel" placeholder="enemy"><button onclick="addLabel()">Add</button></div>
 
@@ -1067,15 +1285,60 @@ input[type=color]{padding:2px;height:30px}
 
       <h2>Bench test</h2>
       <div class="row"><input id="pullWire" placeholder="k"><button onclick="pull()">Pull</button></div>
-      <div class="hint">Pull a wire to fire it here, without leaving the Bench.</div>
+      <div class="hint">Pull a wire to fire it here, without playing the game.</div>
 
       <h2>&nbsp;</h2>
-      <button class="bad" style="width:100%" onclick="scrap()">Scrap this object</button>
+      <button class="bad" style="width:100%" onclick="scrap()">Delete this object</button>
     </div>
   </div>
 
-  <div id="strip">booting&hellip;</div>
+  <div id="game">
+    <img id="view" alt="game">
+    <div id="gamebar">
+      <span id="gametool">Select</span>
+      <span id="playstat">edit</span>
+      <span id="tapHint">click an object to select it</span>
+    </div>
+  </div>
+
+  <div id="proj">
+    <div class="projcols">
+      <div>
+        <h2>Project &mdash; Files</h2>
+        <div class="row">
+          <button onclick="loadAssets(0)">List</button>
+          <button onclick="loadAssets(1)">Scan</button>
+          <button class="go" onclick="uploadAsset()">Upload</button>
+          <input type="file" id="upFile" style="display:none">
+          <span class="hint" id="scanHint">Scan looks inside models</span>
+        </div>
+        <div id="assetList"></div>
+        <div class="row"><input id="inFile" placeholder="assets/thing.obj"></div>
+        <div class="row"><label>size</label><input id="inSize" type="number" value="1" step="0.1">
+          <button class="go" onclick="bringIn()">Import</button></div>
+      </div>
+      <div>
+        <h2>Project &mdash; Prefabs</h2>
+        <div id="bpList"></div>
+        <div class="row"><input id="bpName" placeholder="save selected as...">
+          <button class="go" onclick="keepBlueprint()">Keep</button></div>
+      </div>
+      <div>
+        <h2>Project &mdash; Scenes</h2>
+        <div id="stageList"></div>
+        <div class="row"><input id="newStage" placeholder="Level 2">
+          <button onclick="addStage()">Add</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="console">
+    <div id="conbar"><b>Console</b><span id="conStat"></span>
+      <div style="flex:1"></div><button onclick="clearLog()">Clear</button></div>
+    <div id="conlog"></div>
+  </div>
 </div>
+
 <div id="rulesSheet">
   <div class="sheetbar">
     <b>Rules &mdash; when this, do that</b>
@@ -1108,7 +1371,7 @@ input[type=color]{padding:2px;height:30px}
     </div>
 
     <div class="col">
-      <h2>Add to rule <span id="pickedRule" style="color:var(--brass)">&mdash;</span></h2>
+      <h2>Add to rule <span id="pickedRule" style="color:var(--accent)">&mdash;</span></h2>
       <div class="hint">Pick a rule on the left, then add an IF or a DO.</div>
 
       <h2>IF (optional)</h2>
@@ -1185,8 +1448,8 @@ input[type=color]{padding:2px;height:30px}
         <input id="cY" type="number" step="0.01" value="0.78" title="y 0..1">
         <input id="cSize" type="number" step="0.01" value="0.12" title="size"></div>
       <div class="row"><label>clip</label>
-        <select id="cClipFile" onchange="clipsOf(this.value)"><option value="">— model —</option></select></div>
-      <div class="row"><select id="cClip"><option value="">— none —</option></select>
+        <select id="cClipFile" onchange="clipsOf(this.value)"><option value="">-- model --</option></select></div>
+      <div class="row"><select id="cClip"><option value="">-- none --</option></select>
         <input id="cSound" placeholder="sound"></div>
       <div class="row">
         <button class="go" style="flex:1" onclick="setControl()">Save control</button>
@@ -1221,6 +1484,8 @@ input[type=color]{padding:2px;height:30px}
 
 <script>
 var picked = null;
+var tool = 'select';
+var pausedNow = false;
 
 function flash(msg, bad){
   var f = document.getElementById('flash');
@@ -1229,28 +1494,67 @@ function flash(msg, bad){
   clearTimeout(f.timer);
   f.timer = setTimeout(function(){ f.className = ''; }, 1800);
 }
+function log(msg){
+  var box = document.getElementById('conlog');
+  var line = document.createElement('div');
+  var t = new Date();
+  var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+  var stamp = document.createElement('span');
+  stamp.className = 't';
+  stamp.textContent = pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds());
+  line.appendChild(stamp);
+  line.appendChild(document.createTextNode(msg));
+  box.appendChild(line);
+  while (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+function clearLog(){ document.getElementById('conlog').innerHTML = ''; }
 function api(path, params, done){
   var q = [];
   for (var k in params) q.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
   fetch('/api/' + path + (q.length ? '?' + q.join('&') : ''))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if (d && d.ok === false) flash(d.error || 'refused', true);
+      if (d && d.ok === false){ flash(d.error || 'refused', true); log('error: ' + (d.error || path)); }
       if (done) done(d);
     })
     .catch(function(){ flash('engine not answering', true); });
 }
-function toggleRack(){ document.getElementById('rack').classList.toggle('show'); }
+function toggleHier(){ document.getElementById('hier').classList.toggle('show'); }
 function hex(c){
   var n = Math.max(0, Math.min(255, Math.round(c * 255))).toString(16);
   return n.length < 2 ? '0' + n : n;
 }
+function snapGrid(){
+  if (!document.getElementById('snapOn').checked) return 0;
+  return parseFloat(document.getElementById('snapVal').value) || 0;
+}
 
-function loadRack(){
+// --- Transform tools (Q/W/E/R) ---
+function setTool(name){
+  tool = name;
+  var tools = ['select', 'move', 'rotate', 'scale'];
+  var labels = {select: 'Select', move: 'Move', rotate: 'Rotate', scale: 'Scale'};
+  for (var i = 0; i < tools.length; i++){
+    document.getElementById('tool' + labels[tools[i]]).className = tools[i] === name ? 'on' : '';
+  }
+  document.getElementById('gametool').textContent = labels[name];
+  var hints = {
+    select: 'click an object to select it',
+    move: 'drag to move along the ground',
+    rotate: 'drag sideways to turn, up/down to tilt',
+    scale: 'drag up to grow, down to shrink'
+  };
+  document.getElementById('tapHint').textContent =
+    (picked ? picked + '  -  ' : '') + hints[name];
+}
+
+// --- Hierarchy ---
+function loadHier(){
   api('rack', {}, function(d){
     if (!d || !d.items) return;
     document.getElementById('worldName').textContent = d.world || '';
-    var box = document.getElementById('rackList');
+    var box = document.getElementById('hierList');
     box.innerHTML = '';
     d.items.forEach(function(it){
       var row = document.createElement('div');
@@ -1269,7 +1573,7 @@ function loadRack(){
       if (it.noises) marks.push(it.noises + 'N');
       if (marks.length){
         var tail = document.createElement('span');
-        tail.style.cssText = 'margin-right:auto;color:#8b97a5;font-size:10px';
+        tail.style.cssText = 'margin-left:auto;color:#9a9a9a;font-size:10px';
         tail.textContent = marks.join(' ');
         row.appendChild(tail);
       }
@@ -1278,84 +1582,53 @@ function loadRack(){
     });
   });
 }
-
-function loadLibrary(){
-  api('library', {}, function(d){
-    if (!d) return;
-    var st = document.getElementById('stageList');
-    st.innerHTML = '';
-    (d.stages || []).forEach(function(name){
-      var el = document.createElement('div');
-      el.className = 'item' + (name === d.stage ? ' on' : '');
-      var label = document.createElement('span');
-      label.textContent = name;
-      el.appendChild(label);
-      if (name !== d.stage){
-        var x = document.createElement('span');
-        x.textContent = '\u00d7';
-        x.style.cssText = 'margin-right:auto;color:#8b97a5';
-        x.onclick = function(ev){
-          ev.stopPropagation();
-          api('drop-stage', {stage: name}, loadLibrary);
-        };
-        el.appendChild(x);
-      }
-      el.onclick = function(){
-        api('go-stage', {stage: name}, function(r){
-          if (r && r.ok){ picked = null; flash('on ' + name); loadRack(); loadLibrary(); }
-        });
-      };
-      st.appendChild(el);
-    });
-
-    var bp = document.getElementById('bpList');
-    bp.innerHTML = '';
-    if (!(d.blueprints || []).length){
-      bp.innerHTML = '<div class="hint">Select an object and Keep it, then ' +
-        'stamp copies without setting it up again.</div>';
-    }
-    (d.blueprints || []).forEach(function(name){
-      var el = document.createElement('div');
-      el.className = 'item';
-      var label = document.createElement('span');
-      label.textContent = name;
-      el.appendChild(label);
-      var x = document.createElement('span');
-      x.textContent = '\u00d7';
-      x.style.cssText = 'margin-right:auto;color:#8b97a5';
-      x.onclick = function(ev){
-        ev.stopPropagation();
-        api('forget', {blueprint: name}, loadLibrary);
-      };
-      el.appendChild(x);
-      el.onclick = function(){
-        api('stamp', {blueprint: name, x: 0, y: 0, z: 0}, function(r){
-          if (r && r.ok){ flash('stamped ' + r.name); loadRack(); pick(r.name); }
-        });
-      };
-      bp.appendChild(el);
-    });
+function createObject(){
+  var kind = document.getElementById('createKind').value;
+  api('object/create', {kind: kind, x: 0, z: 0}, function(d){
+    if (d && d.ok){ log('created ' + d.name); loadHier(); pick(d.name); }
   });
 }
-function keepBlueprint(){
+function duplicate(){
   if (!need()) return;
-  var as = document.getElementById('bpName').value || picked;
-  api('keep', {name: picked, as: as}, function(d){
-    if (d && d.ok){
-      document.getElementById('bpName').value = '';
-      flash('kept as ' + d.name);
-      loadLibrary();
-    }
+  api('object/duplicate', {name: picked}, function(d){
+    if (d && d.ok){ log('duplicated ' + picked + ' as ' + d.name); loadHier(); pick(d.name); }
   });
 }
-function addStage(){
-  var name = document.getElementById('newStage').value.trim();
-  if (!name) return;
-  api('add-stage', {stage: name}, function(d){
-    if (d && d.ok){ document.getElementById('newStage').value = ''; loadLibrary(); }
+function rename(){
+  if (!need()) return;
+  var to = document.getElementById('dName').value.trim();
+  if (!to) return;
+  api('object/rename', {name: picked, to: to}, function(d){
+    if (d && d.ok){ log('renamed ' + picked + ' to ' + to); picked = to; loadHier(); pick(to); }
   });
 }
 
+// --- Transport: Play/Pause/Step ---
+function transportPlay(){
+  api('transport/play', {}, function(d){
+    if (d && d.ok){ log('play'); pollTransport(); }
+  });
+}
+function transportPause(){
+  api('transport/pause', {paused: pausedNow ? 0 : 1}, function(d){
+    if (d && d.ok){ log(d.paused ? 'paused' : 'resumed'); pollTransport(); }
+  });
+}
+function transportStep(){
+  api('transport/step', {}, function(d){ if (d && d.ok) log('stepped one frame'); });
+}
+function pollTransport(){
+  api('transport/state', {}, function(d){
+    if (!d) return;
+    pausedNow = !!d.paused;
+    document.getElementById('btnPause').className = pausedNow ? 'on' : '';
+    document.getElementById('btnPlay').className = d.playing ? 'on' : 'go';
+    document.getElementById('playstat').textContent =
+      d.playing ? (pausedNow ? 'paused' : 'playing') : 'edit';
+  });
+}
+
+// --- Inspector ---
 function pick(name){
   picked = name;
   api('dossier', {name: name}, function(d){
@@ -1363,12 +1636,13 @@ function pick(name){
     var o = d.dossier;
     document.getElementById('empty').style.display = 'none';
     document.getElementById('sheet').style.display = '';
-    document.getElementById('dName').textContent = o.name;
+    document.getElementById('dName').value = o.name;
     document.getElementById('dMesh').textContent =
-      (o.mesh ? o.mesh : 'built-in shape') + '   \u2194 ' + o.span.toFixed(2) + 'm';
-    var ids = ['px','py','pz'], sids = ['sx','sy','sz'];
+      (o.mesh ? o.mesh : 'built-in shape') + '   - ' + o.span.toFixed(2) + 'm';
+    var ids = ['px', 'py', 'pz'], rids = ['rx', 'ry', 'rz'], sids = ['sx', 'sy', 'sz'];
     for (var i = 0; i < 3; i++){
       document.getElementById(ids[i]).value = o.position[i].toFixed(2);
+      document.getElementById(rids[i]).value = (o.rotation ? o.rotation[i] : 0).toFixed(1);
       document.getElementById(sids[i]).value = o.scale[i].toFixed(2);
     }
     document.getElementById('tint').value =
@@ -1386,8 +1660,8 @@ function pick(name){
       chip.className = 'tag';
       chip.textContent = t;
       var x = document.createElement('b');
-      x.textContent = '\u00d7';
-      x.onclick = function(){ api('unlabel', {name: picked, label: t}, function(){ pick(picked); loadRack(); }); };
+      x.textContent = 'x';
+      x.onclick = function(){ api('unlabel', {name: picked, label: t}, function(){ pick(picked); loadHier(); }); };
       chip.appendChild(x);
       lab.appendChild(chip);
     });
@@ -1397,8 +1671,13 @@ function pick(name){
       var w = document.createElement('div');
       w.className = 'wire';
       w.style.cursor = 'pointer';
-      var span = b.parent ? (b.name + ' \u2190 ' + b.parent) : b.name;
-      w.innerHTML = '<i>' + span + '</i><span>' + b.swing.toFixed(1) + '</span>';
+      var span = b.parent ? (b.name + ' <- ' + b.parent) : b.name;
+      var left = document.createElement('i');
+      left.textContent = span;
+      var right = document.createElement('span');
+      right.textContent = b.swing.toFixed(1);
+      w.appendChild(left);
+      w.appendChild(right);
       // Click a bone to load it into the fields, so editing is a tweak
       // rather than retyping the whole thing.
       w.onclick = function(){
@@ -1421,7 +1700,12 @@ function pick(name){
     o.motions.forEach(function(m){
       var w = document.createElement('div');
       w.className = 'wire';
-      w.innerHTML = '<i>' + m.clip + '</i><span>&larr; ' + m.wiring + '</span>';
+      var left = document.createElement('i');
+      left.textContent = m.clip;
+      var right = document.createElement('span');
+      right.textContent = '<- ' + m.wiring;
+      w.appendChild(left);
+      w.appendChild(right);
       mv.appendChild(w);
     });
     var nv = document.getElementById('noises');
@@ -1429,16 +1713,55 @@ function pick(name){
     o.noises.forEach(function(n){
       var w = document.createElement('div');
       w.className = 'wire';
-      w.innerHTML = '<i>' + n.sound + '</i><span>&larr; ' + n.wiring + '</span>';
+      var left = document.createElement('i');
+      left.textContent = n.sound;
+      var right = document.createElement('span');
+      right.textContent = '<- ' + n.wiring;
+      w.appendChild(left);
+      w.appendChild(right);
       nv.appendChild(w);
     });
-    loadRack();
+    loadClips();
+    loadHier();
+    setTool(tool);
+  });
+}
+function loadClips(){
+  if (!picked) return;
+  api('object/clips', {name: picked}, function(d){
+    if (!d) return;
+    document.getElementById('animStat').textContent =
+      d.skeleton ? ((d.clips || []).length + ' clip(s) in the model file')
+                 : 'no skeleton in this object';
+    var sel = document.getElementById('clipSel');
+    sel.innerHTML = '';
+    (d.clips || []).forEach(function(c){
+      var o = document.createElement('option');
+      o.value = c;
+      o.textContent = c;
+      sel.appendChild(o);
+    });
+    document.getElementById('clipSel').disabled = !(d.clips || []).length;
+  });
+}
+function playClip(){
+  if (!need()) return;
+  var clip = document.getElementById('clipSel').value;
+  if (!clip){ flash('no clip to play', true); return; }
+  api('object/play-clip', {name: picked, clip: clip}, function(d){
+    if (d && d.ok) log('playing ' + clip + ' on ' + picked);
+  });
+}
+function stopClips(){
+  if (!need()) return;
+  api('object/stop-clips', {name: picked}, function(d){
+    if (d && d.ok) log(d.stopped ? 'stopped clips on ' + picked : 'nothing was playing');
   });
 }
 
-function need(){ if (!picked) { flash('pick something first', true); return false; } return true; }
+function need(){ if (!picked){ flash('select something first', true); return false; } return true; }
 
-function place(){
+function applyTransform(){
   if (!need()) return;
   var c = document.getElementById('tint').value;
   api('place', {name: picked,
@@ -1446,9 +1769,13 @@ function place(){
     pz: document.getElementById('pz').value, sx: document.getElementById('sx').value,
     sy: document.getElementById('sy').value, sz: document.getElementById('sz').value},
     function(){
-      api('paint', {name: picked,
-        r: parseInt(c.substr(1,2),16)/255, g: parseInt(c.substr(3,2),16)/255,
-        b: parseInt(c.substr(5,2),16)/255}, function(){ flash('placed'); pick(picked); });
+      api('object/euler', {name: picked,
+        x: document.getElementById('rx').value, y: document.getElementById('ry').value,
+        z: document.getElementById('rz').value}, function(){
+          api('paint', {name: picked,
+            r: parseInt(c.substr(1, 2), 16) / 255, g: parseInt(c.substr(3, 2), 16) / 255,
+            b: parseInt(c.substr(5, 2), 16) / 255}, function(){ log('set transform of ' + picked); pick(picked); });
+        });
     });
 }
 function fitBody(){
@@ -1456,7 +1783,7 @@ function fitBody(){
   api('fit-body', {name: picked, kind: document.getElementById('bKind').value,
     mass: document.getElementById('bMass').value, friction: document.getElementById('bFric').value,
     bounce: document.getElementById('bBounce').value}, function(d){
-      if (d && d.ok) flash('bolted on');
+      if (d && d.ok) log('set body of ' + picked);
       pick(picked);
     });
 }
@@ -1473,14 +1800,14 @@ function wireMotion(){
   if (!need()) return;
   api('wire-motion', {name: picked, clip: document.getElementById('mClip').value,
     wiring: document.getElementById('mWire').value, loop: 0}, function(d){
-      if (d && d.ok) { flash('wired'); pick(picked); }
+      if (d && d.ok){ log('wired motion on ' + picked); pick(picked); }
     });
 }
 function wireNoise(){
   if (!need()) return;
   api('wire-noise', {name: picked, sound: document.getElementById('nSound').value,
     wiring: document.getElementById('nWire').value}, function(d){
-      if (d && d.ok) { flash('wired'); pick(picked); }
+      if (d && d.ok){ log('wired sound on ' + picked); pick(picked); }
     });
 }
 function unwire(what){
@@ -1497,19 +1824,263 @@ function setBone(){
     ty: document.getElementById('bty').value, tz: document.getElementById('btz').value,
     thickness: document.getElementById('bth').value,
     swing: document.getElementById('bsw').value}, function(d){
-      if (d && d.ok) { flash('bone set'); pick(picked); }
+      if (d && d.ok){ log('set bone on ' + picked); pick(picked); }
     });
 }
 function defaultRig(){
   if (!need()) return;
   api('default-rig', {name: picked, height: 1.7}, function(d){
-    if (d && d.ok) { flash('default frame fitted \u2014 now edit it'); pick(picked); }
+    if (d && d.ok){ log('fitted default frame on ' + picked); pick(picked); }
   });
 }
 function clearRig(){
   if (!need()) return;
   api('clear-rig', {name: picked}, function(){ pick(picked); });
 }
+function scrap(){
+  if (!need()) return;
+  api('scrap', {name: picked}, function(d){
+    if (d && d.ok){
+      log('deleted ' + picked);
+      picked = null;
+      document.getElementById('sheet').style.display = 'none';
+      document.getElementById('empty').style.display = '';
+      loadHier();
+    }
+  });
+}
+function pull(){
+  api('pull', {wiring: document.getElementById('pullWire').value}, function(d){
+    if (!d) return;
+    log('pulled wire: fired ' + d.fired + (d.sounds.length ? ' sounds: ' + d.sounds.join(',') : ''));
+  });
+}
+function publish(){
+  api('publish', {folder: 'published'}, function(d){
+    if (d && d.ok) log('published to ' + d.folder + '/ - copy kimia_world in and run play.sh');
+  });
+}
+function bringIn(){
+  api('bring-in', {file: document.getElementById('inFile').value,
+    size: document.getElementById('inSize').value}, function(d){
+      if (d && d.ok){ log('imported as ' + d.name); loadHier(); pick(d.name); }
+    });
+}
+
+// --- Project ---
+function loadLibrary(){
+  api('library', {}, function(d){
+    if (!d) return;
+    var st = document.getElementById('stageList');
+    st.innerHTML = '';
+    (d.stages || []).forEach(function(name){
+      var el = document.createElement('div');
+      el.className = 'item' + (name === d.stage ? ' on' : '');
+      var label = document.createElement('span');
+      label.textContent = name;
+      el.appendChild(label);
+      if (name !== d.stage){
+        var x = document.createElement('span');
+        x.textContent = 'x';
+        x.style.cssText = 'margin-left:auto;color:#9a9a9a';
+        x.onclick = function(ev){
+          ev.stopPropagation();
+          api('drop-stage', {stage: name}, loadLibrary);
+        };
+        el.appendChild(x);
+      }
+      el.onclick = function(){
+        api('go-stage', {stage: name}, function(r){
+          if (r && r.ok){ picked = null; log('opened scene ' + name); loadHier(); loadLibrary(); }
+        });
+      };
+      st.appendChild(el);
+    });
+
+    var bp = document.getElementById('bpList');
+    bp.innerHTML = '';
+    if (!(d.blueprints || []).length){
+      bp.innerHTML = '<div class="hint">Select an object and Keep it, then ' +
+        'stamp copies without setting it up again.</div>';
+    }
+    (d.blueprints || []).forEach(function(name){
+      var el = document.createElement('div');
+      el.className = 'item';
+      var label = document.createElement('span');
+      label.textContent = name;
+      el.appendChild(label);
+      var x = document.createElement('span');
+      x.textContent = 'x';
+      x.style.cssText = 'margin-left:auto;color:#9a9a9a';
+      x.onclick = function(ev){
+        ev.stopPropagation();
+        api('forget', {blueprint: name}, loadLibrary);
+      };
+      el.appendChild(x);
+      el.onclick = function(){
+        api('stamp', {blueprint: name, x: 0, y: 0, z: 0}, function(r){
+          if (r && r.ok){ log('stamped ' + r.name); loadHier(); pick(r.name); }
+        });
+      };
+      bp.appendChild(el);
+    });
+  });
+}
+function keepBlueprint(){
+  if (!need()) return;
+  var as = document.getElementById('bpName').value || picked;
+  api('keep', {name: picked, as: as}, function(d){
+    if (d && d.ok){
+      document.getElementById('bpName').value = '';
+      log('kept ' + picked + ' as ' + d.name);
+      loadLibrary();
+    }
+  });
+}
+function addStage(){
+  var name = document.getElementById('newStage').value.trim();
+  if (!name) return;
+  api('add-stage', {stage: name}, function(d){
+    if (d && d.ok){ document.getElementById('newStage').value = ''; loadLibrary(); }
+  });
+}
+
+// --- Files the user dropped into the asset folder ---
+var scanned = [];
+var deepScan = 0;
+
+function loadAssets(deep){
+  deepScan = deep ? 1 : 0;
+  document.getElementById('scanHint').textContent = deep ? 'reading models...' : '';
+  api('assets', {deep: deep ? 1 : 0}, function(d){
+    if (!d) return;
+    scanned = d.assets || [];
+    document.getElementById('scanHint').textContent =
+      scanned.length + ' file' + (scanned.length === 1 ? '' : 's');
+    var box = document.getElementById('assetList');
+    box.innerHTML = '';
+    if (!scanned.length){
+      box.innerHTML = '<div class="hint">Copy models, images and sounds into ' +
+        'the assets folder, then press List.</div>';
+    }
+    scanned.forEach(function(a){
+      var el = document.createElement('div');
+      el.className = 'item';
+      var pip = document.createElement('span');
+      pip.className = 'pip' + (a.kind === 'model' ? ' solid' : (a.kind === 'texture' ? ' moving' : ''));
+      el.appendChild(pip);
+      var label = document.createElement('span');
+      label.textContent = a.file;
+      label.style.cursor = 'pointer';
+      label.title = 'open';
+      label.onclick = function(){ useAsset(a); };
+      el.appendChild(label);
+      var tail = [];
+      if (a.skeleton) tail.push(a.bones + ' bones');
+      if (a.clips && a.clips.length) tail.push(a.clips.length + ' clips');
+      if (a.note) tail.push('!');
+      if (tail.length){
+        var mark = document.createElement('span');
+        mark.style.cssText = 'margin-left:auto;color:#9a9a9a;font-size:10px';
+        mark.textContent = tail.join(' ');
+        el.appendChild(mark);
+      }
+      var ren = document.createElement('button');
+      ren.textContent = 'Rename';
+      ren.onclick = function(){ renameAsset(a.file, label); };
+      el.appendChild(ren);
+      var del = document.createElement('button');
+      del.textContent = 'x';
+      del.className = 'bad';
+      del.title = 'delete';
+      del.onclick = function(){ deleteAsset(a.file); };
+      el.appendChild(del);
+      box.appendChild(el);
+    });
+    fillClipFiles();
+  });
+}
+
+// Clicking a file does the obvious thing for its kind: a model comes into
+// the scene, an image goes onto whatever is selected.
+function useAsset(a){
+  if (a.kind === 'model'){
+    api('bring-in', {file: a.path, size: 1}, function(d){
+      if (d && d.ok){ log('imported ' + d.name); loadHier(); pick(d.name); }
+    });
+    return;
+  }
+  if (a.kind === 'texture'){
+    if (!picked){ flash('select an object first, then click an image', true); return; }
+    api('skin', {name: picked, image: a.path}, function(d){
+      if (d && d.ok) log('painted ' + a.file + ' onto ' + picked);
+    });
+    return;
+  }
+  flash(a.file + ' is a sound - use it in a control or a rule');
+}
+
+// Inline rename: the name becomes a field; Enter commits, Escape cancels.
+function renameAsset(file, label){
+  var input = document.createElement('input');
+  input.value = file.indexOf('/') < 0 ? file : file.substr(file.lastIndexOf('/') + 1);
+  input.style.cssText = 'flex:1;min-width:40px';
+  var done = false;
+  function cancel(){
+    if (done) return;
+    done = true;
+    input.parentNode.replaceChild(label, input);
+  }
+  function commit(){
+    if (done) return;
+    done = true;
+    var to = input.value.trim();
+    input.parentNode.replaceChild(label, input);
+    if (!to || to === file) return;
+    api('asset/rename', {file: file, to: to}, function(d){
+      if (d && d.ok) log('renamed ' + file + ' to ' + to);
+      loadAssets(deepScan);
+    });
+  }
+  input.onkeydown = function(e){
+    if (e.key === 'Enter') commit();
+    else if (e.key === 'Escape') cancel();
+    e.stopPropagation();
+  };
+  input.onblur = cancel;
+  label.parentNode.replaceChild(input, label);
+  input.focus();
+  input.select();
+}
+function deleteAsset(file){
+  if (!confirm('Delete ' + file + '?')) return;
+  api('asset/delete', {file: file}, function(d){
+    if (d && d.ok){ log('deleted ' + file); loadAssets(deepScan); }
+  });
+}
+// Upload posts the raw bytes; the name rides in the query. No overwrite:
+// a taken name is refused, rename or delete it first.
+function uploadAsset(){
+  var picker = document.getElementById('upFile');
+  picker.onchange = function(){
+    if (!picker.files || !picker.files.length) return;
+    var f = picker.files[0];
+    log('uploading ' + f.name + ' (' + f.size + ' bytes)...');
+    fetch('/api/asset/upload?name=' + encodeURIComponent(f.name), {method: 'POST', body: f})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        picker.value = '';
+        if (d && d.ok){ log('uploaded ' + d.file); loadAssets(deepScan); }
+        else {
+          flash((d && d.error) || 'upload refused', true);
+          log('upload refused: ' + ((d && d.error) || '?'));
+        }
+      })
+      .catch(function(){ picker.value = ''; flash('engine not answering', true); });
+  };
+  picker.click();
+}
+
 // --- Rules ---
 var pickedRule = -1;
 
@@ -1529,7 +2100,7 @@ function loadRules(){
     box.innerHTML = '';
     if (!d.rules.length){
       box.innerHTML = '<div class="hint">No rules yet. A game is a list of ' +
-        '&ldquo;when this happens, do that&rdquo;.</div>';
+        '"when this happens, do that".</div>';
     }
     d.rules.forEach(function(r){
       var el = document.createElement('div');
@@ -1547,9 +2118,9 @@ function loadRules(){
       }
       tool(r.enabled ? 'off' : 'on', function(){
         api('toggle-rule', {index: r.index, on: r.enabled ? 0 : 1}, loadRules); });
-      tool('\u2191', function(){ api('move-rule', {index: r.index, dir: 'up'}, loadRules); });
-      tool('\u2193', function(){ api('move-rule', {index: r.index, dir: 'down'}, loadRules); });
-      tool('\u00d7', function(){ api('drop-rule', {index: r.index}, function(){
+      tool('^', function(){ api('move-rule', {index: r.index, dir: 'up'}, loadRules); });
+      tool('v', function(){ api('move-rule', {index: r.index, dir: 'down'}, loadRules); });
+      tool('x', function(){ api('drop-rule', {index: r.index}, function(){
         pickedRule = -1; loadRules(); }); });
       el.appendChild(tools);
       el.onclick = function(){
@@ -1565,15 +2136,19 @@ function loadRules(){
     (d.variables || []).forEach(function(v){
       var el = document.createElement('div');
       el.className = 'wire';
-      el.innerHTML = '<i>' + v.name + '</i><span>' +
-        (v.isText ? v.text : v.number.toFixed(2)) + '</span>';
+      var left = document.createElement('i');
+      left.textContent = v.name;
+      var right = document.createElement('span');
+      right.textContent = v.isText ? v.text : v.number.toFixed(2);
+      el.appendChild(left);
+      el.appendChild(right);
       el.style.cursor = 'pointer';
       el.onclick = function(){ api('drop-var', {variable: v.name}, loadRules); };
       vs.appendChild(el);
     });
 
     var state = d.finished ? (d.won ? 'game won' : 'game lost') : 'running';
-    if (d.message) state += '  \u2014  "' + d.message + '"';
+    if (d.message) state += '  -  "' + d.message + '"';
     document.getElementById('logicState').textContent = state;
   });
 }
@@ -1587,7 +2162,7 @@ function addRule(){
       if (d && d.ok){
         pickedRule = d.index;
         document.getElementById('rName').value = '';
-        flash('rule added \u2014 now give it a DO');
+        log('rule added - now give it an action');
         loadRules();
       }
     });
@@ -1601,7 +2176,7 @@ function addCondition(){
   api('add-condition', {index: pickedRule, variable: document.getElementById('cVar').value,
     compare: document.getElementById('cCmp').value,
     number: document.getElementById('cNum').value}, function(d){
-      if (d && d.ok) { flash('condition added'); loadRules(); }
+      if (d && d.ok){ log('condition added'); loadRules(); }
     });
 }
 function addAction(){
@@ -1612,7 +2187,7 @@ function addAction(){
     number: document.getElementById('aNum').value,
     ax: document.getElementById('aax').value, ay: document.getElementById('aay').value,
     az: document.getElementById('aaz').value}, function(d){
-      if (d && d.ok) { flash('action added'); loadRules(); }
+      if (d && d.ok){ log('action added'); loadRules(); }
     });
 }
 function loadPanels(){
@@ -1629,7 +2204,12 @@ function loadPanels(){
       el.className = 'wire';
       el.style.cursor = 'pointer';
       var what = p.kind === 'bar' ? ('bar of ' + p.variable) : (p.text || p.kind);
-      el.innerHTML = '<i>' + p.name + '</i><span>' + what + '</span>';
+      var left = document.createElement('i');
+      left.textContent = p.name;
+      var right = document.createElement('span');
+      right.textContent = what;
+      el.appendChild(left);
+      el.appendChild(right);
       el.onclick = function(){
         // Load it back into the fields so editing is a tweak.
         document.getElementById('pName').value = p.name;
@@ -1644,8 +2224,8 @@ function loadPanels(){
         document.getElementById('pH').value = p.h.toFixed(3);
       };
       var x = document.createElement('b');
-      x.textContent = '\u00d7';
-      x.style.cssText = 'cursor:pointer;margin-right:8px;color:#8b97a5';
+      x.textContent = 'x';
+      x.style.cssText = 'cursor:pointer;margin-left:8px;color:#9a9a9a';
       x.onclick = function(ev){
         ev.stopPropagation();
         api('drop-panel', {panel: p.name}, loadPanels);
@@ -1667,9 +2247,9 @@ function setPanel(){
     event: document.getElementById('pEvent').value,
     x: document.getElementById('pX').value, y: document.getElementById('pY').value,
     w: document.getElementById('pW').value, h: document.getElementById('pH').value,
-    r: hexPart(c,1), g: hexPart(c,3), b: hexPart(c,5),
-    br: hexPart(b,1), bg: hexPart(b,3), bb: hexPart(b,5)}, function(d){
-      if (d && d.ok){ flash('panel placed'); loadPanels(); }
+    r: hexPart(c, 1), g: hexPart(c, 3), b: hexPart(c, 5),
+    br: hexPart(b, 1), bg: hexPart(b, 3), bb: hexPart(b, 5)}, function(d){
+      if (d && d.ok){ log('panel placed'); loadPanels(); }
     });
 }
 
@@ -1686,8 +2266,12 @@ function loadEffects(){
       var el = document.createElement('div');
       el.className = 'wire';
       el.style.cursor = 'pointer';
-      el.innerHTML = '<i>' + fx.name + '</i><span>' + fx.count + ' &times; ' +
-        fx.life.toFixed(1) + 's</span>';
+      var left = document.createElement('i');
+      left.textContent = fx.name;
+      var right = document.createElement('span');
+      right.textContent = fx.count + ' x ' + fx.life.toFixed(1) + 's';
+      el.appendChild(left);
+      el.appendChild(right);
       el.onclick = function(){
         document.getElementById('fxName').value = fx.name;
         document.getElementById('fxCount').value = fx.count;
@@ -1712,82 +2296,21 @@ function setEffect(){
     spread: document.getElementById('fxSpread').value,
     gravity: document.getElementById('fxGrav').value,
     size: document.getElementById('fxSize').value,
-    r: part(f,1), g: part(f,3), b: part(f,5),
-    r2: part(t,1), g2: part(t,3), b2: part(t,5)}, function(d){
-      if (d && d.ok){ flash('effect saved'); loadEffects(); }
+    r: part(f, 1), g: part(f, 3), b: part(f, 5),
+    r2: part(t, 1), g2: part(t, 3), b2: part(t, 5)}, function(d){
+      if (d && d.ok){ log('effect saved'); loadEffects(); }
     });
 }
 function fireEffect(){
   api('fire-effect', {effect: document.getElementById('fxName').value, x: 0, y: 1, z: 0},
-    function(d){ if (d && d.ok) flash(d.live + ' particles in flight'); });
-}
-
-// --- Files the user dropped into the asset folder ---
-var scanned = [];
-
-function loadAssets(deep){
-  document.getElementById('scanHint').textContent = deep ? 'reading models\u2026' : '';
-  api('assets', {deep: deep ? 1 : 0}, function(d){
-    if (!d) return;
-    scanned = d.assets || [];
-    document.getElementById('scanHint').textContent =
-      scanned.length + ' file' + (scanned.length === 1 ? '' : 's');
-    var box = document.getElementById('assetList');
-    box.innerHTML = '';
-    if (!scanned.length){
-      box.innerHTML = '<div class="hint">Copy models, images and sounds into ' +
-        'the assets folder, then press List.</div>';
-    }
-    scanned.forEach(function(a){
-      var el = document.createElement('div');
-      el.className = 'item';
-      var pip = document.createElement('span');
-      pip.className = 'pip' + (a.kind === 'model' ? ' solid' : (a.kind === 'texture' ? ' moving' : ''));
-      el.appendChild(pip);
-      var label = document.createElement('span');
-      label.textContent = a.file;
-      el.appendChild(label);
-      var tail = [];
-      if (a.skeleton) tail.push(a.bones + ' bones');
-      if (a.clips && a.clips.length) tail.push(a.clips.length + ' clips');
-      if (a.note) tail.push('!');
-      if (tail.length){
-        var mark = document.createElement('span');
-        mark.style.cssText = 'margin-right:auto;color:#8b97a5;font-size:10px';
-        mark.textContent = tail.join(' ');
-        el.appendChild(mark);
-      }
-      el.onclick = function(){ useAsset(a); };
-      box.appendChild(el);
-    });
-    fillClipFiles();
-  });
-}
-
-// Tapping a file does the obvious thing for its kind: a model comes into
-// the scene, an image goes onto whatever is selected.
-function useAsset(a){
-  if (a.kind === 'model'){
-    api('bring-in', {file: a.path, size: 1}, function(d){
-      if (d && d.ok){ flash('brought in ' + d.name); loadRack(); pick(d.name); }
-    });
-    return;
-  }
-  if (a.kind === 'texture'){
-    if (!picked){ flash('pick an object first, then tap an image', true); return; }
-    api('skin', {name: picked, image: a.path}, function(d){
-      if (d && d.ok) flash('painted ' + a.file + ' onto ' + picked);
-    });
-    return;
-  }
-  flash(a.file + ' is a sound \u2014 use it in a control or a rule');
+    function(d){ if (d && d.ok) log(d.live + ' particles in flight'); });
 }
 
 function fillClipFiles(){
   var sel = document.getElementById('cClipFile');
   if (!sel) return;
   var keep = sel.value;
-  sel.innerHTML = '<option value="">\u2014 model \u2014</option>';
+  sel.innerHTML = '<option value="">-- model --</option>';
   scanned.forEach(function(a){
     if (a.kind !== 'model' || !a.clips || !a.clips.length) return;
     var o = document.createElement('option');
@@ -1801,7 +2324,7 @@ function fillClipFiles(){
 function clipsOf(path){
   var sel = document.getElementById('cClip');
   if (!sel) return;
-  sel.innerHTML = '<option value="">\u2014 none \u2014</option>';
+  sel.innerHTML = '<option value="">-- none --</option>';
   scanned.forEach(function(a){
     if (a.path !== path) return;
     (a.clips || []).forEach(function(c){
@@ -1831,8 +2354,12 @@ function loadControls(){
       var how = (c.bindings || []).map(function(b){
         return b.source === 'touch' ? 'screen' : (b.source + ':' + b.code);
       }).join(' ');
-      el.innerHTML = '<i>' + c.name + (c.clip ? ' \u2192 ' + c.clip : '') +
-        '</i><span>' + (how || 'unbound') + '</span>';
+      var left = document.createElement('i');
+      left.textContent = c.name + (c.clip ? ' -> ' + c.clip : '');
+      var right = document.createElement('span');
+      right.textContent = how || 'unbound';
+      el.appendChild(left);
+      el.appendChild(right);
       el.onclick = function(){
         document.getElementById('cName').value = c.name;
         document.getElementById('cLabel').value = c.label;
@@ -1854,8 +2381,8 @@ function loadControls(){
         document.getElementById('cTouch').checked = touch;
       };
       var x = document.createElement('b');
-      x.textContent = '\u00d7';
-      x.style.cssText = 'cursor:pointer;margin-right:8px;color:#8b97a5';
+      x.textContent = 'x';
+      x.style.cssText = 'cursor:pointer;margin-left:8px;color:#9a9a9a';
       x.onclick = function(ev){
         ev.stopPropagation();
         api('drop-control', {control: c.name}, loadControls);
@@ -1876,12 +2403,12 @@ function setControl(){
     clipfile: document.getElementById('cClipFile').value,
     clip: document.getElementById('cClip').value,
     sound: document.getElementById('cSound').value}, function(d){
-      if (d && d.ok){ flash('control saved'); loadControls(); }
+      if (d && d.ok){ log('control saved'); loadControls(); }
     });
 }
 function doControl(){
   api('do', {control: document.getElementById('cName').value}, function(d){
-    if (d && d.ok) flash('fired');
+    if (d && d.ok) log('fired control');
   });
 }
 function setStick(){
@@ -1895,41 +2422,10 @@ function setVar(){
     });
 }
 
-function publish(){
-  api('publish', {folder: 'published'}, function(d){
-    if (d && d.ok){
-      flash('published to ' + d.folder + '/ \u2014 copy kimia_world in and run play.sh');
-    }
-  });
-}
-function pull(){
-  api('pull', {wiring: document.getElementById('pullWire').value}, function(d){
-    if (!d) return;
-    flash('fired ' + d.fired + (d.sounds.length ? '  sounds: ' + d.sounds.join(',') : ''));
-  });
-}
-function bringIn(){
-  api('bring-in', {file: document.getElementById('inFile').value,
-    size: document.getElementById('inSize').value}, function(d){
-      if (d && d.ok) { flash('brought in as ' + d.name); loadRack(); pick(d.name); }
-    });
-}
-function scrap(){
-  if (!need()) return;
-  api('scrap', {name: picked}, function(d){
-    if (d && d.ok){
-      picked = null;
-      document.getElementById('sheet').style.display = 'none';
-      document.getElementById('empty').style.display = '';
-      loadRack();
-    }
-  });
-}
-
 // --- Touching the picture ---
-// A tap selects; a drag slides the selected object along the ground. The
-// same handlers serve mouse and touch, because the editor has to work on
-// a phone and on a desktop without two code paths.
+// A tap selects; a drag edits with the active tool. The same handlers
+// serve mouse and touch, because the editor has to work on a phone and
+// on a desktop without two code paths.
 (function(){
   var view = document.getElementById('view');
   var dragging = false, lastX = 0, lastY = 0, moved = 0, downAt = 0;
@@ -1954,17 +2450,46 @@ function scrap(){
     var p = toFrame(ev);
     var dx = p.x - lastX, dy = p.y - lastY;
     moved += Math.abs(dx) + Math.abs(dy);
-    // Only drag once the finger has really moved, or every tap would
+    // Only edit once the finger has really moved, or every tap would
     // nudge the object slightly.
-    if (picked && document.getElementById('dragOn').checked && moved > 6){
-      api('drag', {name: picked, fromx: lastX, fromy: lastY, tox: p.x, toy: p.y,
-                   grid: document.getElementById('gridStep').value}, function(d){
-        if (d && d.ok && d.position){
-          document.getElementById('px').value = d.position[0].toFixed(2);
-          document.getElementById('py').value = d.position[1].toFixed(2);
-          document.getElementById('pz').value = d.position[2].toFixed(2);
+    if (picked && moved > 6 && tool !== 'select'){
+      if (tool === 'move'){
+        api('drag', {name: picked, fromx: lastX, fromy: lastY, tox: p.x, toy: p.y,
+                     grid: snapGrid()}, function(d){
+          if (d && d.ok && d.position){
+            document.getElementById('px').value = d.position[0].toFixed(2);
+            document.getElementById('py').value = d.position[1].toFixed(2);
+            document.getElementById('pz').value = d.position[2].toFixed(2);
+          }
+        });
+      } else if (tool === 'rotate'){
+        // Sideways turns the table, up/down tilts; snapping steps 15 degrees.
+        var dyaw = dx * 0.4, dpitch = -dy * 0.4;
+        if (document.getElementById('snapOn').checked){
+          dyaw = Math.round(dyaw / 15) * 15;
+          dpitch = Math.round(dpitch / 15) * 15;
         }
-      });
+        if (dyaw || dpitch){
+          api('object/rotate', {name: picked, dyaw: dyaw, dpitch: dpitch}, function(d){
+            if (d && d.ok && d.rotation){
+              document.getElementById('rx').value = d.rotation[0].toFixed(1);
+              document.getElementById('ry').value = d.rotation[1].toFixed(1);
+              document.getElementById('rz').value = d.rotation[2].toFixed(1);
+            }
+          });
+        }
+      } else if (tool === 'scale'){
+        var factor = 1 - dy * 0.004;
+        if (factor > 0.05 && factor < 20){
+          api('object/scale', {name: picked, factor: factor}, function(d){
+            if (d && d.ok && d.scale){
+              document.getElementById('sx').value = d.scale[0].toFixed(2);
+              document.getElementById('sy').value = d.scale[1].toFixed(2);
+              document.getElementById('sz').value = d.scale[2].toFixed(2);
+            }
+          });
+        }
+      }
       lastX = p.x; lastY = p.y;
     }
     ev.preventDefault();
@@ -1978,7 +2503,6 @@ function scrap(){
         if (!d) return;
         if (d.name){
           pick(d.name);
-          document.getElementById('tapHint').textContent = d.name;
         } else {
           document.getElementById('tapHint').textContent = 'nothing there';
         }
@@ -1990,10 +2514,29 @@ function scrap(){
   view.addEventListener('mousedown', begin);
   view.addEventListener('mousemove', move);
   window.addEventListener('mouseup', end);
-  view.addEventListener('touchstart', begin, {passive:false});
-  view.addEventListener('touchmove', move, {passive:false});
-  view.addEventListener('touchend', end, {passive:false});
+  view.addEventListener('touchstart', begin, {passive: false});
+  view.addEventListener('touchmove', move, {passive: false});
+  view.addEventListener('touchend', end, {passive: false});
 })();
+
+// Keyboard: Q/W/E/R switch tools, Ctrl+D duplicates, Delete removes.
+// Typing in a field never triggers these.
+document.addEventListener('keydown', function(e){
+  var tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')){
+    e.preventDefault();
+    duplicate();
+    return;
+  }
+  if (e.key === 'Delete' || e.key === 'Backspace'){ scrap(); return; }
+  var k = (e.key || '').toLowerCase();
+  if (k === 'q') setTool('select');
+  else if (k === 'w') setTool('move');
+  else if (k === 'e') setTool('rotate');
+  else if (k === 'r') setTool('scale');
+  else if (k === ' '){ e.preventDefault(); transportPlay(); }
+});
 
 setInterval(function(){
   document.getElementById('view').src = '/frame.png?t=' + Date.now();
@@ -2002,14 +2545,18 @@ setInterval(function(){
   api('pulse', {}, function(d){
     if (!d) return;
     var s = d.stats || '';
-    if (d.clips && d.clips.length) s += '   \u25b8 ' + d.clips.join(' ');
-    document.getElementById('strip').textContent = s;
+    if (d.clips && d.clips.length) s += '   > ' + d.clips.join(' ');
+    document.getElementById('conStat').textContent = s;
   });
+  pollTransport();
 }, 1000);
-if (window.innerWidth <= 900) document.getElementById('rackBtn').style.display = '';
-loadRack();
+if (window.innerWidth <= 900) document.getElementById('hierBtn').style.display = '';
+setTool('select');
+loadHier();
 loadLibrary();
 loadAssets(0);
+pollTransport();
+log('KIMIA editor ready');
 </script>
 </body>
 </html>)BENCH";

@@ -152,16 +152,19 @@ void addGoalShape(RenderScene& scene, const EntityData& entity, const MeshData& 
   const f64 half = entity.transform.scale.y * 0.5;
   const Vec3 at = entity.transform.position;
   const Vec3 color = entity.color;
+  const Mat4 spin = Mat4::translation(at) * entity.transform.rotation.toMat4() *
+                    Mat4::translation(Vec3{-at.x, -at.y, -at.z});
   scene.objects.push_back(
-      {&cube, Mat4::translation(Vec3{at.x - width * 0.5 + 0.06, at.y, at.z}) *
+      {&cube, spin * Mat4::translation(Vec3{at.x - width * 0.5 + 0.06, at.y, at.z}) *
                   Mat4::scaling(Vec3{0.12, entity.transform.scale.y, 0.12}),
        color, entity.roughness});
   scene.objects.push_back(
-      {&cube, Mat4::translation(Vec3{at.x + width * 0.5 - 0.06, at.y, at.z}) *
+      {&cube, spin * Mat4::translation(Vec3{at.x + width * 0.5 - 0.06, at.y, at.z}) *
                   Mat4::scaling(Vec3{0.12, entity.transform.scale.y, 0.12}),
        color, entity.roughness});
   scene.objects.push_back(
-      {&cube, Mat4::translation(Vec3{at.x, at.y + half, at.z}) * Mat4::scaling(Vec3{width + 0.12, 0.12, 0.12}),
+      {&cube, spin * Mat4::translation(Vec3{at.x, at.y + half, at.z}) *
+                  Mat4::scaling(Vec3{width + 0.12, 0.12, 0.12}),
        color, entity.roughness});
 }
 
@@ -557,6 +560,14 @@ int main(int argc, char** argv) {
         std::lock_guard<std::mutex> lock(editorMutex);
         return kimia::studio::handleApi(editor, path, params);
       });
+  engine.server()->setUploadHandler(
+      [&editor, &editorMutex, publishedGame](const std::string& /*path*/,
+                                             const std::map<std::string, std::string>& params,
+                                             const std::string& body) {
+        if (publishedGame) return std::string("{\"ok\":false,\"error\":\"published game\"}");
+        std::lock_guard<std::mutex> lock(editorMutex);
+        return kimia::studio::saveAssetFile(editor, params, body);
+      });
 
   const MeshData cubeMesh = kimia::makeCube(1.0);
   const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
@@ -566,6 +577,7 @@ int main(int argc, char** argv) {
 
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
+  std::map<std::string, kimia::MeshData> posedMeshes;  // entity name -> this frame's pose
   // Diffuse textures, keyed by the same mesh file (stage 34). An entry with
   // an empty image means "this model has no texture" — cached too, so a
   // model without one is not re-examined every frame.
@@ -607,6 +619,11 @@ int main(int argc, char** argv) {
     if (input.pressed(Key::Num9)) editor.choose(8);
     if (input.pressed(Key::R)) editor.resetBall();
     if (input.pressed(Key::B)) editor.backToMenu();
+    // Transport (the Unity toolbar, on the keyboard): Return starts Play
+    // from any editor screen, Tab pauses the sim, Backspace steps a frame.
+    if (input.pressed(Key::Return) && editor.hasWorld() && !editor.playing()) editor.enterPlayMode();
+    if (input.pressed(Key::Tab) && editor.playing()) editor.setPaused(!editor.paused());
+    if (input.pressed(Key::Backspace) && editor.paused()) editor.stepOnce(1.0 / 60.0);
     if (editor.shotMode()) {
       // Golf-style: hold Space (the «شوت» pad) to charge, release to shoot.
       editor.setShootHeld(input.down(Key::Space));
@@ -719,8 +736,24 @@ int main(int argc, char** argv) {
             found = loadedMeshes.emplace(entity.meshFile, std::move(loaded->mesh)).first;
           }
         }
-        if (found != loadedMeshes.end()) mesh = &found->second;
-        else return;  // mesh missing/unreadable: skip this entity
+        if (found == loadedMeshes.end()) {
+          // No mesh: a bare rig (an animation-only FBX) still has a live
+          // stick figure, so the entity shows up and can be played.
+          kimia::MeshData stick;
+          if (editor.posedStickMesh(entity.name, stick)) {
+            mesh = &posedMeshes.insert_or_assign(entity.name, std::move(stick)).first->second;
+          } else {
+            return;  // mesh missing/unreadable: skip this entity
+          }
+        } else {
+          mesh = &found->second;
+          // A playing clip re-poses the mesh every frame; otherwise the bind
+          // pose draws, exactly as before.
+          kimia::MeshData posed;
+          if (editor.posedMesh(entity.name, posed)) {
+            mesh = &posedMeshes.insert_or_assign(entity.name, std::move(posed)).first->second;
+          }
+        }
 
         // Its texture, once (stage 34). The importer has always pulled the
         // diffuse map's path out of the .mtl or the FBX materials, but
@@ -768,7 +801,8 @@ int main(int argc, char** argv) {
               : (playCharacter ? editor.playerPosition() : entity.transform.position);
       const Vec3 scale = entity.mesh == kimia::MeshKind::sphere ? entity.transform.scale * 0.5
                                                                 : entity.transform.scale;
-      const Mat4 model = Mat4::translation(position) * Mat4::scaling(scale);
+      const Mat4 model =
+          Mat4::translation(position) * entity.transform.rotation.toMat4() * Mat4::scaling(scale);
       scene.objects.push_back({mesh, model, entity.color, entity.roughness, texture});
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.

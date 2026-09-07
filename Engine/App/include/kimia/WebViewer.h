@@ -99,6 +99,14 @@ public:
   using ApiHandler = std::function<std::string(const std::string& path,
                                                const std::map<std::string, std::string>& params)>;
   void setApiHandler(ApiHandler handler);
+  // File uploads (the Project panel's Upload button). Like the API handler
+  // but with the POST body attached: the server reads at most 32 MB of body
+  // and hands it over. Called on the accept thread, so the handler must do
+  // its own locking.
+  using UploadHandler = std::function<std::string(const std::string& path,
+                                                  const std::map<std::string, std::string>& params,
+                                                  const std::string& body)>;
+  void setUploadHandler(UploadHandler handler);
   // Extra pages served alongside the main one, e.g. "/studio".
   void setPage(const std::string& path, const std::string& html);
 

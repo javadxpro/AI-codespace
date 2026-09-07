@@ -94,4 +94,36 @@ struct Quat {
   }
 };
 
+// --- Euler angles (the Inspector shows these; the engine stores quats) ---
+//
+// Convention, fixed for the whole engine: x = pitch about +X, y = yaw
+// about +Y, z = roll about +Z, applied yaw first, then pitch, then roll:
+//   q = qY(y) * qX(x) * qZ(z).
+// That is the order a person turning a model expects: spin it to face
+// somewhere (yaw), tilt it (pitch), then roll it. All angles are radians;
+// the Inspector converts to degrees at the boundary.
+inline Quat quatFromEuler(f64 x, f64 y, f64 z) {
+  return Quat::fromAxisAngle(Vec3{0.0, 1.0, 0.0}, y) * Quat::fromAxisAngle(Vec3{1.0, 0.0, 0.0}, x) *
+         Quat::fromAxisAngle(Vec3{0.0, 0.0, 1.0}, z);
+}
+
+// Inverse of quatFromEuler: {pitch, yaw, roll} in radians. At the poles
+// (pitch = +/-90 degrees) yaw and roll describe the same spin, so roll is
+// reported as 0 and yaw carries the combined angle.
+inline Vec3 eulerFromQuat(const Quat& q) {
+  const Mat4 m = q.normalized().toMat4();
+  // R = RY(y)*RX(x)*RZ(z), so R[1][2] = -sin(x).
+  const f64 sinX = -(m.at(2, 1));
+  const f64 clamped = sinX < -1.0 ? -1.0 : (sinX > 1.0 ? 1.0 : sinX);
+  const f64 x = std::asin(clamped);
+  if (std::abs(clamped) < 0.9999999) {
+    const f64 y = std::atan2(m.at(2, 0), m.at(2, 2));
+    const f64 z = std::atan2(m.at(0, 1), m.at(1, 1));
+    return Vec3{x, y, z};
+  }
+  // Gimbal lock: R[0][0] = cos(y-/+z), R[0][1] = +/--sin(y-/+z).
+  const f64 y = std::atan2(clamped > 0.0 ? m.at(1, 0) : -m.at(1, 0), m.at(0, 0));
+  return Vec3{x, y, 0.0};
+}
+
 }  // namespace kimia

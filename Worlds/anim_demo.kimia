@@ -1,0 +1,6 @@
+# KIMIA scene v1
+# name AnimDemo
+e "Ground" mesh plane pos 0.000000 0.000000 0.000000 scale 30.000000 1.000000 30.000000 color 0.100000 0.350000 0.120000 rough 0.900000
+e "Diver" mesh cube pos -2.500000 0.000000 0.000000 scale 0.008780 0.008780 0.008780 meshfile "assets/animations/goalkeeper/Goalkeeper Diving Save.fbx" color 0.900000 0.250000 0.200000 rough 0.600000 anim "Goalkeeper Diving Save" "k" loop 1.000000
+e "Dribbler" mesh cube pos 0.000000 0.000000 0.000000 scale 0.008780 0.008780 0.008780 meshfile "assets/animations/actions/Dribble.fbx" color 0.950000 0.950000 0.950000 rough 0.600000 anim "Dribble" "k" loop 1.000000
+e "Winner" mesh cube pos 2.500000 0.000000 0.000000 scale 0.008780 0.008780 0.008780 meshfile "assets/animations/reactions/Victory.fbx" color 0.200000 0.450000 0.900000 rough 0.600000 anim "Victory" "k" loop 1.000000

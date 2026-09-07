@@ -8,27 +8,36 @@
 namespace kimia {
 namespace studio {
 
-// --- KIMIA Workbench: the browser-side world editor (stage 32) ---
+// --- KIMIA Editor: the browser-side world editor (stage 32) ---
 //
-// Deliberately its own thing rather than a copy of anybody else's editor.
-// The vocabulary is the workshop, not the film set:
+// A Unity-style layout with Unity terms, written from scratch for this
+// engine (no Unity code, assets or stylesheets):
 //
-//   Bench      the whole editor page
-//   Rack       the list of everything in the world  (hierarchy)
-//   Dossier    the panel describing one object      (inspector)
-//   Fittings   the components bolted onto an object (physics/anim/sound)
-//   Labels     the tags used to address groups
-//   Wiring     what connects a fitting to a button or a game event
+//   Hierarchy   the list of everything in the world (left)
+//   Inspector   the panel describing one object     (middle)
+//   Game        the live play view                  (right, large)
+//   Project     files, prefabs and scenes           (bottom)
+//   Console     what the editor just did            (bottom)
 //
-// The engine answers questions and takes orders as JSON; the page draws
-// them. Every decision stays here where it can be tested, and nothing in
-// the HTML knows how the engine works.
+// The older /api/rack and /api/dossier routes keep answering under their
+// names: the page above is new, but no route was renamed or removed. The
+// engine answers questions and takes orders as JSON; the page draws them.
+// Every decision stays here where it can be tested, and nothing in the
+// HTML knows how the engine works.
 
 // Handles one /api/... request and returns a JSON body. `params` is the
 // already-parsed query string. Unknown paths return an {"error": ...}
 // object rather than throwing, so a stale page can never wedge the server.
 std::string handleApi(WorldEditor& editor, const std::string& path,
                       const std::map<std::string, std::string>& params);
+
+// Writes an uploaded file into the import folder (the Project panel's
+// Upload button posts the raw bytes; the server hands them over here).
+// Returns a JSON body like handleApi. The name must be a bare file name;
+// anything with a folder in it is refused, so a browser can never write
+// outside the assets.
+std::string saveAssetFile(WorldEditor& editor, const std::map<std::string, std::string>& params,
+                          const std::string& bytes);
 
 // The Workbench page itself: one self-contained HTML document with no
 // external files, so it works offline on a phone exactly as on a desktop.

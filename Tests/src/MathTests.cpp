@@ -200,6 +200,49 @@ KIMIA_TEST(quat_mat4_round_trip) {
   KIMIA_REQUIRE(near3(q.rotate(Vec3{0.5, -0.25, 1.0}), m2 * Vec3{0.5, -0.25, 1.0}, kEps4));
 }
 
+KIMIA_TEST(quat_euler_single_axis_values) {
+  // Each channel alone must equal the axis-angle spin: (0,90,0) turns +X
+  // to -Z, (90,0,0) turns +Y to +Z, (0,0,90) turns +X to +Y.
+  const kimia::Quat yaw = kimia::quatFromEuler(0.0, kimia::kHalfPi, 0.0);
+  KIMIA_REQUIRE(near3(yaw.rotate(Vec3{1.0, 0.0, 0.0}), Vec3{0.0, 0.0, -1.0}, kEps4));
+  const kimia::Quat pitch = kimia::quatFromEuler(kimia::kHalfPi, 0.0, 0.0);
+  KIMIA_REQUIRE(near3(pitch.rotate(Vec3{0.0, 1.0, 0.0}), Vec3{0.0, 0.0, 1.0}, kEps4));
+  const kimia::Quat roll = kimia::quatFromEuler(0.0, 0.0, kimia::kHalfPi);
+  KIMIA_REQUIRE(near3(roll.rotate(Vec3{1.0, 0.0, 0.0}), Vec3{0.0, 1.0, 0.0}, kEps4));
+  // Identity reports all zeros.
+  KIMIA_REQUIRE(near3(kimia::eulerFromQuat(kimia::Quat{}), Vec3{0.0, 0.0, 0.0}));
+}
+
+KIMIA_TEST(quat_euler_round_trip) {
+  // Arbitrary spins survive the round trip (away from the poles).
+  const Vec3 angles[] = {
+      Vec3{0.3, -0.7, 0.1}, Vec3{-0.5, 0.2, -1.1}, Vec3{1.2, 0.9, -0.4}, Vec3{0.0, 2.5, 0.0},
+  };
+  for (const Vec3& a : angles) {
+    const kimia::Quat q = kimia::quatFromEuler(a.x, a.y, a.z);
+    const Vec3 back = kimia::eulerFromQuat(q);
+    KIMIA_REQUIRE(near3(back, a, kEps4));
+    // And the recovered angles rotate exactly like the original.
+    const kimia::Quat q2 = kimia::quatFromEuler(back.x, back.y, back.z);
+    KIMIA_REQUIRE(nearMat(q.toMat4(), q2.toMat4(), kEps4));
+  }
+}
+
+KIMIA_TEST(quat_euler_gimbal_lock_reports_roll_zero) {
+  // Pointing straight up: yaw and roll become the same spin, so roll reads
+  // 0 and the rotation itself is still exact.
+  const kimia::Quat q = kimia::quatFromEuler(kimia::kHalfPi, 0.3, 0.0);
+  const Vec3 back = kimia::eulerFromQuat(q);
+  KIMIA_REQUIRE(near(back.x, kimia::kHalfPi, kEps4));
+  KIMIA_REQUIRE(near(back.z, 0.0, kEps4));
+  const kimia::Quat q2 = kimia::quatFromEuler(back.x, back.y, back.z);
+  KIMIA_REQUIRE(nearMat(q.toMat4(), q2.toMat4(), kEps4));
+  // Straight down as well.
+  const Vec3 down = kimia::eulerFromQuat(kimia::quatFromEuler(-kimia::kHalfPi, -0.4, 0.0));
+  KIMIA_REQUIRE(near(down.x, -kimia::kHalfPi, kEps4));
+  KIMIA_REQUIRE(near(down.z, 0.0, kEps4));
+}
+
 KIMIA_TEST(camera_view_projection_chain) {
   kimia::Camera camera;
   camera.fovYRadians = kimia::kHalfPi;

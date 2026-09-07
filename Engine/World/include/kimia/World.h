@@ -1,5 +1,6 @@
 #pragma once
 
+#include <kimia/AssetPipeline.h>
 #include <kimia/GameProfile.h>
 #include <kimia/Hud.h>
 #include <kimia/Input.h>
@@ -13,6 +14,7 @@
 #include <kimia/Vec.h>
 
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -781,6 +783,35 @@ public:
   std::string importModel(const std::string& file, f64 size, std::string& error);
   bool deleteEntity(const std::string& name);
 
+  // --- Unity-style object control: the Hierarchy's Create/Duplicate/Rename
+  // and the Inspector's rotation field. The rotate tool turns the MODEL the
+  // player sees; physics stays axis-aligned, so a turned wall still blocks
+  // as the box it was (a documented limit, not a silent one).
+  bool rotateEntity(const std::string& name, f64 dyaw, f64 dpitch);
+  bool scaleEntity(const std::string& name, f64 factor);
+  bool setEntityRotation(const std::string& name, const Quat& rotation);
+  Vec3 entityEulerDegrees(const std::string& name) const;
+  bool setEntityEulerDegrees(const std::string& name, const Vec3& degrees);
+  // Copies an entity in place (Unity's Duplicate) and selects the copy.
+  // Writes the new name into `outNewName`; false when nothing was copied.
+  bool duplicateEntity(const std::string& name, std::string& outNewName);
+  // Renames an entity. The engine binds behaviour to the names "Player",
+  // "Ball" and "Ground", so those can neither be renamed nor taken.
+  bool renameEntity(const std::string& oldName, const std::string& newName);
+  // Creates a game object at `at` (x/z; the height sits it on the ground):
+  // "cube", "sphere", "plane" (plain props) or "block", "wall", "goal",
+  // "crate", "hole", "player", "ball". Returns the name, or "" when the
+  // kind is unknown or no world is open.
+  std::string createObject(const std::string& kind, const Vec3& at);
+
+  // --- Play controls: the toolbar's Play/Pause/Step ---
+  // Pause freezes the SIMULATION (playing screens only); the menus and the
+  // editor keep working, exactly like Unity's pause.
+  void setPaused(bool paused) { paused_ = paused; }
+  bool paused() const { return paused_; }
+  void stepOnce(f64 seconds);  // advance one frame while paused
+  bool enterPlayMode();        // Unity's Play button: straight into PLAY
+
   // --- Triggers: what connects a component to a button ---
   // Fires every animation and sound whose trigger matches `trigger`, on
   // every entity that has one. The app calls this when a key is pressed
@@ -792,6 +823,24 @@ public:
   // Animation clips currently playing, as "<entity>:<clip>" — the app and
   // the tests both read this to see what a button actually did.
   std::vector<std::string> playingAnimations() const;
+
+  // --- Real animation: the model's OWN skeleton, not a timer ---
+  // Which clips the entity's model file holds ("Bend", ...). Empty when
+  // the entity has no skeleton — the Inspector's clip list reads this.
+  std::vector<std::string> animationClips(const std::string& entityName);
+  bool hasSkeleton(const std::string& entityName);
+  // Poses the entity's mesh at its playing clip's current moment. False
+  // when there is nothing to pose (no skeleton, no clip playing, or the
+  // clip is not in the file) — then draw the bind mesh instead.
+  bool posedMesh(const std::string& entityName, MeshData& out);
+  // A stick figure of the entity's live skeleton pose: one stretched box
+  // per bone plus a cube on every joint. For an animation-only file (a
+  // bare rig with no mesh) this IS the model — the app draws it wherever
+  // the bind mesh is missing. Shows the rest pose when no clip plays.
+  // False when the entity has no skeleton.
+  bool posedStickMesh(const std::string& entityName, MeshData& out);
+  // Stops every clip playing on an entity. True when something stopped.
+  bool stopEntityClips(const std::string& entityName);
 
 
   // --- Arena mode (stage 30) ---
@@ -897,6 +946,10 @@ private:
   void updateAi(f64 seconds);     // drive every computer player one step
   void updateArena(f64 seconds);  // weapons, reloads, respawns
   void updateTriggers(f64 seconds);  // advance and retire playing clips
+  // The skeleton + clips of a model file, parsed once and kept: parsing
+  // an FBX per frame would stall the phone. Null when the file holds none.
+  const assets::SkinnedAsset* skinnedFor(const std::string& meshFile);
+  void startClip(const std::string& entityName, const std::string& clipName, bool loop, f64 speed);
   void arenaReset();              // full health and ammo for everyone
   bool arenaShoot(u32 id, const Vec3& aim);  // one fighter pulls the trigger
   Vec3 aiSeparation(u32 id) const;  // push away from crowding team-mates
@@ -947,14 +1000,18 @@ private:
   f64 figureClock_ = 0.0;  // drives the walk cycle (stage 33)
   bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
 
-  // Trigger state (stage 31).
+  // Trigger state (stage 31): each clip plays from the model's OWN
+  // skeleton, so it needs a clock (time) and the clip's length.
   struct PlayingClip {
     std::string entity;
     std::string clip;
-    f64 timeLeft = 0.0;
+    f64 time = 0.0;      // seconds into the clip (speed already applied)
+    f64 duration = 0.0;  // clip length; <= 0 = unknown, kTriggerClipSeconds instead
+    f64 speed = 1.0;
     bool loop = false;
   };
   std::vector<PlayingClip> playingClips_;
+  std::map<std::string, std::optional<assets::SkinnedAsset>> skinnedCache_;
   std::vector<std::string> triggeredSounds_;
 
   // Visual logic state.
@@ -969,6 +1026,7 @@ private:
   std::string selected_;
 
   LogicRuntime logicRuntime_;
+  bool paused_ = false;
   std::string logicMessage_;
   std::vector<std::string> logicKeysPressed_;  // fed in by the app each frame
   std::vector<std::string> logicKeysHeld_;

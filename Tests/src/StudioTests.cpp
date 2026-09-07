@@ -980,3 +980,244 @@ KIMIA_TEST(studio_controls_survive_a_save_and_load) {
   KIMIA_REQUIRE(plainText.find("# control ") == std::string::npos);
   KIMIA_REQUIRE(plainText.find("# stick ") == std::string::npos);
 }
+
+// --- Unity-style editing: Hierarchy verbs, Inspector rotation, transport ---
+
+KIMIA_TEST(studio_object_create_duplicate_rename) {
+  WorldEditor editor;
+  streetWorld(editor);
+  const std::string made = ask(editor, "/api/object/create", {{"kind", "cube"}});
+  KIMIA_REQUIRE(has(made, "\"ok\":true"));
+  KIMIA_REQUIRE(has(made, "\"name\":\"Cube\""));
+  // Unknown kinds and missing worlds make nothing.
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/create", {{"kind", "dragon"}}), "\"ok\":false"));
+  WorldEditor bare;
+  KIMIA_REQUIRE(has(ask(bare, "/api/object/create", {{"kind", "cube"}}), "\"ok\":false"));
+
+  const std::string copied = ask(editor, "/api/object/duplicate", {{"name", "Cube"}});
+  KIMIA_REQUIRE(has(copied, "\"name\":\"Cube_2\""));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/duplicate", {{"name", "ghost"}}), "\"ok\":false"));
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/rename", {{"name", "Cube_2"}, {"to", "Tower"}}),
+                        "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/rack"), "\"name\":\"Tower\""));
+  // Taken names and the structural three are refused, not forced.
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/rename", {{"name", "Tower"}, {"to", "Cube"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/rename", {{"name", "Player"}, {"to", "Hero"}}),
+                        "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_object_rotate_euler_scale) {
+  WorldEditor editor;
+  streetWorld(editor);
+  ask(editor, "/api/object/create", {{"kind", "block"}});
+  // A quarter turn reads back 90 degrees, in route and dossier alike.
+  const std::string turned = ask(editor, "/api/object/rotate", {{"name", "Block_1"}, {"dyaw", "90"}});
+  KIMIA_REQUIRE(has(turned, "\"ok\":true"));
+  KIMIA_REQUIRE(has(turned, "90.000000"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/dossier", {{"name", "Block_1"}}), "90.000000"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/rotate", {{"name", "ghost"}, {"dyaw", "90"}}),
+                        "\"ok\":false"));
+  // Writing degrees back turns the model the same way.
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/euler",
+                            {{"name", "Block_1"}, {"x", "10"}, {"y", "20"}, {"z", "30"}}),
+                        "\"ok\":true"));
+  const std::string sheet = ask(editor, "/api/dossier", {{"name", "Block_1"}});
+  KIMIA_REQUIRE(has(sheet, "10.000000"));
+  KIMIA_REQUIRE(has(sheet, "20.000000"));
+  KIMIA_REQUIRE(has(sheet, "30.000000"));
+  // Scaling doubles and reports the new size; cups refuse, ghosts fail.
+  const std::string grown = ask(editor, "/api/object/scale", {{"name", "Block_1"}, {"factor", "2"}});
+  KIMIA_REQUIRE(has(grown, "2.000000"));
+  ask(editor, "/api/object/create", {{"kind", "hole"}});
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/scale", {{"name", "Hole_1"}, {"factor", "2"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/scale", {{"name", "ghost"}, {"factor", "2"}}),
+                        "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_object_clips_play_and_stop) {
+  WorldEditor editor;
+  streetWorld(editor);
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  // The Inspector's Animation section: the file's own clips.
+  const std::string clips = ask(editor, "/api/object/clips", {{"name", name}});
+  KIMIA_REQUIRE(has(clips, "\"skeleton\":true"));
+  KIMIA_REQUIRE(has(clips, "\"Bend\""));
+  ask(editor, "/api/object/create", {{"kind", "cube"}});
+  const std::string plain = ask(editor, "/api/object/clips", {{"name", "Cube"}});
+  KIMIA_REQUIRE(has(plain, "\"skeleton\":false"));
+  KIMIA_REQUIRE(has(plain, "\"clips\":[]"));
+  // Playing shows up in the pulse; stopping clears it.
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/play-clip", {{"name", name}, {"clip", "Bend"}}),
+                        "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/pulse"), name + ":Bend"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/stop-clips", {{"name", name}}), "\"stopped\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/stop-clips", {{"name", name}}), "\"stopped\":false"));
+  // A prop with no model file has nothing to play.
+  KIMIA_REQUIRE(has(ask(editor, "/api/object/play-clip", {{"name", "Cube"}, {"clip", "Bend"}}),
+                        "\"ok\":false"));
+}
+
+KIMIA_TEST(studio_transport_play_pause_step) {
+  WorldEditor bare;
+  KIMIA_REQUIRE(has(ask(bare, "/api/transport/play"), "\"ok\":false"));  // no world, no game
+  WorldEditor editor;
+  streetWorld(editor);
+  KIMIA_REQUIRE(has(ask(editor, "/api/transport/play"), "\"playing\":true"));
+  const std::string running = ask(editor, "/api/transport/state");
+  KIMIA_REQUIRE(has(running, "\"playing\":true"));
+  KIMIA_REQUIRE(has(running, "\"paused\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/transport/pause", {{"paused", "1"}}), "\"paused\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/pulse"), "\"paused\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/transport/step"), "\"ok\":true"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/transport/pause", {{"paused", "0"}}), "\"paused\":false"));
+}
+
+KIMIA_TEST(studio_editor_page_uses_unity_layout) {
+  // Hierarchy left, Inspector middle, Game right, transport on top,
+  // Project and Console below — in Unity terms, all wired to /api/.
+  const std::string page = kimia::studio::benchPage();
+  KIMIA_REQUIRE(has(page, "Hierarchy"));
+  KIMIA_REQUIRE(has(page, "Inspector"));
+  KIMIA_REQUIRE(has(page, "Console"));
+  KIMIA_REQUIRE(has(page, "Project"));
+  KIMIA_REQUIRE(has(page, "object/create"));
+  KIMIA_REQUIRE(has(page, "object/duplicate"));
+  KIMIA_REQUIRE(has(page, "transport/play"));
+  KIMIA_REQUIRE(has(page, "transport/pause"));
+  KIMIA_REQUIRE(has(page, "transport/step"));
+  KIMIA_REQUIRE(has(page, "setTool('rotate')"));
+  KIMIA_REQUIRE(has(page, "setTool('scale')"));
+}
+
+KIMIA_TEST(studio_asset_rename_and_delete) {
+  // The Project panel's file manager, fenced into a sandbox folder.
+  namespace fs = std::filesystem;
+  const fs::path sandbox = fs::temp_directory_path() / "kimia_asset_files";
+  fs::remove_all(sandbox);
+  fs::create_directories(sandbox);
+  { std::ofstream out(sandbox / "a.obj"); out << "v 0 0 0\n"; }
+  { std::ofstream out(sandbox / "c.obj"); out << "v 1 1 1\n"; }
+
+  WorldEditor editor;
+  streetWorld(editor);
+  editor.setImportDirectory(sandbox.string());
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "a.obj"}, {"to", "b.obj"}}),
+                        "\"ok\":true"));
+  KIMIA_REQUIRE(!fs::exists(sandbox / "a.obj"));
+  KIMIA_REQUIRE(fs::exists(sandbox / "b.obj"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/assets"), "b.obj"));
+  // Refusals: taken names, missing files, and anything with a folder in it.
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "b.obj"}, {"to", "c.obj"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "ghost.obj"}, {"to", "x.obj"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "../a.obj"}, {"to", "x.obj"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "b.obj"}, {"to", "sub/x.obj"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "b.obj"}, {"to", ".."}}),
+                        "\"ok\":false"));
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/delete", {{"file", "b.obj"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(!fs::exists(sandbox / "b.obj"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/delete", {{"file", "b.obj"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/delete", {{"file", "../c.obj"}}), "\"ok\":false"));
+  KIMIA_REQUIRE(fs::exists(sandbox / "c.obj"));  // the traversal touched nothing
+  fs::remove_all(sandbox);
+}
+
+KIMIA_TEST(studio_asset_upload_saves_bytes) {
+  // What the Upload button posts: raw bytes and a bare name.
+  namespace fs = std::filesystem;
+  const fs::path sandbox = fs::temp_directory_path() / "kimia_asset_upload";
+  fs::remove_all(sandbox);
+  fs::create_directories(sandbox);
+
+  WorldEditor editor;
+  streetWorld(editor);
+  editor.setImportDirectory(sandbox.string());
+
+  Params query;
+  query["name"] = "up.obj";
+  const std::string done = kimia::studio::saveAssetFile(editor, query, "v 1 2 3\n");
+  KIMIA_REQUIRE(has(done, "\"file\":\"up.obj\""));
+  std::string back;
+  { std::ifstream in(sandbox / "up.obj"); std::getline(in, back); }
+  KIMIA_REQUIRE(back == "v 1 2 3");
+  // Never overwrite, never escape the folder.
+  KIMIA_REQUIRE(has(kimia::studio::saveAssetFile(editor, query, "other"), "\"ok\":false"));
+  query["name"] = "sub/evil.obj";
+  KIMIA_REQUIRE(has(kimia::studio::saveAssetFile(editor, query, "x"), "\"ok\":false"));
+  query["name"] = "..";
+  KIMIA_REQUIRE(has(kimia::studio::saveAssetFile(editor, query, "x"), "\"ok\":false"));
+  query["name"] = "";
+  KIMIA_REQUIRE(has(kimia::studio::saveAssetFile(editor, query, "x"), "\"ok\":false"));
+  KIMIA_REQUIRE(!fs::exists(sandbox / "sub"));
+  fs::remove_all(sandbox);
+}
+
+KIMIA_TEST(studio_project_panel_manages_files) {
+  // Every file row opens, renames and deletes; the column uploads.
+  const std::string page = kimia::studio::benchPage();
+  KIMIA_REQUIRE(has(page, "asset/rename"));
+  KIMIA_REQUIRE(has(page, "asset/delete"));
+  KIMIA_REQUIRE(has(page, "asset/upload"));
+  KIMIA_REQUIRE(has(page, "uploadAsset()"));
+  KIMIA_REQUIRE(has(page, "renameAsset("));
+  KIMIA_REQUIRE(has(page, "deleteAsset("));
+}
+
+KIMIA_TEST(studio_asset_scan_sees_subfolders) {
+  // An animation pack arrives as actions/, dances/, ... — the scan must
+  // see all of it, with names relative to the scanned root.
+  namespace fs = std::filesystem;
+  const fs::path sandbox = fs::temp_directory_path() / "kimia_asset_tree";
+  fs::remove_all(sandbox);
+  fs::create_directories(sandbox / "actions");
+  { std::ofstream out(sandbox / "actions" / "Kick.fbx"); out << "fbx-ish\n"; }
+  { std::ofstream out(sandbox / "top.obj"); out << "v 0 0 0\n"; }
+
+  WorldEditor editor;
+  streetWorld(editor);
+  editor.setImportDirectory(sandbox.string());
+  const std::string listed = ask(editor, "/api/assets");
+  KIMIA_REQUIRE(has(listed, "\"file\":\"actions/Kick.fbx\""));
+  KIMIA_REQUIRE(has(listed, "\"file\":\"top.obj\""));
+
+  // Rename inside the subfolder; `to` never moves between folders.
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename", {{"file", "actions/Kick.fbx"}, {"to", "Pass.fbx"}}),
+                        "\"ok\":true"));
+  KIMIA_REQUIRE(fs::exists(sandbox / "actions" / "Pass.fbx"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/rename",
+                            {{"file", "actions/Pass.fbx"}, {"to", "../top.obj"}}),
+                        "\"ok\":false"));
+  // And no ".." segment escapes, however deep it hides.
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/delete", {{"file", "actions/../../top.obj"}}),
+                        "\"ok\":false"));
+  KIMIA_REQUIRE(fs::exists(sandbox / "top.obj"));
+  KIMIA_REQUIRE(has(ask(editor, "/api/asset/delete", {{"file", "actions/Pass.fbx"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(!fs::exists(sandbox / "actions" / "Pass.fbx"));
+  fs::remove_all(sandbox);
+}
+
+KIMIA_TEST(studio_asset_scan_lists_the_animation_pack) {
+  WorldEditor editor;
+  streetWorld(editor);
+  const std::string list =
+      ask(editor, "/api/assets", {{"folder", "assets/animations/reactions"}, {"deep", "1"}});
+  if (!has(list, "Victory.fbx")) {
+    std::printf("SKIP: assets/animations not next to the test runner\n");
+    return;
+  }
+  KIMIA_REQUIRE(has(list, "Defeated.fbx"));
+  KIMIA_REQUIRE(has(list, "\"deep\":true"));
+  KIMIA_REQUIRE(has(list, "\"clips\":[\"Victory\"]"));
+  KIMIA_REQUIRE(has(list, "\"bones\":69"));
+  KIMIA_REQUIRE(has(list, "\"skeleton\":true"));
+}

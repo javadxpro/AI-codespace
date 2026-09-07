@@ -51,28 +51,45 @@ AssetKind kindOfFile(const std::string& file) {
   return AssetKind::Unknown;
 }
 
-std::vector<ScannedAsset> scan(const std::string& folder, bool deep) {
-  std::vector<ScannedAsset> found;
+// Lists one folder into `found`, descending into subfolders: an animation
+// pack arrives as actions/, dances/, goalkeeper/... and the editor must see
+// all of it, not just the top level. `file` stays relative to the scanned
+// root ("actions/Dribble.fbx"), `path` is the whole thing.
+void scanInto(const std::string& root, const std::string& folder, std::vector<ScannedAsset>& found) {
   DIR* dir = ::opendir(folder.c_str());
-  if (dir == nullptr) return found;  // a missing folder is empty, not an error
+  if (dir == nullptr) return;  // a missing folder is empty, not an error
 
   while (dirent* entry = ::readdir(dir)) {
-    const std::string file = entry->d_name;
-    if (file == "." || file == "..") continue;
-    const AssetKind kind = kindOfFile(file);
+    const std::string name = entry->d_name;
+    if (name == "." || name == "..") continue;
+    const std::string whole = join(folder, name);
+    struct ::stat info {};
+    if (::stat(whole.c_str(), &info) == 0 && S_ISDIR(info.st_mode)) {
+      scanInto(root, whole, found);
+      continue;
+    }
+    const AssetKind kind = kindOfFile(name);
     // Anything the engine cannot use is left out: showing a list full of
     // .txt and .zip would make the useful entries harder to find.
     if (kind == AssetKind::Unknown) continue;
 
     ScannedAsset asset;
-    asset.file = file;
-    asset.path = join(folder, file);
+    // Relative to the scanned root, tolerating a trailing slash on it.
+    std::string relative = whole;
+    if (relative.compare(0, root.size(), root) == 0) relative.erase(0, root.size());
+    while (!relative.empty() && relative.front() == '/') relative.erase(0, 1U);
+    asset.file = relative.empty() ? name : relative;
+    asset.path = whole;
     asset.kind = kind;
-    struct ::stat info {};
-    if (::stat(asset.path.c_str(), &info) == 0) asset.bytes = static_cast<u64>(info.st_size);
+    asset.bytes = static_cast<u64>(info.st_size);
     found.push_back(asset);
   }
   ::closedir(dir);
+}
+
+std::vector<ScannedAsset> scan(const std::string& folder, bool deep) {
+  std::vector<ScannedAsset> found;
+  scanInto(folder, folder, found);
 
   // Sorted so the list does not shuffle between scans: a person picking
   // the third item should get the same file next time.

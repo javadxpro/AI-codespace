@@ -148,6 +148,23 @@ bool skinMesh(const SkinnedMesh& mesh, const std::vector<Mat4>& skinMatrices, Me
 // this moment".
 bool poseMesh(const SkinnedMesh& mesh, const AnimationClip& clip, f64 time, MeshData& out);
 
+// --- Stick figures for animation-only files ---
+//
+// An animation-only FBX (a bare Mixamo-style rig) has a skeleton but no
+// mesh, so there is nothing to skin. This builds a plain jointed figure —
+// one stretched box per bone plus a cube on every joint — from the live
+// joint positions, the way motion-capture previews draw a performer.
+// `joints` must hold one world position per bone (samplePose followed by
+// computeWorldMatrices); `thickness` is the stick width in the joints'
+// units. Zero or negative picks 2% of the figure's own span, so a
+// centimetre-authored rig and a metre-authored rig draw the same.
+MeshData skeletonStickMesh(const Skeleton& skeleton, const std::vector<Vec3>& joints,
+                           f64 thickness = 0.035);
+
+// One world position per bone in the rest pose — for measuring a bare rig
+// (import fit, picking span) without playing anything.
+std::vector<Vec3> restJointPositions(const Skeleton& skeleton);
+
 // --- Posing a figure without a model (stage 33) ---
 //
 // The engine must never invent game CONTENT, but a character still has to

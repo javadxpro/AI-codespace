@@ -4435,3 +4435,307 @@ KIMIA_TEST(world_editor_can_move_recolour_and_delete_by_name) {
   KIMIA_REQUIRE(!editor.addEntityTag("no-such-thing", "x"));
   KIMIA_REQUIRE(!editor.setEntityBody("no-such-thing", kimia::BodyComponent{}));
 }
+
+KIMIA_TEST(world_create_object_makes_every_kind) {
+  // The Hierarchy's Create menu: plain props plus every game object, each
+  // sitting on the ground with the builder's own defaults.
+  WorldEditor editor = editorWithWorld();
+  KIMIA_REQUIRE(editor.createObject("cube", Vec3{1.0, 0.0, 2.0}) == "Cube");
+  KIMIA_REQUIRE(editor.createObject("sphere", Vec3{0.0, 0.0, 0.0}) == "Sphere");
+  KIMIA_REQUIRE(editor.createObject("plane", Vec3{0.0, 0.0, 0.0}) == "Plane");
+  KIMIA_REQUIRE(near3(editor.entity("Cube")->transform.position, Vec3{1.0, 0.5, 2.0}));
+  KIMIA_REQUIRE(editor.entity("Sphere")->mesh == kimia::MeshKind::sphere);
+  KIMIA_REQUIRE(near(editor.entity("Plane")->transform.position.y, 0.02));
+  // A second cube numbers itself; plain props add no colliders.
+  KIMIA_REQUIRE(editor.createObject("cube", Vec3{0.0, 0.0, 0.0}) == "Cube_2");
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 0U);
+
+  KIMIA_REQUIRE(editor.createObject("block", Vec3{-3.0, 0.0, 0.0}) == "Block_1");
+  KIMIA_REQUIRE(near3(editor.entity("Block_1")->transform.scale, Vec3{1.0, 1.0, 1.0}));
+  KIMIA_REQUIRE(editor.createObject("wall", Vec3{0.0, 0.0, -3.0}) == "Wall_1");
+  KIMIA_REQUIRE(near3(editor.entity("Wall_1")->transform.scale, Vec3{0.5, 1.0, 6.0}));
+  KIMIA_REQUIRE(editor.createObject("goal", Vec3{0.0, 0.0, 5.0}) == "Goal_1");
+  KIMIA_REQUIRE(near(editor.entity("Goal_1")->transform.scale.x, 3.0));
+  KIMIA_REQUIRE(editor.createObject("crate", Vec3{2.0, 0.0, 2.0}) == "Crate_1");
+  KIMIA_REQUIRE(editor.createObject("hole", Vec3{0.0, 0.0, -5.0}) == "Hole_1");
+  KIMIA_REQUIRE(editor.holeCount() == 1U);
+  // Block + wall + goal's three boxes; the crate is dynamic, the hole none.
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 5U);
+  KIMIA_REQUIRE(editor.goalCount() == 1U);
+
+  KIMIA_REQUIRE(editor.createObject("player", Vec3{0.0, 0.0, 4.0}) == "Player");
+  KIMIA_REQUIRE(editor.createObject("ball", Vec3{0.0, 0.0, 0.0}) == "Ball");
+  // Singletons: creating again just moves them.
+  KIMIA_REQUIRE(editor.createObject("player", Vec3{1.0, 0.0, 1.0}) == "Player");
+  KIMIA_REQUIRE(near3(editor.entity("Player")->transform.position, Vec3{1.0, 0.5, 1.0}));
+  // Unknown kinds and missing worlds make nothing.
+  KIMIA_REQUIRE(editor.createObject("dragon", Vec3{0.0, 0.0, 0.0}).empty());
+  WorldEditor bare;
+  KIMIA_REQUIRE(bare.createObject("cube", Vec3{0.0, 0.0, 0.0}).empty());
+}
+
+KIMIA_TEST(world_rotate_scale_euler_roundtrip) {
+  WorldEditor editor = editorWithWorld();
+  editor.createObject("block", Vec3{0.0, 0.0, 0.0});
+  // A quarter turn about Y reads 90 degrees in the Inspector.
+  KIMIA_REQUIRE(editor.rotateEntity("Block_1", kimia::kHalfPi, 0.0));
+  const Vec3 euler = editor.entityEulerDegrees("Block_1");
+  KIMIA_REQUIRE(near(euler.x, 0.0, 1e-6));
+  KIMIA_REQUIRE(near(euler.y, 90.0, 1e-6));
+  KIMIA_REQUIRE(near(euler.z, 0.0, 1e-6));
+  // Writing degrees back turns the model the same way.
+  KIMIA_REQUIRE(editor.setEntityEulerDegrees("Block_1", Vec3{0.0, 45.0, 0.0}));
+  KIMIA_REQUIRE(near(editor.entityEulerDegrees("Block_1").y, 45.0, 1e-6));
+  // Pitch tilts about the model's own X.
+  KIMIA_REQUIRE(editor.setEntityEulerDegrees("Block_1", Vec3{0.0, 0.0, 0.0}));
+  KIMIA_REQUIRE(editor.rotateEntity("Block_1", 0.0, kimia::kHalfPi));
+  KIMIA_REQUIRE(near(editor.entityEulerDegrees("Block_1").x, 90.0, 1e-6));
+  // Scaling doubles, then clamps like the Inspector's own nudge.
+  KIMIA_REQUIRE(editor.scaleEntity("Block_1", 2.0));
+  KIMIA_REQUIRE(near3(editor.entity("Block_1")->transform.scale, Vec3{2.0, 2.0, 2.0}));
+  KIMIA_REQUIRE(editor.scaleEntity("Block_1", 100.0));
+  KIMIA_REQUIRE(near(editor.entity("Block_1")->transform.scale.x, 10.0));
+  KIMIA_REQUIRE(editor.scaleEntity("Block_1", 0.0001));
+  KIMIA_REQUIRE(near(editor.entity("Block_1")->transform.scale.x, 0.1));
+  // Refusals: unknown names, nonsense factors, cups (one size only).
+  KIMIA_REQUIRE(!editor.rotateEntity("nope", 1.0, 0.0));
+  KIMIA_REQUIRE(!editor.scaleEntity("nope", 2.0));
+  KIMIA_REQUIRE(!editor.scaleEntity("Block_1", 0.0));
+  KIMIA_REQUIRE(!editor.setEntityEulerDegrees("nope", Vec3{1.0, 2.0, 3.0}));
+  KIMIA_REQUIRE(near3(editor.entityEulerDegrees("nope"), Vec3{0.0, 0.0, 0.0}));
+  editor.createObject("hole", Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(!editor.scaleEntity("Hole_1", 2.0));
+}
+
+KIMIA_TEST(world_duplicate_and_rename) {
+  WorldEditor editor = editorWithWorld();
+  editor.createObject("block", Vec3{1.0, 0.0, 2.0});
+  editor.setEntityColor("Block_1", Vec3{0.9, 0.1, 0.1});
+  std::string copy;
+  KIMIA_REQUIRE(editor.duplicateEntity("Block_1", copy));
+  KIMIA_REQUIRE(copy == "Block_2");
+  // Same shape, same spot, same colour — and the copy is selected.
+  KIMIA_REQUIRE(near3(editor.entity("Block_2")->transform.position, Vec3{1.0, 0.5, 2.0}));
+  KIMIA_REQUIRE(near3(editor.entity("Block_2")->color, Vec3{0.9, 0.1, 0.1}));
+  KIMIA_REQUIRE(editor.selectedName() == "Block_2");
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 2U);
+
+  KIMIA_REQUIRE(editor.renameEntity("Block_2", "Tower"));
+  KIMIA_REQUIRE(editor.entity("Tower") != nullptr);
+  KIMIA_REQUIRE(editor.entity("Block_2") == nullptr);
+  KIMIA_REQUIRE(editor.selectedName() == "Tower");  // selection follows the rename
+  // A renamed block is a decoration: it stops blocking until renamed back.
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 1U);
+  KIMIA_REQUIRE(editor.renameEntity("Tower", "Block_2"));
+  KIMIA_REQUIRE(editor.physicsBoxCount() == 2U);
+  // Refusals: taken names, missing objects, and the structural three.
+  KIMIA_REQUIRE(!editor.renameEntity("Block_2", "Block_1"));
+  KIMIA_REQUIRE(!editor.renameEntity("nope", "Tower"));
+  KIMIA_REQUIRE(!editor.duplicateEntity("nope", copy));
+  editor.createObject("player", Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(!editor.renameEntity("Player", "Hero"));
+  KIMIA_REQUIRE(!editor.renameEntity("Block_1", "Player"));
+  KIMIA_REQUIRE(!editor.renameEntity("Ground", "Floor"));
+}
+
+KIMIA_TEST(world_pause_freezes_the_sim_but_not_the_menus) {
+  WorldEditor editor = editorWithWorld();
+  KIMIA_REQUIRE(editor.enterPlayMode());
+  editor.setBallVelocity(Vec3{5.0, 0.0, 0.0});
+  for (int i = 0; i < 10; ++i) editor.update(0.02);  // 5 fixed steps max per frame
+  const Vec3 rolling = editor.ballPosition();
+  KIMIA_REQUIRE(rolling.x > 0.5);  // it really moves
+  // Paused: a whole second changes nothing, bit for bit.
+  editor.setPaused(true);
+  KIMIA_REQUIRE(editor.paused());
+  editor.update(1.0);
+  const Vec3 frozen = editor.ballPosition();
+  KIMIA_REQUIRE(frozen.x == rolling.x && frozen.y == rolling.y && frozen.z == rolling.z);
+  // Step advances exactly one frame while staying paused.
+  editor.stepOnce(0.1);
+  KIMIA_REQUIRE(editor.paused());
+  KIMIA_REQUIRE(editor.ballPosition().x > frozen.x);
+  editor.setPaused(false);
+  editor.update(0.1);
+  KIMIA_REQUIRE(editor.ballPosition().x > frozen.x);
+
+  // The builder keeps working under pause: the ghost still moves.
+  WorldEditor builder = editorWithWorld();
+  builder.setPaused(true);
+  builder.choose(0);  // catalog
+  builder.choose(2);  // block
+  builder.choose(1);  // medium -> Place
+  builder.setMoveInput(1.0, 0.0);
+  builder.update(0.5);
+  KIMIA_REQUIRE(near(builder.ghostPosition().x, 1.0));
+}
+
+KIMIA_TEST(world_enter_play_mode_starts_running) {
+  WorldEditor bare;
+  KIMIA_REQUIRE(!bare.enterPlayMode());  // no world, no game
+  WorldEditor editor = editorWithWorld();
+  editor.setPaused(true);
+  KIMIA_REQUIRE(editor.enterPlayMode());  // Unity's Play button
+  KIMIA_REQUIRE(editor.playing());
+  KIMIA_REQUIRE(!editor.paused());  // Play always starts running
+}
+
+KIMIA_TEST(world_animation_clips_come_from_the_models_own_fbx) {
+  // The Inspector's clip list: whatever the file holds, nothing else.
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  KIMIA_REQUIRE(editor.hasSkeleton(name));
+  const std::vector<std::string> clips = editor.animationClips(name);
+  KIMIA_REQUIRE(clips.size() == 1U);
+  KIMIA_REQUIRE(clips[0] == "Bend");
+  // No skeleton anywhere else: plain props, other files, wrong names.
+  editor.createObject("cube", Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(!editor.hasSkeleton("Cube"));
+  KIMIA_REQUIRE(editor.animationClips("Cube").empty());
+  KIMIA_REQUIRE(!editor.hasSkeleton("nope"));
+  KIMIA_REQUIRE(editor.animationClips("nope").empty());
+  const std::string spider = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!spider.empty());
+  KIMIA_REQUIRE(!editor.hasSkeleton(spider));
+  KIMIA_REQUIRE(editor.animationClips(spider).empty());
+}
+
+KIMIA_TEST(world_triggered_clip_poses_from_the_fbx_skeleton) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  kimia::AnimationComponent clip;
+  clip.clip = "Bend";
+  clip.trigger = "k";
+  clip.loop = false;
+  KIMIA_REQUIRE(editor.addEntityAnimation(name, clip));
+
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(!editor.posedMesh(name, posed));  // nothing playing, nothing posed
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  KIMIA_REQUIRE(editor.posedMesh(name, posed));
+  // Same topology as the bind mesh from the file itself.
+  const auto skinned = kimia::assets::loadFBXSkinned("Tests/assets/skinned_bar.fbx", error);
+  KIMIA_REQUIRE(skinned.has_value());
+  KIMIA_REQUIRE(posed.positions.size() == skinned->skinned.bindMesh.positions.size());
+  KIMIA_REQUIRE(posed.indices.size() == skinned->skinned.bindMesh.indices.size());
+  const std::vector<Vec3> rest = posed.positions;
+
+  // Half a second in, the bar has visibly bent (Bend runs a full second).
+  KIMIA_REQUIRE(editor.enterPlayMode());
+  for (i32 f = 0; f < 30; ++f) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.posedMesh(name, posed));
+  kimia::usize moved = 0U;
+  for (kimia::usize i = 0; i < posed.positions.size(); ++i) {
+    const Vec3 d{posed.positions[i].x - rest[i].x, posed.positions[i].y - rest[i].y,
+                 posed.positions[i].z - rest[i].z};
+    if (std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) > 1e-3) ++moved;
+  }
+  KIMIA_REQUIRE(moved > 0U);
+  // Still playing at 0.9s: the length came from the file (1s), not the
+  // old 0.8s guess — then it retires on its own past the end.
+  for (i32 f = 0; f < 24; ++f) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(!editor.playingAnimations().empty());
+  KIMIA_REQUIRE(editor.posedMesh(name, posed));
+  for (i32 f = 0; f < 24; ++f) editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+  KIMIA_REQUIRE(!editor.posedMesh(name, posed));
+}
+
+KIMIA_TEST(world_looping_clip_wraps_until_stopped) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  kimia::AnimationComponent clip;
+  clip.clip = "Bend";
+  clip.trigger = "k";
+  clip.loop = true;
+  KIMIA_REQUIRE(editor.addEntityAnimation(name, clip));
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  KIMIA_REQUIRE(editor.enterPlayMode());
+  for (i32 f = 0; f < 150; ++f) editor.update(1.0 / 60.0);  // 2.5s: two full wraps
+  KIMIA_REQUIRE(!editor.playingAnimations().empty());
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(editor.posedMesh(name, posed));
+  KIMIA_REQUIRE(editor.stopEntityClips(name));
+  KIMIA_REQUIRE(editor.playingAnimations().empty());
+  KIMIA_REQUIRE(!editor.posedMesh(name, posed));
+  KIMIA_REQUIRE(!editor.stopEntityClips(name));  // nothing left to stop
+  KIMIA_REQUIRE(!editor.stopEntityClips("nope"));
+}
+
+KIMIA_TEST(world_play_clip_poses_every_entity_using_that_file) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string first = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  const std::string second = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!first.empty() && !second.empty() && first != second);
+  // A bare file name matches too: buttons are wired to "hero.fbx", not
+  // to full paths.
+  editor.playClip("skinned_bar.fbx", "Bend");
+  const std::vector<std::string> playing = editor.playingAnimations();
+  KIMIA_REQUIRE(playing.size() == 2U);
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(editor.posedMesh(first, posed));
+  KIMIA_REQUIRE(editor.posedMesh(second, posed));
+  // A clip the file does not hold: recorded, but there is nothing to pose.
+  KIMIA_REQUIRE(editor.stopEntityClips(first));
+  editor.playClip("Tests/assets/skinned_bar.fbx", "Nope");
+  KIMIA_REQUIRE(!editor.posedMesh(first, posed));
+  // A file nobody imported: remembered under its name, as before.
+  editor.playClip("Tests/assets/other.fbx", "Idle");
+  bool remembered = false;
+  for (const std::string& each : editor.playingAnimations()) {
+    if (each == "Tests/assets/other.fbx:Idle") remembered = true;
+  }
+  KIMIA_REQUIRE(remembered);
+}
+
+KIMIA_TEST(world_bare_rig_imports_as_a_playable_stick_figure) {
+  // An animation-only FBX (no mesh, just a skeleton and a clip) still
+  // imports — its live stick figure is the model.
+  std::string probe;
+  if (!kimia::assets::loadFBXSkinned("assets/animations/reactions/Victory.fbx", probe).has_value()) {
+    std::printf("SKIP: assets/animations not next to the test runner\n");
+    return;
+  }
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name =
+      editor.importModel("assets/animations/reactions/Victory.fbx", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  KIMIA_REQUIRE(editor.hasSkeleton(name));
+  const std::vector<std::string> clips = editor.animationClips(name);
+  KIMIA_REQUIRE(clips.size() == 1U);
+  KIMIA_REQUIRE(clips[0] == "Victory");
+  // The rest stick shows without anything playing ...
+  kimia::MeshData stick;
+  KIMIA_REQUIRE(editor.posedStickMesh(name, stick));
+  KIMIA_REQUIRE(stick.isValid());
+  const std::vector<Vec3> rest = stick.positions;
+  // ... while a posed mesh stays impossible: there is no mesh to pose.
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(!editor.posedMesh(name, posed));
+  KIMIA_REQUIRE(!editor.posedStickMesh("nope", stick));
+
+  kimia::AnimationComponent clip;
+  clip.clip = "Victory";
+  clip.trigger = "k";
+  clip.loop = false;
+  KIMIA_REQUIRE(editor.addEntityAnimation(name, clip));
+  KIMIA_REQUIRE(editor.fireTrigger("k") == 1U);
+  KIMIA_REQUIRE(editor.enterPlayMode());
+  for (i32 f = 0; f < 30; ++f) editor.update(1.0 / 60.0);  // half a second in
+  KIMIA_REQUIRE(editor.posedStickMesh(name, stick));
+  kimia::usize moved = 0U;
+  KIMIA_REQUIRE(stick.positions.size() == rest.size());
+  for (kimia::usize i = 0; i < stick.positions.size(); ++i) {
+    const Vec3 d{stick.positions[i].x - rest[i].x, stick.positions[i].y - rest[i].y,
+                 stick.positions[i].z - rest[i].z};
+    if (std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) > 1e-3) ++moved;
+  }
+  KIMIA_REQUIRE(moved > 0U);
+}

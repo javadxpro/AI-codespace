@@ -4,3 +4,5 @@ tone.wav
 2x2.jpg
 cube.obj
 quad.obj
+# Extracted at test runtime from FBX embedded textures.
+*_texture_*.png

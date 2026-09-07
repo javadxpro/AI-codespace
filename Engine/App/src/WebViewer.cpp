@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -145,6 +146,33 @@ std::string httpRangeResponse(const std::string& contentType, const std::string&
   return out.str();
 }
 
+// Uploads cap at 32 MB: big enough for any FBX, small enough that a
+// lying Content-Length cannot eat the phone's memory.
+constexpr usize kMaxUploadBytes = 32U * 1024U * 1024U;
+
+// Parses the Content-Length out of the raw request headers. False when no
+// usable header is there (no body announced) or the number is absurd.
+bool parseContentLength(const std::string& request, usize& length) {
+  for (const char* name : {"\r\nContent-Length:", "\r\ncontent-length:"}) {
+    const usize found = request.find(name);
+    if (found == std::string::npos) continue;
+    usize at = found + std::strlen(name);
+    while (at < request.size() && (request[at] == ' ' || request[at] == '\t')) ++at;
+    usize value = 0U;
+    bool any = false;
+    while (at < request.size() && request[at] >= '0' && request[at] <= '9') {
+      if (value > 4194303U) return false;  // absurd before it can overflow
+      value = value * 10U + static_cast<usize>(request[at] - '0');
+      ++at;
+      any = true;
+    }
+    if (!any) continue;  // malformed: try the next spelling
+    length = value;
+    return true;
+  }
+  return false;
+}
+
 // Parses "Range: bytes=<first>-<last>" out of the raw request. `last` is
 // inclusive and may be absent ("bytes=500-"), which means "to the end".
 // Returns false when there is no usable range header.
@@ -185,8 +213,14 @@ std::string statusLine(int code) {
   switch (code) {
     case 200:
       return "200 OK";
+    case 400:
+      return "400 Bad Request";
     case 404:
       return "404 Not Found";
+    case 405:
+      return "405 Method Not Allowed";
+    case 413:
+      return "413 Content Too Large";
     case 503:
       return "503 Service Unavailable";
     default:
@@ -260,6 +294,7 @@ struct Server::Impl {
   std::string page;
   std::map<std::string, std::string> extraPages;  // path -> html (stage 32)
   Server::ApiHandler api;                         // /api/* handler, may be null
+  Server::UploadHandler upload;                 // POST body handler, may be null
   Menu menu;
   std::map<std::string, std::vector<u8>> sounds;
   std::vector<u8> intro;    // the mp4 film, empty = no intro
@@ -338,8 +373,53 @@ void handleConnection(int fd, Server::Impl* impl) {
   }
 
   std::string response;
+  // --- File uploads: the one route with a POST body ---
+  if (path == "/api/asset/upload") {
+    if (method != "POST") {
+      response = httpResponse(statusLine(405), "application/json; charset=utf-8",
+                              "{\"error\":\"upload with POST\"}");
+    } else {
+      usize announced = 0U;
+      parseContentLength(request, announced);  // a missing header means an empty body
+      if (announced > kMaxUploadBytes) {
+        response = httpResponse(statusLine(413), "application/json; charset=utf-8",
+                                "{\"error\":\"file too large (32 MB max)\"}");
+      } else {
+        // The first read may already hold body bytes past the blank line.
+        std::string body;
+        const usize headerEnd = request.find("\r\n\r\n");
+        if (headerEnd != std::string::npos) body.assign(request, headerEnd + 4U, std::string::npos);
+        while (body.size() < announced) {
+          char chunk[8192];
+          const usize want = std::min(sizeof(chunk), announced - body.size());
+          const ssize_t n = ::recv(fd, chunk, want, 0);
+          if (n <= 0) break;
+          body.append(chunk, static_cast<usize>(n));
+        }
+        if (body.size() != announced) {
+          response = httpResponse(statusLine(400), "application/json; charset=utf-8",
+                                  "{\"error\":\"upload cut short\"}");
+        } else {
+          // Same lock discipline as the API handler: copy it out, call it
+          // without the server lock, or the editor lock deadlocks it.
+          Server::UploadHandler handler;
+          {
+            std::lock_guard<std::mutex> lock(impl->mutex);
+            handler = impl->upload;
+          }
+          if (handler) {
+            const std::string answer = handler(path, parseQuery(query), body);
+            response = httpResponse(statusLine(200), "application/json; charset=utf-8", answer);
+          } else {
+            response = httpResponse(statusLine(404), "application/json; charset=utf-8",
+                                    "{\"error\":\"no upload handler\"}");
+          }
+        }
+      }
+    }
+  }
   // --- Studio API and extra pages (stage 32) ---
-  if (path.rfind("/api/", 0) == 0) {
+  if (response.empty() && path.rfind("/api/", 0) == 0) {
     // Copy the handler out and release the lock BEFORE calling it. The
     // handler takes the app's own lock, and the app takes the server's
     // lock when it publishes a frame — holding both here would be a
@@ -516,6 +596,11 @@ void Server::setApiHandler(ApiHandler handler) {
   impl_->api = std::move(handler);
 }
 
+void Server::setUploadHandler(UploadHandler handler) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->upload = std::move(handler);
+}
+
 void Server::setPage(const std::string& path, const std::string& html) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->extraPages[path] = html;
@@ -596,7 +681,7 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   // was no route to it from the game page, so the only way to find it was
   // to already know the address — which is no use to anybody.
   if (showEditorLink) {
-    out << "<a id=\"benchlink\" href=\"/bench\">&#9881; Workbench &mdash; ویرایشگر</a>\n";
+    out << "<a id=\"benchlink\" href=\"/bench\">&#9881; Editor &mdash; ویرایشگر</a>\n";
   }
   if (!hint.empty()) out << "<div class=\"hint\">" << htmlEscape(hint) << "</div>\n";
   out << "<img id=\"frame\" alt=\"engine frame\">\n<div id=\"stats\">waiting for first frame...</div>\n";

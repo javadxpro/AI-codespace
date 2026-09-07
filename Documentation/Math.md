@@ -15,7 +15,7 @@
 | --- | --- |
 | `Vec.h` | `Vec2` / `Vec3` / `Vec4` با عملگرها، طول، نرمال‌سازی، ضرب داخلی و ضرب خارجی |
 | `Mat4.h` | ماتریس ۴×۴: ضرب، ترانهاده، دترمینان، معکوس، **معکوس-ترانهاده** (نرمال‌ماتریس)، `perspective`، `lookAt`، `rotationX/Y/Z` |
-| `Quat.h` | کواترنیون: از محور-زاویه، از ماتریس، ضرب، چرخش بردار، تبدیل به `Mat4` |
+| `Quat.h` | کواترنیون: از محور-زاویه، از ماتریس، ضرب، چرخش بردار، تبدیل به `Mat4`، و رفت‌وبرگشت اویلر (`quatFromEuler`/`eulerFromQuat`) |
 | `Camera.h` | دوربین پرسپکتیو: `position` / `target` / `up` + `fovY` / `aspect` / `near` / `far`؛ ماتریس‌های view و projection |
 | `MathUtils.h` | `kPi`، `radians`، `degrees`، `clamp`، `lerp`، `approxEqual` |
 
@@ -27,6 +27,10 @@
 - **تبدیل جهت**: `transformDirection` (با `w=0`) ترنسلیشن را نادیده می‌گیرد؛
   `operator*(Vec3)` تبدیل نقطه است (`w=1`).
 - `Mat4::perspective` عمق کلیپ `[−1, 1]` (سبک OpenGL) تولید می‌کند.
+- **اویلر**: `quatFromEuler(pitch, yaw, roll)` با ترکیب `qY*qX*qZ`
+  (اول yaw بعد pitch بعد roll)؛ `eulerFromQuat` در قفل گیمبال roll را صفر
+  می‌دهد. زاویه‌ها رادیان‌اند؛ Inspector درجه نشان می‌دهد و خودش تبدیل
+  می‌کند (تست‌های `quat_euler_*`).
 
 ## تست‌ها
 

@@ -38,6 +38,15 @@ std::string extension(const std::string& path) {
   return lowercased(path.substr(dot));
 }
 
+// "models/Dribble.fbx" -> "Dribble". Animation-only files lend their own
+// name to a nameless animation stack.
+std::string stemOf(const std::string& path) {
+  const usize slash = path.find_last_of("/\\");
+  const std::string file = slash == std::string::npos ? path : path.substr(slash + 1U);
+  const usize dot = file.find_last_of('.');
+  return dot == std::string::npos ? file : file.substr(0U, dot);
+}
+
 std::string directoryOf(const std::string& path) {
   const usize slash = path.find_last_of("/\\");
   if (slash == std::string::npos) return "";
@@ -469,6 +478,22 @@ void collectBones(const ufbx_skin_deformer* skin, std::vector<const ufbx_node*>&
   }
 }
 
+void collectBoneNodes(const ufbx_scene* scene, std::vector<const ufbx_node*>& order,
+                      std::map<const ufbx_node*, i32>& indexOf) {
+  const auto contains = [&indexOf](const ufbx_node* node) { return indexOf.find(node) != indexOf.end(); };
+  std::function<void(const ufbx_node*)> addWithParents = [&](const ufbx_node* node) {
+    if (node == nullptr || contains(node)) return;
+    if (node->is_root) return;
+    if (node->parent != nullptr && !contains(node->parent)) addWithParents(node->parent);
+    indexOf[node] = static_cast<i32>(order.size());
+    order.push_back(node);
+  };
+  for (usize i = 0; i < scene->nodes.count; ++i) {
+    const ufbx_node* node = scene->nodes.data[i];
+    if (node->bone != nullptr) addWithParents(node);
+  }
+}
+
 }  // namespace
 
 std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string& error) {
@@ -499,16 +524,21 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
     mesh = candidate;
     skin = candidate->skin_deformers.data[0];
   }
-  if (mesh == nullptr || skin == nullptr) {
-    ufbx_free_scene(scene);
-    error = "FBX has no skinned mesh: " + path;
-    return std::nullopt;
-  }
-
   SkinnedAsset asset;
   std::vector<const ufbx_node*> boneNodes;
   std::map<const ufbx_node*, i32> boneIndex;
-  collectBones(skin, boneNodes, boneIndex);
+  if (mesh != nullptr && skin != nullptr) {
+    collectBones(skin, boneNodes, boneIndex);
+  } else {
+    // An animation-only file (a bare Mixamo-style rig): the skeleton comes
+    // from the bone nodes and the bind mesh stays empty.
+    collectBoneNodes(scene, boneNodes, boneIndex);
+    if (boneNodes.empty()) {
+      ufbx_free_scene(scene);
+      error = "FBX has neither a skinned mesh nor a skeleton: " + path;
+      return std::nullopt;
+    }
+  }
 
   asset.skinned.skeleton.bones.reserve(boneNodes.size());
   for (const ufbx_node* node : boneNodes) {
@@ -522,8 +552,8 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
     bone.inverseBindPose = toMat4(node->node_to_world).inverse();
     asset.skinned.skeleton.bones.push_back(std::move(bone));
   }
-  // The clusters carry the authoritative bind matrices.
-  for (usize i = 0; i < skin->clusters.count; ++i) {
+  // The clusters carry the authoritative bind matrices (skinned meshes only).
+  for (usize i = 0; skin != nullptr && i < skin->clusters.count; ++i) {
     const ufbx_skin_cluster* cluster = skin->clusters.data[i];
     if (cluster->bone_node == nullptr) continue;
     const auto found = boneIndex.find(cluster->bone_node);
@@ -532,67 +562,71 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
         toMat4(cluster->geometry_to_bone);
   }
 
-  // --- The mesh itself, with one skin entry per emitted vertex ---
-  const ufbx_node* meshNode = mesh->instances.count > 0U ? mesh->instances.data[0] : nullptr;
-  const ufbx_matrix geometryToWorld = meshNode != nullptr ? meshNode->geometry_to_world : ufbx_identity_matrix;
-  const ufbx_matrix normalMatrix = ufbx_matrix_for_normals(&geometryToWorld);
+  // Skinned meshes only: an animation-only file keeps an empty bind mesh.
+  if (mesh != nullptr && skin != nullptr) {
+    // --- The mesh itself, with one skin entry per emitted vertex ---
+    const ufbx_node* meshNode = mesh->instances.count > 0U ? mesh->instances.data[0] : nullptr;
+    const ufbx_matrix geometryToWorld = meshNode != nullptr ? meshNode->geometry_to_world : ufbx_identity_matrix;
+    const ufbx_matrix normalMatrix = ufbx_matrix_for_normals(&geometryToWorld);
 
-  MeshData& out = asset.skinned.bindMesh;
-  out.name = meshNode != nullptr && meshNode->name.length > 0U ? ufbxString(meshNode->name) : ufbxString(mesh->name);
+    MeshData& out = asset.skinned.bindMesh;
+    out.name = meshNode != nullptr && meshNode->name.length > 0U ? ufbxString(meshNode->name) : ufbxString(mesh->name);
 
-  std::vector<u32> triangleBuffer(static_cast<usize>(mesh->max_face_triangles) * 3U + 3U);
-  for (usize faceIndex = 0; faceIndex < mesh->faces.count; ++faceIndex) {
-    const ufbx_face face = mesh->faces.data[faceIndex];
-    const u32 numTris = ufbx_triangulate_face(triangleBuffer.data(), triangleBuffer.size(), mesh, face);
-    for (u32 t = 0; t < numTris; ++t) {
-      for (u32 corner = 0; corner < 3U; ++corner) {
-        const u32 index = triangleBuffer[static_cast<usize>(t) * 3U + corner];
-        if (index >= mesh->num_indices) continue;
+    std::vector<u32> triangleBuffer(static_cast<usize>(mesh->max_face_triangles) * 3U + 3U);
+    for (usize faceIndex = 0; faceIndex < mesh->faces.count; ++faceIndex) {
+      const ufbx_face face = mesh->faces.data[faceIndex];
+      const u32 numTris = ufbx_triangulate_face(triangleBuffer.data(), triangleBuffer.size(), mesh, face);
+      for (u32 t = 0; t < numTris; ++t) {
+        for (u32 corner = 0; corner < 3U; ++corner) {
+          const u32 index = triangleBuffer[static_cast<usize>(t) * 3U + corner];
+          if (index >= mesh->num_indices) continue;
 
-        const ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, index);
-        out.positions.push_back(transformPoint(geometryToWorld, localPos));
+          const ufbx_vec3 localPos = ufbx_get_vertex_vec3(&mesh->vertex_position, index);
+          out.positions.push_back(transformPoint(geometryToWorld, localPos));
 
-        Vec3 normal{0.0, 0.0, 0.0};
-        if (mesh->vertex_normal.exists && mesh->vertex_normal.values.count > 0U) {
-          const ufbx_vec3 localNormal = ufbx_get_vertex_vec3(&mesh->vertex_normal, index);
-          normal = transformDirection(normalMatrix, localNormal).normalized();
-        }
-        out.normals.push_back(normal);
-
-        Vec2 uv{0.0, 0.0};
-        if (mesh->vertex_uv.exists && mesh->vertex_uv.values.count > 0U) {
-          const ufbx_vec2 localUV = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
-          uv = Vec2{static_cast<f64>(localUV.x), 1.0 - static_cast<f64>(localUV.y)};
-        }
-        out.uvs.push_back(uv);
-        out.indices.push_back(static_cast<u32>(out.positions.size() - 1U));
-
-        // The weights belong to the CONTROL POINT, which several emitted
-        // vertices can share.
-        VertexSkin vertexSkin;
-        const u32 controlPoint = mesh->vertex_indices.data[index];
-        if (controlPoint < skin->vertices.count) {
-          const ufbx_skin_vertex& skinVertex = skin->vertices.data[controlPoint];
-          // ufbx sorts weights heaviest first, so the first four are the
-          // best four to keep.
-          const u32 take = skinVertex.num_weights < kMaxBoneInfluences ? skinVertex.num_weights
-                                                                       : kMaxBoneInfluences;
-          for (u32 w = 0; w < take; ++w) {
-            const ufbx_skin_weight& weight = skin->weights.data[skinVertex.weight_begin + w];
-            if (weight.cluster_index >= skin->clusters.count) continue;
-            const ufbx_skin_cluster* cluster = skin->clusters.data[weight.cluster_index];
-            if (cluster->bone_node == nullptr) continue;
-            const auto found = boneIndex.find(cluster->bone_node);
-            if (found == boneIndex.end()) continue;
-            vertexSkin.bones[w] = static_cast<u32>(found->second);
-            vertexSkin.weights[w] = static_cast<f64>(weight.weight);
+          Vec3 normal{0.0, 0.0, 0.0};
+          if (mesh->vertex_normal.exists && mesh->vertex_normal.values.count > 0U) {
+            const ufbx_vec3 localNormal = ufbx_get_vertex_vec3(&mesh->vertex_normal, index);
+            normal = transformDirection(normalMatrix, localNormal).normalized();
           }
-          // Dropping the light influences leaves the sum short, so rescale.
-          vertexSkin.normalize();
+          out.normals.push_back(normal);
+
+          Vec2 uv{0.0, 0.0};
+          if (mesh->vertex_uv.exists && mesh->vertex_uv.values.count > 0U) {
+            const ufbx_vec2 localUV = ufbx_get_vertex_vec2(&mesh->vertex_uv, index);
+            uv = Vec2{static_cast<f64>(localUV.x), 1.0 - static_cast<f64>(localUV.y)};
+          }
+          out.uvs.push_back(uv);
+          out.indices.push_back(static_cast<u32>(out.positions.size() - 1U));
+
+          // The weights belong to the CONTROL POINT, which several emitted
+          // vertices can share.
+          VertexSkin vertexSkin;
+          const u32 controlPoint = mesh->vertex_indices.data[index];
+          if (controlPoint < skin->vertices.count) {
+            const ufbx_skin_vertex& skinVertex = skin->vertices.data[controlPoint];
+            // ufbx sorts weights heaviest first, so the first four are the
+            // best four to keep.
+            const u32 take = skinVertex.num_weights < kMaxBoneInfluences ? skinVertex.num_weights
+                                                                         : kMaxBoneInfluences;
+            for (u32 w = 0; w < take; ++w) {
+              const ufbx_skin_weight& weight = skin->weights.data[skinVertex.weight_begin + w];
+              if (weight.cluster_index >= skin->clusters.count) continue;
+              const ufbx_skin_cluster* cluster = skin->clusters.data[weight.cluster_index];
+              if (cluster->bone_node == nullptr) continue;
+              const auto found = boneIndex.find(cluster->bone_node);
+              if (found == boneIndex.end()) continue;
+              vertexSkin.bones[w] = static_cast<u32>(found->second);
+              vertexSkin.weights[w] = static_cast<f64>(weight.weight);
+            }
+            // Dropping the light influences leaves the sum short, so rescale.
+            vertexSkin.normalize();
+          }
+          asset.skinned.skins.push_back(vertexSkin);
         }
-        asset.skinned.skins.push_back(vertexSkin);
       }
     }
+
   }
 
   // --- Animation: one clip per stack, sampled on a fixed grid ---
@@ -603,6 +637,10 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
     const ufbx_anim_stack* stack = scene->anim_stacks.data[stackIndex];
     AnimationClip clip;
     clip.name = ufbxString(stack->name);
+    // Every Mixamo download names its stack "mixamo.com", which would make
+    // all 39 clips of the pack indistinguishable. Nameless and
+    // exporter-default stacks take the file's own name instead.
+    if (clip.name.empty() || clip.name == "mixamo.com") clip.name = stemOf(path);
     const f64 begin = stack->time_begin;
     const f64 end = stack->time_end;
     clip.duration = end > begin ? end - begin : 0.0;
@@ -639,8 +677,8 @@ std::optional<SkinnedAsset> loadFBXSkinned(const std::string& path, std::string&
   }
 
   ufbx_free_scene(scene);
-  if (out.positions.empty()) {
-    error = "skinned FBX produced no geometry: " + path;
+  if (asset.skinned.bindMesh.positions.empty() && asset.skinned.skeleton.isEmpty()) {
+    error = "skinned FBX produced no geometry and no skeleton: " + path;
     return std::nullopt;
   }
   return asset;

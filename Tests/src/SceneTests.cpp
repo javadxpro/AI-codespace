@@ -284,3 +284,63 @@ KIMIA_TEST(scene_find_by_name) {
   scene.destroy(a);
   KIMIA_REQUIRE(scene.find("Alpha") == kimia::kNullEntity);  // destroyed -> gone
 }
+
+KIMIA_TEST(sceneio_rotation_roundtrip_byte_identical) {
+  // The rotate tool turns things; the file must remember. A 90-degree yaw
+  // is (0, sin45, 0, cos45) and must survive save -> load -> save exactly.
+  Scene scene;
+  EntityData box;
+  box.name = "Turned";
+  box.mesh = MeshKind::cube;
+  box.transform.rotation = kimia::Quat::fromAxisAngle(Vec3{0.0, 1.0, 0.0}, 1.5707963267948966);
+  scene.create(box);
+  std::string first;
+  KIMIA_REQUIRE(kimia::SceneIO::save(scene, first));
+  KIMIA_REQUIRE(first.find(" rot ") != std::string::npos);
+  Scene loaded;
+  std::string error;
+  KIMIA_REQUIRE(kimia::SceneIO::load(first, loaded, error));
+  const EntityData* back = loaded.get(loaded.find("Turned"));
+  KIMIA_REQUIRE(back != nullptr);
+  KIMIA_REQUIRE(near(back->transform.rotation.x, 0.0));
+  KIMIA_REQUIRE(near(back->transform.rotation.y, 0.707106781));
+  KIMIA_REQUIRE(near(back->transform.rotation.z, 0.0));
+  KIMIA_REQUIRE(near(back->transform.rotation.w, 0.707106781));
+  std::string second;
+  KIMIA_REQUIRE(kimia::SceneIO::save(loaded, second));
+  KIMIA_REQUIRE(first == second);
+}
+
+KIMIA_TEST(sceneio_rotation_absent_means_identity) {
+  // Every file written before rotation existed has no `rot` token: those
+  // entities face forward, and re-saving adds nothing.
+  const std::string text =
+      "# KIMIA scene v1\n"
+      "e \"Plain\" mesh cube pos 1 2 3 scale 1 1 1 color 1 1 1 rough 0.5\n";
+  Scene scene;
+  std::string error;
+  KIMIA_REQUIRE(kimia::SceneIO::load(text, scene, error));
+  const EntityData* entity = scene.get(scene.find("Plain"));
+  KIMIA_REQUIRE(entity != nullptr);
+  KIMIA_REQUIRE(entity->transform.rotation.x == 0.0);
+  KIMIA_REQUIRE(entity->transform.rotation.y == 0.0);
+  KIMIA_REQUIRE(entity->transform.rotation.z == 0.0);
+  KIMIA_REQUIRE(entity->transform.rotation.w == 1.0);
+  std::string saved;
+  KIMIA_REQUIRE(kimia::SceneIO::save(scene, saved));
+  KIMIA_REQUIRE(saved.find(" rot ") == std::string::npos);
+}
+
+KIMIA_TEST(sceneio_rotation_partial_line_ignored) {
+  // A `rot` with missing numbers invalidates its line like any other
+  // half-written keyword — but the rest of the file still loads.
+  const std::string text =
+      "# KIMIA scene v1\n"
+      "e \"Broken\" mesh cube pos 0 0 0 scale 1 1 1 color 1 1 1 rough 0.5 rot 0 1\n"
+      "e \"Fine\" mesh cube pos 0 0 0 scale 1 1 1 color 1 1 1 rough 0.5\n";
+  Scene scene;
+  std::string error;
+  KIMIA_REQUIRE(kimia::SceneIO::load(text, scene, error));
+  KIMIA_REQUIRE(scene.find("Broken") == kimia::kNullEntity);
+  KIMIA_REQUIRE(scene.find("Fine") != kimia::kNullEntity);
+}

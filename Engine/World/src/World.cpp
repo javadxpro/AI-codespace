@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/MathUtils.h>
 #include <kimia/Skeleton.h>
 #include <kimia/World.h>
 #include <fstream>
@@ -65,6 +66,11 @@ const char* screenName(int screen) {
 bool endsWith(const std::string& text, const char* suffix) {
   const usize length = std::strlen(suffix);
   return text.size() >= length && text.compare(text.size() - length, length, suffix) == 0;
+}
+
+std::string baseName(const std::string& path) {
+  const usize slash = path.find_last_of("/\\");
+  return slash == std::string::npos ? path : path.substr(slash + 1U);
 }
 
 // One goal = a "Goal*" entity (single cube: scale.x = width, scale.y = 2) or
@@ -600,6 +606,7 @@ void WorldEditor::enterPlay() {
 }
 
 void WorldEditor::update(f64 hostSeconds) {
+  if (paused_ && playing()) return;  // toolbar Pause: the sim freezes, the menus don't
   const int screen = static_cast<int>(screen_);
   // The ghost and a live-moved object stay inside the field (same margin
   // as the inspector nudges) — on a 5-wide street court this matters.
@@ -1885,7 +1892,21 @@ std::string WorldEditor::importModel(const std::string& file, f64 size, std::str
   }
   std::string loadError;
   auto loaded = assets::loadMesh(file, loadError);
-  if (!loaded.has_value()) {
+  // A bare rig (an animation-only FBX) has no mesh to load, but its live
+  // stick figure still gives the world something to show and to play.
+  assets::SkinnedAsset rig;
+  const bool skeletonOnly = [&]() {
+    if (loaded.has_value()) return false;
+    std::string rigError;
+    auto rigged = assets::loadFBXSkinned(file, rigError);
+    if (!rigged.has_value() || rigged->skinned.skeleton.isEmpty() ||
+        !rigged->skinned.bindMesh.positions.empty()) {
+      return false;
+    }
+    rig = std::move(*rigged);
+    return true;
+  }();
+  if (!loaded.has_value() && !skeletonOnly) {
     error = loadError;
     return std::string();
   }
@@ -1905,10 +1926,14 @@ std::string WorldEditor::importModel(const std::string& file, f64 size, std::str
 
   // Fit the model's largest dimension to the requested size, so any file
   // becomes a prop of a predictable size whatever units it was authored in.
-  if (!loaded->mesh.positions.empty()) {
-    Vec3 lo = loaded->mesh.positions[0];
-    Vec3 hi = loaded->mesh.positions[0];
-    for (const Vec3& point : loaded->mesh.positions) {
+  // A bare rig measures its rest-pose joints instead of mesh vertices.
+  const std::vector<Vec3> rigJoints =
+      skeletonOnly ? restJointPositions(rig.skinned.skeleton) : std::vector<Vec3>();
+  const std::vector<Vec3>& fitPoints = skeletonOnly ? rigJoints : loaded->mesh.positions;
+  if (!fitPoints.empty()) {
+    Vec3 lo = fitPoints[0];
+    Vec3 hi = fitPoints[0];
+    for (const Vec3& point : fitPoints) {
       lo.x = std::min(lo.x, point.x);
       lo.y = std::min(lo.y, point.y);
       lo.z = std::min(lo.z, point.z);
@@ -1936,30 +1961,72 @@ bool WorldEditor::deleteEntity(const std::string& name) {
   return true;
 }
 
+bool WorldEditor::rotateEntity(const std::string& name, f64 dyaw, f64 dpitch) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  // Turntable yaw about the world Y, tilt about the model's own X — the
+  // two drags of the rotate tool. No physics rebuild: colliders stay
+  // axis-aligned (documented on the declaration).
+  const Quat yaw = Quat::fromAxisAngle(Vec3{0.0, 1.0, 0.0}, dyaw);
+  const Quat pitch = Quat::fromAxisAngle(Vec3{1.0, 0.0, 0.0}, dpitch);
+  target->transform.rotation = (yaw * target->transform.rotation * pitch).normalized();
+  return true;
+}
+
+bool WorldEditor::scaleEntity(const std::string& name, f64 factor) {
+  if (!(factor > 0.0)) return false;
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  if (objectKindForName(target->name) == ObjectKind::Hole) return false;  // cups have one size
+  const Vec3& s = target->transform.scale;
+  // Same bounds as the Inspector's own scale nudge.
+  target->transform.scale =
+      Vec3{clamp(s.x * factor, 0.1, 10.0), clamp(s.y * factor, 0.1, 10.0), clamp(s.z * factor, 0.1, 10.0)};
+  rebuildPhysics();
+  return true;
+}
+
+bool WorldEditor::setEntityRotation(const std::string& name, const Quat& rotation) {
+  EntityData* target = world_.scene.get(world_.scene.find(name));
+  if (target == nullptr) return false;
+  target->transform.rotation = rotation.normalized();
+  return true;
+}
+
+Vec3 WorldEditor::entityEulerDegrees(const std::string& name) const {
+  const EntityData* target = entity(name);
+  if (target == nullptr) return Vec3{0.0, 0.0, 0.0};
+  const Vec3 euler = eulerFromQuat(target->transform.rotation);
+  return Vec3{degrees(euler.x), degrees(euler.y), degrees(euler.z)};
+}
+
+bool WorldEditor::setEntityEulerDegrees(const std::string& name, const Vec3& degreesValue) {
+  return setEntityRotation(name, quatFromEuler(radians(degreesValue.x), radians(degreesValue.y),
+                                               radians(degreesValue.z)));
+}
+
+void WorldEditor::stepOnce(f64 seconds) {
+  if (seconds <= 0.0) return;
+  const bool wasPaused = paused_;
+  paused_ = false;
+  update(seconds);
+  paused_ = wasPaused;
+}
+
+bool WorldEditor::enterPlayMode() {
+  if (!hasWorld_) return false;
+  paused_ = false;  // Play always starts running, like Unity's button
+  enterPlay();
+  return true;
+}
+
 u32 WorldEditor::fireTrigger(const std::string& trigger) {
   if (trigger.empty()) return 0U;
   u32 fired = 0U;
   world_.scene.forEach([this, &trigger, &fired](EntityHandle, const EntityData& entity) {
     for (const AnimationComponent& clip : entity.animations) {
       if (clip.trigger != trigger) continue;
-      // Restart rather than stack: pressing a button twice should replay
-      // the move, not run two copies of it on the same model.
-      bool replaced = false;
-      for (PlayingClip& playing : playingClips_) {
-        if (playing.entity != entity.name || playing.clip != clip.clip) continue;
-        playing.timeLeft = kTriggerClipSeconds / std::max(clip.speed, 0.01);
-        playing.loop = clip.loop;
-        replaced = true;
-        break;
-      }
-      if (!replaced) {
-        PlayingClip playing;
-        playing.entity = entity.name;
-        playing.clip = clip.clip;
-        playing.timeLeft = kTriggerClipSeconds / std::max(clip.speed, 0.01);
-        playing.loop = clip.loop;
-        playingClips_.push_back(playing);
-      }
+      startClip(entity.name, clip.clip, clip.loop, clip.speed);
       ++fired;
     }
     for (const SoundComponent& sound : entity.sounds) {
@@ -1988,31 +2055,161 @@ std::vector<std::string> WorldEditor::playingAnimations() const {
 
 void WorldEditor::playClip(const std::string& file, const std::string& clip) {
   if (clip.empty()) return;
+  bool matched = false;
+  world_.scene.forEach([this, &file, &clip, &matched](EntityHandle, const EntityData& entity) {
+    if (entity.meshFile.empty()) return;
+    if (entity.meshFile != file && baseName(entity.meshFile) != baseName(file)) return;
+    startClip(entity.name, clip, false, 1.0);
+    matched = true;
+  });
+  if (matched) return;
+  // Nobody uses this file yet (a button wired before import): remember
+  // the request under the file name, as before.
+  startClip(file.empty() ? std::string("control") : file, clip, false, 1.0);
+}
+
+const assets::SkinnedAsset* WorldEditor::skinnedFor(const std::string& meshFile) {
+  if (meshFile.empty()) return nullptr;
+  const auto cached = skinnedCache_.find(meshFile);
+  if (cached != skinnedCache_.end()) {
+    return cached->second.has_value() ? &(*cached->second) : nullptr;
+  }
+  std::string error;
+  auto inserted = skinnedCache_.emplace(meshFile, assets::loadFBXSkinned(meshFile, error));
+  const std::optional<assets::SkinnedAsset>& stored = inserted.first->second;
+  if (!stored.has_value() || !stored->hasSkeleton()) return nullptr;
+  return &(*stored);
+}
+
+void WorldEditor::startClip(const std::string& entityName, const std::string& clipName, bool loop,
+                            f64 speed) {
+  // The clip's OWN length from the file; the old 0.8s guess only when the
+  // file holds no such clip (an OBJ wired to a name, for example).
+  f64 length = kTriggerClipSeconds;
+  const EntityData* target = entity(entityName);
+  if (target != nullptr && !target->meshFile.empty()) {
+    const assets::SkinnedAsset* asset = skinnedFor(target->meshFile);
+    if (asset != nullptr) {
+      for (const AnimationClip& clip : asset->clips) {
+        if (clip.name == clipName && clip.duration > 0.0) {
+          length = clip.duration;
+          break;
+        }
+      }
+    }
+  }
+  const f64 rate = speed > 0.01 ? speed : 0.01;
   // Restart rather than stack: pressing a button twice replays the move
-  // instead of running two copies of it.
+  // instead of running two copies of it on the same model.
   for (PlayingClip& playing : playingClips_) {
-    if (playing.clip != clip) continue;
-    playing.timeLeft = kTriggerClipSeconds;
+    if (playing.entity != entityName || playing.clip != clipName) continue;
+    playing.time = 0.0;
+    playing.duration = length;
+    playing.speed = rate;
+    playing.loop = loop;
     return;
   }
   PlayingClip playing;
-  // The file is remembered as the "entity" so the app knows which model
-  // the clip belongs to when it comes to pose it.
-  playing.entity = file.empty() ? std::string("control") : file;
-  playing.clip = clip;
-  playing.timeLeft = kTriggerClipSeconds;
-  playing.loop = false;
+  playing.entity = entityName;
+  playing.clip = clipName;
+  playing.duration = length;
+  playing.speed = rate;
+  playing.loop = loop;
   playingClips_.push_back(playing);
+}
+
+std::vector<std::string> WorldEditor::animationClips(const std::string& entityName) {
+  std::vector<std::string> names;
+  const EntityData* target = entity(entityName);
+  if (target == nullptr || target->meshFile.empty()) return names;
+  const assets::SkinnedAsset* asset = skinnedFor(target->meshFile);
+  if (asset == nullptr) return names;
+  for (const AnimationClip& clip : asset->clips) names.push_back(clip.name);
+  return names;
+}
+
+bool WorldEditor::hasSkeleton(const std::string& entityName) {
+  const EntityData* target = entity(entityName);
+  if (target == nullptr || target->meshFile.empty()) return false;
+  return skinnedFor(target->meshFile) != nullptr;
+}
+
+bool WorldEditor::posedMesh(const std::string& entityName, MeshData& out) {
+  const EntityData* target = entity(entityName);
+  if (target == nullptr || target->meshFile.empty()) return false;
+  const assets::SkinnedAsset* asset = skinnedFor(target->meshFile);
+  if (asset == nullptr) return false;
+  // A bare rig carries no mesh: the app draws its stick figure instead, so
+  // claiming an (empty) posed mesh here would only hide it.
+  if (asset->skinned.bindMesh.positions.empty()) return false;
+  for (const PlayingClip& playing : playingClips_) {
+    if (playing.entity != entityName) continue;
+    const AnimationClip* found = nullptr;
+    for (const AnimationClip& clip : asset->clips) {
+      if (clip.name == playing.clip) {
+        found = &clip;
+        break;
+      }
+    }
+    if (found == nullptr || found->isEmpty()) return false;
+    return poseMesh(asset->skinned, *found, clipTime(*found, playing.time), out);
+  }
+  return false;
+}
+
+bool WorldEditor::posedStickMesh(const std::string& entityName, MeshData& out) {
+  const EntityData* target = entity(entityName);
+  if (target == nullptr || target->meshFile.empty()) return false;
+  const assets::SkinnedAsset* asset = skinnedFor(target->meshFile);
+  if (asset == nullptr || asset->skinned.skeleton.isEmpty()) return false;
+  const Skeleton& skeleton = asset->skinned.skeleton;
+  std::vector<Transform3D> pose;
+  pose.reserve(skeleton.bones.size());
+  for (const Bone& bone : skeleton.bones) pose.push_back(bone.restPose);
+  // The playing clip bends the rest pose; with nothing playing the figure
+  // simply stands at rest.
+  for (const PlayingClip& playing : playingClips_) {
+    if (playing.entity != entityName) continue;
+    for (const AnimationClip& clip : asset->clips) {
+      if (clip.name == playing.clip && !clip.isEmpty()) {
+        samplePose(skeleton, clip, clipTime(clip, playing.time), pose);
+        break;
+      }
+    }
+    break;
+  }
+  std::vector<Mat4> world;
+  computeWorldMatrices(skeleton, pose, world);
+  std::vector<Vec3> joints;
+  joints.reserve(world.size());
+  for (const Mat4& matrix : world) {
+    joints.push_back(Vec3{matrix.at(3, 0), matrix.at(3, 1), matrix.at(3, 2)});
+  }
+  // Auto thickness: the file's own units never reach the screen, since
+  // the import fit scales the whole figure to the requested size.
+  out = skeletonStickMesh(skeleton, joints, 0.0);
+  return out.isValid();
+}
+
+bool WorldEditor::stopEntityClips(const std::string& entityName) {
+  bool stopped = false;
+  for (usize i = playingClips_.size(); i > 0U; --i) {
+    if (playingClips_[i - 1U].entity != entityName) continue;
+    playingClips_.erase(playingClips_.begin() + static_cast<std::ptrdiff_t>(i - 1U));
+    stopped = true;
+  }
+  return stopped;
 }
 
 void WorldEditor::updateTriggers(f64 seconds) {
   if (seconds <= 0.0 || playingClips_.empty()) return;
   for (usize i = playingClips_.size(); i > 0U; --i) {
     PlayingClip& clip = playingClips_[i - 1U];
-    clip.timeLeft -= seconds;
-    if (clip.timeLeft > 0.0) continue;
+    clip.time += seconds * clip.speed;
+    const f64 length = clip.duration > 0.0 ? clip.duration : kTriggerClipSeconds;
+    if (clip.time < length) continue;
     if (clip.loop) {
-      clip.timeLeft = kTriggerClipSeconds;  // a looping clip runs until stopped
+      clip.time = std::fmod(clip.time, length);  // a looping clip runs until stopped
       continue;
     }
     playingClips_.erase(playingClips_.begin() + static_cast<std::ptrdiff_t>(i - 1U));

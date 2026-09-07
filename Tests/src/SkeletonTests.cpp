@@ -566,3 +566,73 @@ KIMIA_TEST(figure_tucks_in_the_air_and_lies_flat_when_downed) {
   jumping.airborne = true;
   KIMIA_REQUIRE(lowestOf(jumping) > lowestOf(kimia::FigureMotion{}) + 0.03);
 }
+
+KIMIA_TEST(fbx_animation_only_file_loads_its_bare_rig) {
+  // A Mixamo-style file: a full skeleton and a clip, but no mesh at all.
+  std::string error;
+  auto asset = kimia::assets::loadFBXSkinned("assets/animations/actions/Dribble.fbx", error);
+  if (!asset.has_value()) {
+    std::printf("SKIP: assets/animations not next to the test runner\n");
+    return;
+  }
+  KIMIA_REQUIRE(asset->hasSkeleton());
+  KIMIA_REQUIRE(asset->hasAnimation());
+  const Skeleton& skeleton = asset->skinned.skeleton;
+  KIMIA_REQUIRE(skeleton.boneCount() == 69U);
+  KIMIA_REQUIRE(skeleton.isValid());
+  KIMIA_REQUIRE(skeleton.bones[0].name == "mixamorig:Hips");
+  // No mesh came along: the bind mesh and the skins stay empty.
+  KIMIA_REQUIRE(asset->skinned.bindMesh.positions.empty());
+  KIMIA_REQUIRE(asset->skinned.skins.empty());
+  // The stack is exporter junk ("mixamo.com"), so the clip takes the
+  // file's own name instead of blending in with the other 38.
+  KIMIA_REQUIRE(asset->clips.size() == 1U);
+  KIMIA_REQUIRE(asset->clips[0].name == "Dribble");
+  KIMIA_REQUIRE(asset->clips[0].duration > 1.7 && asset->clips[0].duration < 1.8);
+  KIMIA_REQUIRE(!asset->clips[0].tracks.empty());
+  // The rest joints measure the figure: about 1.5m of Mixamo bones.
+  const std::vector<Vec3> joints = kimia::restJointPositions(skeleton);
+  KIMIA_REQUIRE(joints.size() == skeleton.boneCount());
+  f64 span = 0.0;
+  for (const Vec3& a : joints) {
+    for (const Vec3& b : joints) {
+      const Vec3 d{b.x - a.x, b.y - a.y, b.z - a.z};
+      span = std::max(span, std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
+    }
+  }
+  // Centimetres, not metres: Mixamo authors at ~194 units tall, and the
+  // import fit (size / span) is what brings the figure down to size.
+  KIMIA_REQUIRE(span > 100.0 && span < 300.0);
+}
+
+KIMIA_TEST(stick_figure_draws_a_rig_and_moves_with_it) {
+  const Skeleton rig = kimia::makeFigureRig(1.7);
+  const std::vector<Vec3> rest = kimia::restJointPositions(rig);
+  KIMIA_REQUIRE(rest.size() == rig.boneCount());
+  const MeshData standing = kimia::skeletonStickMesh(rig, rest);
+  KIMIA_REQUIRE(standing.isValid());
+  KIMIA_REQUIRE(!standing.positions.empty());
+  KIMIA_REQUIRE(!standing.indices.empty());
+  // A hand raised half a metre redraws the figure around it.
+  std::vector<Vec3> waved = rest;
+  waved[static_cast<kimia::usize>(kimia::FigureBone::RightHand)].y += 0.5;
+  const MeshData raised = kimia::skeletonStickMesh(rig, waved);
+  KIMIA_REQUIRE(raised.isValid());
+  KIMIA_REQUIRE(raised.positions.size() == standing.positions.size());
+  kimia::usize moved = 0U;
+  for (kimia::usize i = 0; i < raised.positions.size(); ++i) {
+    const Vec3 d{raised.positions[i].x - standing.positions[i].x,
+                 raised.positions[i].y - standing.positions[i].y,
+                 raised.positions[i].z - standing.positions[i].z};
+    if (std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) > 1e-3) ++moved;
+  }
+  KIMIA_REQUIRE(moved > 0U);
+  // Joints that do not line up with the bones draw nothing.
+  const MeshData empty = kimia::skeletonStickMesh(rig, std::vector<Vec3>{rest[0]});
+  KIMIA_REQUIRE(!empty.isValid());
+  // Zero thickness picks 2% of the span on its own (a centimetre-scale
+  // copy draws just as well as the metre original).
+  const MeshData autoStick = kimia::skeletonStickMesh(rig, rest, 0.0);
+  KIMIA_REQUIRE(autoStick.isValid());
+  KIMIA_REQUIRE(autoStick.positions.size() == standing.positions.size());
+}
