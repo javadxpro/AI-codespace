@@ -1,0 +1,4 @@
+# colors for tire_stack — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl rubber
+Kd 0.100000 0.100000 0.110000

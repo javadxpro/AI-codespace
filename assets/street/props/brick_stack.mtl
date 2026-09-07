@@ -1,0 +1,7 @@
+# colors for brick_stack — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl brick_a
+Kd 0.620000 0.280000 0.160000
+
+newmtl brick_b
+Kd 0.550000 0.240000 0.140000

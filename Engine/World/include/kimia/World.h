@@ -839,6 +839,16 @@ public:
   // the bind mesh is missing. Shows the rest pose when no clip plays.
   // False when the entity has no skeleton.
   bool posedStickMesh(const std::string& entityName, MeshData& out);
+  // The model's material table, parsed once and kept (like skinnedFor):
+  // one sub-mesh per material group plus the MTL/FBX colors. Null when
+  // the file holds no materials — then the mesh draws in one color.
+  const assets::MeshAsset* assetFor(const std::string& meshFile);
+  // One tint per sub-mesh of the entity's model: the entity's own color
+  // times the material's color, so painting a model still tints it even
+  // though the file brings the real colors. Empty when there is nothing
+  // to tint (unknown entity, no file, no materials) — then draw the mesh
+  // in the entity color, as before.
+  std::vector<Vec3> modelTints(const std::string& entityName);
   // Stops every clip playing on an entity. True when something stopped.
   bool stopEntityClips(const std::string& entityName);
 
@@ -1012,6 +1022,7 @@ private:
   };
   std::vector<PlayingClip> playingClips_;
   std::map<std::string, std::optional<assets::SkinnedAsset>> skinnedCache_;
+  std::map<std::string, std::optional<assets::MeshAsset>> assetCache_;
   std::vector<std::string> triggeredSounds_;
 
   // Visual logic state.

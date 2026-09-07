@@ -1,0 +1,19 @@
+# colors for kid_reza — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl eyes
+Kd 0.080000 0.070000 0.070000
+
+newmtl feet
+Kd 0.780000 0.550000 0.400000
+
+newmtl shorts
+Kd 0.750000 0.680000 0.520000
+
+newmtl shirt
+Kd 0.120000 0.450000 0.200000
+
+newmtl skin
+Kd 0.780000 0.550000 0.400000
+
+newmtl hair
+Kd 0.100000 0.090000 0.090000

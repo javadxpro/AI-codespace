@@ -1,0 +1,10 @@
+# colors for cone — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl base
+Kd 0.550000 0.180000 0.060000
+
+newmtl body
+Kd 0.950000 0.350000 0.080000
+
+newmtl band
+Kd 0.950000 0.950000 0.950000

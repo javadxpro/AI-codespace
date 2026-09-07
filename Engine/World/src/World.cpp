@@ -2191,6 +2191,52 @@ bool WorldEditor::posedStickMesh(const std::string& entityName, MeshData& out) {
   return out.isValid();
 }
 
+const assets::MeshAsset* WorldEditor::assetFor(const std::string& meshFile) {
+  if (meshFile.empty()) return nullptr;
+  auto cached = assetCache_.find(meshFile);
+  if (cached == assetCache_.end()) {
+    std::string error;
+    cached = assetCache_.emplace(meshFile, assets::loadMeshAsset(meshFile, error)).first;
+  }
+  // One check for both paths, so a cached answer never disagrees with a
+  // fresh one.
+  const std::optional<assets::MeshAsset>& stored = cached->second;
+  if (!stored.has_value() || stored->subMeshes.empty()) return nullptr;
+  // A mesh with no material info at all draws the old way (one
+  // entity-colored piece); the split path is only for files whose
+  // materials actually say something.
+  if (stored->materials.empty()) {
+    bool tagged = false;
+    for (const MeshData& sub : stored->subMeshes) {
+      if (!sub.materialName.empty()) {
+        tagged = true;
+        break;
+      }
+    }
+    if (!tagged) return nullptr;
+  }
+  return &(*stored);
+}
+
+std::vector<Vec3> WorldEditor::modelTints(const std::string& entityName) {
+  const EntityData* target = entity(entityName);
+  if (target == nullptr || target->meshFile.empty()) return std::vector<Vec3>();
+  const assets::MeshAsset* asset = assetFor(target->meshFile);
+  if (asset == nullptr || asset->subMeshes.empty()) return std::vector<Vec3>();
+  std::vector<Vec3> tints;
+  tints.reserve(asset->subMeshes.size());
+  for (const MeshData& sub : asset->subMeshes) {
+    Vec3 tint = target->color;
+    for (const MaterialData& material : asset->materials) {
+      if (material.name != sub.materialName) continue;
+      tint = Vec3{tint.x * material.color.x, tint.y * material.color.y, tint.z * material.color.z};
+      break;
+    }
+    tints.push_back(tint);
+  }
+  return tints;
+}
+
 bool WorldEditor::stopEntityClips(const std::string& entityName) {
   bool stopped = false;
   for (usize i = playingClips_.size(); i > 0U; --i) {

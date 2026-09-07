@@ -726,6 +726,7 @@ int main(int argc, char** argv) {
       if (entity.mesh == kimia::MeshKind::plane) mesh = &planeMesh;
       if (entity.mesh == kimia::MeshKind::sphere) mesh = &sphereMesh;
       const kimia::Image* texture = nullptr;
+      bool isPosed = false;
       if (!entity.meshFile.empty()) {
         // Model entity: load the OBJ/FBX once, then draw it every frame.
         auto found = loadedMeshes.find(entity.meshFile);
@@ -752,6 +753,7 @@ int main(int argc, char** argv) {
           kimia::MeshData posed;
           if (editor.posedMesh(entity.name, posed)) {
             mesh = &posedMeshes.insert_or_assign(entity.name, std::move(posed)).first->second;
+            isPosed = true;
           }
         }
 
@@ -803,7 +805,23 @@ int main(int argc, char** argv) {
                                                                 : entity.transform.scale;
       const Mat4 model =
           Mat4::translation(position) * entity.transform.rotation.toMat4() * Mat4::scaling(scale);
-      scene.objects.push_back({mesh, model, entity.color, entity.roughness, texture});
+      // A model whose file brings its own materials draws one tinted
+      // piece per material; anything posed (or without materials) draws
+      // whole in the entity color, exactly as before.
+      std::vector<std::pair<const MeshData*, kimia::Vec3>> draws;
+      if (!entity.meshFile.empty() && !isPosed) {
+        const kimia::assets::MeshAsset* asset = editor.assetFor(entity.meshFile);
+        const std::vector<kimia::Vec3> tints = editor.modelTints(entity.name);
+        if (asset != nullptr && tints.size() == asset->subMeshes.size()) {
+          for (usize i = 0; i < asset->subMeshes.size(); ++i) {
+            draws.push_back({&asset->subMeshes[i], tints[i]});
+          }
+        }
+      }
+      if (draws.empty()) draws.push_back({mesh, entity.color});
+      for (const auto& draw : draws) {
+        scene.objects.push_back({draw.first, model, draw.second, entity.roughness, texture});
+      }
       if (kind == ObjectKind::Player) {
         // A little head so the player reads as a character.
         scene.objects.push_back(

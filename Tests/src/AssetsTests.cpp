@@ -599,3 +599,37 @@ KIMIA_TEST(obj_with_missing_mtl_still_loads_the_mesh) {
   KIMIA_REQUIRE(asset->materials[0].name == "Red");
   KIMIA_REQUIRE(near3(asset->materials[0].color, Vec3{1.0, 1.0, 1.0}));  // placeholder
 }
+
+KIMIA_TEST(street_pack_models_load_with_materials) {
+  // The hand-built street-football set: every file opens, carries its
+  // colors, and has valid triangles.
+  const char* files[] = {
+      "assets/street/props/goal_small.obj", "assets/street/props/cone.obj",
+      "assets/street/props/tire_stack.obj", "assets/street/props/brick_stack.obj",
+      "assets/street/props/bench.obj", "assets/street/kids/kid_ali.obj",
+      "assets/street/kids/kid_reza.obj", "assets/street/kids/kid_hassan.obj",
+  };
+  std::string error;
+  if (!kimia::assets::loadMesh(files[0], error).has_value()) {
+    std::printf("SKIP: assets/street not next to the test runner\n");
+    return;
+  }
+  for (const char* file : files) {
+    auto mesh = kimia::assets::loadMesh(file, error);
+    KIMIA_REQUIRE(mesh.has_value());
+    KIMIA_REQUIRE(!mesh->mesh.positions.empty());
+    KIMIA_REQUIRE(mesh->mesh.indices.size() % 3U == 0U);
+    auto asset = kimia::assets::loadMeshAsset(file, error);
+    KIMIA_REQUIRE(asset.has_value());
+    KIMIA_REQUIRE(!asset->subMeshes.empty());
+    KIMIA_REQUIRE(!asset->materials.empty());
+    for (const kimia::MeshData& sub : asset->subMeshes) {
+      KIMIA_REQUIRE(sub.isValid());
+      bool named = false;
+      for (const kimia::MaterialData& material : asset->materials) {
+        if (material.name == sub.materialName) named = true;
+      }
+      KIMIA_REQUIRE(named);
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# colors for bench — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl wood
+Kd 0.450000 0.280000 0.150000
+
+newmtl iron
+Kd 0.150000 0.150000 0.170000

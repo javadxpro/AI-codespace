@@ -1,0 +1,19 @@
+# colors for kid_hassan — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl eyes
+Kd 0.080000 0.070000 0.070000
+
+newmtl shoes
+Kd 0.200000 0.180000 0.170000
+
+newmtl shorts
+Kd 0.100000 0.140000 0.350000
+
+newmtl shirt
+Kd 0.900000 0.750000 0.150000
+
+newmtl skin
+Kd 0.880000 0.660000 0.500000
+
+newmtl hair
+Kd 0.140000 0.110000 0.100000

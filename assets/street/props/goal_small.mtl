@@ -1,0 +1,4 @@
+# colors for goal_small — TWEAK THESE to customize (Kd = red green blue, 0..1)
+
+newmtl paint
+Kd 0.900000 0.900000 0.920000

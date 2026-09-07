@@ -4739,3 +4739,40 @@ KIMIA_TEST(world_bare_rig_imports_as_a_playable_stick_figure) {
   }
   KIMIA_REQUIRE(moved > 0U);
 }
+
+KIMIA_TEST(world_model_tints_pair_each_material_with_its_color) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  const kimia::assets::MeshAsset* asset = editor.assetFor("Tests/assets/spider.obj");
+  KIMIA_REQUIRE(asset != nullptr);
+  KIMIA_REQUIRE(!asset->subMeshes.empty());
+  const std::vector<Vec3> tints = editor.modelTints(name);
+  KIMIA_REQUIRE(tints.size() == asset->subMeshes.size());
+  // A fresh import is white, so each tint is exactly its MTL color.
+  for (kimia::usize i = 0; i < asset->subMeshes.size(); ++i) {
+    Vec3 material{1.0, 1.0, 1.0};
+    for (const kimia::MaterialData& entry : asset->materials) {
+      if (entry.name == asset->subMeshes[i].materialName) material = entry.color;
+    }
+    KIMIA_REQUIRE(near3(tints[i], material, 1e-9));
+  }
+  // Painting the entity red tints every piece red.
+  KIMIA_REQUIRE(editor.setEntityColor(name, Vec3{1.0, 0.0, 0.0}));
+  const std::vector<Vec3> red = editor.modelTints(name);
+  KIMIA_REQUIRE(red.size() == tints.size());
+  for (kimia::usize i = 0; i < red.size(); ++i) {
+    KIMIA_REQUIRE(near3(red[i], Vec3{tints[i].x, 0.0, 0.0}, 1e-9));
+  }
+  // Nothing to tint: unknown entities, plain props, files without
+  // materials. The renderer falls back to the entity color then.
+  KIMIA_REQUIRE(editor.modelTints("nope").empty());
+  editor.createObject("cube", Vec3{0.0, 0.0, 0.0});
+  KIMIA_REQUIRE(editor.modelTints("Cube").empty());
+  const std::string bar = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!bar.empty());
+  KIMIA_REQUIRE(editor.modelTints(bar).empty());
+  KIMIA_REQUIRE(editor.assetFor("Tests/assets/skinned_bar.fbx") == nullptr);
+  KIMIA_REQUIRE(editor.assetFor("nope.obj") == nullptr);
+}

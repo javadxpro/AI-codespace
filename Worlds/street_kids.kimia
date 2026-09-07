@@ -1,0 +1,29 @@
+# KIMIA scene v1
+# name StreetKids
+e "Ground" mesh plane pos 0.000000 0.000000 0.000000 scale 44.000000 1.000000 44.000000 color 0.150000 0.150000 0.170000 rough 0.950000
+e "Pitch" mesh plane pos 0.000000 0.005000 0.000000 scale 10.000000 1.000000 7.000000 color 0.300000 0.280000 0.260000 rough 0.950000
+e "LineN" mesh cube pos 0.000000 0.012000 2.500000 scale 8.000000 0.020000 0.080000 color 0.750000 0.750000 0.730000 rough 0.900000
+e "LineS" mesh cube pos 0.000000 0.012000 -2.500000 scale 8.000000 0.020000 0.080000 color 0.750000 0.750000 0.730000 rough 0.900000
+e "LineW" mesh cube pos -4.000000 0.012000 0.000000 scale 0.080000 0.020000 5.000000 color 0.750000 0.750000 0.730000 rough 0.900000
+e "LineE" mesh cube pos 4.000000 0.012000 0.000000 scale 0.080000 0.020000 5.000000 color 0.750000 0.750000 0.730000 rough 0.900000
+e "LineMid" mesh cube pos 0.000000 0.012000 0.000000 scale 0.080000 0.020000 5.000000 color 0.750000 0.750000 0.730000 rough 0.900000
+e "Wall_left" mesh cube pos -7.000000 1.500000 0.000000 scale 0.500000 3.000000 20.000000 color 0.550000 0.270000 0.180000 rough 0.900000
+e "Wall_right" mesh cube pos 7.000000 1.500000 0.000000 scale 0.500000 3.000000 20.000000 color 0.550000 0.270000 0.180000 rough 0.900000
+e "Wall_back" mesh cube pos 0.000000 1.500000 -9.000000 scale 14.500000 3.000000 0.500000 color 0.550000 0.270000 0.180000 rough 0.900000
+e "Door" mesh cube pos 2.500000 1.000000 -8.680000 scale 1.200000 2.000000 0.120000 color 0.120000 0.280000 0.650000 rough 0.600000
+e "Step" mesh cube pos 2.500000 0.060000 -8.350000 scale 1.400000 0.120000 0.400000 color 0.450000 0.430000 0.400000 rough 0.900000
+e "Window1" mesh cube pos -2.500000 2.000000 -8.700000 scale 0.900000 0.900000 0.100000 color 0.070000 0.080000 0.100000 rough 0.400000
+e "Window2" mesh cube pos -4.500000 2.000000 -8.700000 scale 0.900000 0.900000 0.100000 color 0.070000 0.080000 0.100000 rough 0.400000
+e "MiniGoal" mesh cube pos -4.200000 0.000000 0.000000 rot 0.000000 0.707107 0.000000 0.707107 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/goal_small.obj" rough 0.600000
+e "BricksA" mesh cube pos 4.200000 0.000000 -1.000000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/brick_stack.obj" rough 0.900000
+e "BricksB" mesh cube pos 4.200000 0.000000 1.000000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/brick_stack.obj" rough 0.900000
+e "Tires" mesh cube pos 5.500000 0.000000 -3.200000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/tire_stack.obj" rough 0.900000
+e "Cone1" mesh cube pos 0.000000 0.000000 1.500000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/cone.obj" rough 0.700000
+e "Cone2" mesh cube pos 0.300000 0.000000 0.500000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/cone.obj" rough 0.700000
+e "Cone3" mesh cube pos -0.300000 0.000000 -0.500000 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/cone.obj" rough 0.700000
+e "Bench" mesh cube pos -5.800000 0.000000 3.600000 rot 0.000000 0.707107 0.000000 0.707107 scale 1.000000 1.000000 1.000000 meshfile "assets/street/props/bench.obj" rough 0.800000
+e "Ali" mesh cube pos 0.900000 0.000000 0.700000 rot 0.000000 -0.898315 0.000000 0.439351 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_ali.obj" rough 0.800000
+e "Reza" mesh cube pos -1.300000 0.000000 -0.900000 rot 0.000000 0.464107 0.000000 0.885779 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_reza.obj" rough 0.800000
+e "Hassan" mesh cube pos -3.500000 0.000000 0.300000 rot 0.000000 0.707107 0.000000 0.707107 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_hassan.obj" rough 0.800000
+e "Karim" mesh cube pos -5.200000 0.000000 2.900000 rot 0.000000 0.862284 0.000000 0.506425 scale 1.000000 1.000000 1.000000 meshfile "assets/street/kids/kid_reza.obj" rough 0.800000
+e "Ball" mesh sphere pos 0.000000 0.300000 0.000000 scale 0.240000 0.240000 0.240000 color 0.950000 0.950000 0.920000 rough 0.300000
