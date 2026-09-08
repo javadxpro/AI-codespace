@@ -115,18 +115,18 @@ BodyKind bodyKindFrom(const std::string& text) {
 // How big the thing actually is in the world, in meters. For a built-in
 // shape that is just its scale; for an imported model it is the file's
 // own size multiplied by the transform.
-f64 entitySpan(const EntityData& entity) {
+f64 entitySpan(const EntityData& entity, const std::string& resolvedAssetPath) {
   const Vec3& s = entity.transform.scale;
   f64 largest = std::max(std::abs(s.x), std::max(std::abs(s.y), std::abs(s.z)));
   if (entity.meshFile.empty()) return largest;
   std::string error;
-  auto loaded = assets::loadMesh(entity.meshFile, error);
+  auto loaded = assets::loadMesh(resolvedAssetPath, error);
   // A bare rig (an animation-only FBX) has no vertices; its rest-pose
   // joints measure it instead.
   std::vector<Vec3> rigJoints;
   if (!loaded.has_value() || loaded->mesh.positions.empty()) {
     std::string rigError;
-    auto rigged = assets::loadFBXSkinned(entity.meshFile, rigError);
+    auto rigged = assets::loadFBXSkinned(resolvedAssetPath, rigError);
     if (rigged.has_value() && !rigged->skinned.skeleton.isEmpty()) {
       rigJoints = restJointPositions(rigged->skinned.skeleton);
     }
@@ -149,7 +149,8 @@ f64 entitySpan(const EntityData& entity) {
 }
 
 // One object's full Dossier, as the panel shows it.
-std::string dossierJson(const EntityData& entity, const Vec3& rotationDegrees) {
+std::string dossierJson(const EntityData& entity, const Vec3& rotationDegrees,
+                        const std::string& resolvedAssetPath) {
   std::string out = "{";
   out += "\"name\":" + quoted(entity.name);
   out += ",\"mesh\":" + quoted(entity.meshFile);
@@ -159,7 +160,7 @@ std::string dossierJson(const EntityData& entity, const Vec3& rotationDegrees) {
   // A raw scale multiplier is meaningless for an imported model: after
   // bring-in auto-fits the file, "3" means three times the original, not
   // three units across. The Bench shows this measured size instead.
-  out += ",\"span\":" + number(entitySpan(entity));
+  out += ",\"span\":" + number(entitySpan(entity, resolvedAssetPath));
   out += ",\"color\":" + vec3Json(entity.color);
   out += ",\"labels\":" + stringsJson(entity.tags);
 
@@ -281,7 +282,7 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     const EntityData* entity = editor.entity(param(params, "name"));
     if (entity == nullptr) return errorJson("no such object");
     return "{\"ok\":true,\"dossier\":" +
-           dossierJson(*entity, editor.entityEulerDegrees(entity->name)) + "}";
+           dossierJson(*entity, editor.entityEulerDegrees(entity->name), editor.assetPath(entity->meshFile)) + "}";
   }
 
   // Everything carrying a label — the point of labels is addressing a
@@ -372,7 +373,9 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
       const assetscan::ScannedAsset& asset = found[i];
       if (i > 0U) out += ",";
       out += "{\"file\":" + quoted(asset.file);
-      out += ",\"path\":" + quoted(asset.path);
+      // The browser must never save or echo the server's absolute path. The
+      // relative asset name is stable in a .kimia world and in a package.
+      out += ",\"path\":" + quoted(asset.file);
       out += ",\"kind\":" + quoted(assetscan::assetKindName(asset.kind));
       out += ",\"bytes\":" + std::to_string(asset.bytes);
       out += ",\"skeleton\":" + std::string(asset.hasSkeleton ? "true" : "false");
@@ -410,6 +413,7 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
       out += ",\"size\":" + number(control.spot.size);
       out += ",\"clipFile\":" + quoted(control.clipFile);
       out += ",\"clip\":" + quoted(control.clip);
+      out += ",\"target\":" + quoted(control.target);
       out += ",\"sound\":" + quoted(control.sound);
       out += ",\"bindings\":[";
       for (usize b = 0; b < control.bindings.size(); ++b) {
@@ -434,6 +438,7 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
     control.spot.size = numberParam(params, "size", 0.12);
     control.clipFile = param(params, "clipfile");
     control.clip = param(params, "clip");
+    control.target = param(params, "target");
     control.sound = param(params, "sound");
 
     const std::string key = param(params, "key");
@@ -471,7 +476,9 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
   // Fire a control from the Bench to check its clip and sound.
   if (path == "/api/do") {
     if (!editor.fireControl(param(params, "control"))) return errorJson("no such control");
-    return okJson();
+    const std::string& warning = editor.lastAnimationError();
+    if (warning.empty()) return okJson();
+    return "{\"ok\":true,\"warning\":" + quoted(warning) + "}";
   }
 
   // --- Particles ---
@@ -938,8 +945,49 @@ std::string handleApi(WorldEditor& editor, const std::string& path,
   if (path == "/api/object/play-clip") {
     const EntityData* target = editor.entity(param(params, "name"));
     if (target == nullptr || target->meshFile.empty()) return errorJson("that object has no model file");
-    editor.playClip(target->meshFile, param(params, "clip"));
-    return okJson();
+    // Inspector playback is an action on this object, so preserve the
+    // legacy `Entity:Clip` diagnostic. Controls use the three-argument
+    // source form when they intentionally play a separate FBX.
+    editor.playClip(std::string(), param(params, "clip"), target->name);
+    const std::string& warning = editor.lastAnimationError();
+    if (warning.empty()) return okJson();
+    return "{\"ok\":true,\"warning\":" + quoted(warning) + "}";
+  }
+
+  // Live body anchors for gameplay and editor effects. The response keeps
+  // both rig-local and entity/world coordinates, including x/z explicitly
+  // so a caller does not have to know how the vector array is encoded.
+  if (path == "/api/object/bones" || path == "/api/bones" || path == "/api/object/bone" ||
+      path == "/api/bone") {
+    const std::string name = param(params, "name");
+    const std::vector<BoneMarker> markers = editor.characterBoneMarkers(name);
+    const std::string requested = param(params, "bone");
+    if (!requested.empty()) {
+      for (const BoneMarker& marker : markers) {
+        if (marker.name != requested) continue;
+        return "{\"ok\":true,\"name\":" + quoted(marker.name) +
+               ",\"local\":" + vec3Json(marker.localCenter) +
+               ",\"world\":" + vec3Json(marker.center) +
+               ",\"x\":" + number(marker.center.x) +
+               ",\"z\":" + number(marker.center.z) + "}";
+      }
+      return errorJson("no such bone");
+    }
+    std::string out = "{\"ok\":true,\"bones\":[";
+    for (usize i = 0; i < markers.size(); ++i) {
+      if (i > 0U) out += ",";
+      const BoneMarker& marker = markers[i];
+      out += "{\"name\":" + quoted(marker.name);
+      out += ",\"localStart\":" + vec3Json(marker.localStart);
+      out += ",\"localEnd\":" + vec3Json(marker.localEnd);
+      out += ",\"localCenter\":" + vec3Json(marker.localCenter);
+      out += ",\"start\":" + vec3Json(marker.start);
+      out += ",\"end\":" + vec3Json(marker.end);
+      out += ",\"center\":" + vec3Json(marker.center);
+      out += ",\"x\":" + number(marker.center.x) + ",\"z\":" + number(marker.center.z);
+      out += ",\"length\":" + number(marker.length) + "}";
+    }
+    return out + "]}";
   }
   if (path == "/api/object/stop-clips") {
     const bool stopped = editor.stopEntityClips(param(params, "name"));
@@ -1226,6 +1274,8 @@ input[type=checkbox]{width:auto}
         <button class="go" style="flex:1" onclick="playClip()">Play clip</button>
         <button style="flex:1" onclick="stopClips()">Stop</button>
       </div>
+      <h2>Live body anchors</h2>
+      <div class="hint" id="liveBones">No named bones</div>
 
       <h2>Body</h2>
       <div class="row"><label>kind</label>
@@ -1450,6 +1500,7 @@ input[type=checkbox]{width:auto}
       <div class="row"><label>clip</label>
         <select id="cClipFile" onchange="clipsOf(this.value)"><option value="">-- model --</option></select></div>
       <div class="row"><select id="cClip"><option value="">-- none --</option></select>
+        <input id="cTarget" placeholder="target character (optional)">
         <input id="cSound" placeholder="sound"></div>
       <div class="row">
         <button class="go" style="flex:1" onclick="setControl()">Save control</button>
@@ -1722,8 +1773,29 @@ function pick(name){
       nv.appendChild(w);
     });
     loadClips();
+    loadBones(name);
     loadHier();
     setTool(tool);
+  });
+}
+function loadBones(name){
+  api('object/bones', {name: name}, function(d){
+    var box = document.getElementById('liveBones');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!d || !(d.bones || []).length){
+      box.textContent = 'No named bones';
+      return;
+    }
+    (d.bones || []).forEach(function(b){
+      var row = document.createElement('div');
+      row.className = 'wire';
+      var left = document.createElement('i');
+      left.textContent = b.name;
+      var right = document.createElement('span');
+      right.textContent = 'x ' + b.x.toFixed(2) + '  z ' + b.z.toFixed(2);
+      row.appendChild(left); row.appendChild(right); box.appendChild(row);
+    });
   });
 }
 function loadClips(){
@@ -2005,14 +2077,16 @@ function loadAssets(deep){
 // the scene, an image goes onto whatever is selected.
 function useAsset(a){
   if (a.kind === 'model'){
-    api('bring-in', {file: a.path, size: 1}, function(d){
+    // Keep the scene portable: `file` is relative to the configured assets
+    // folder. `path` is only the server's filesystem location.
+    api('bring-in', {file: a.file, size: 1}, function(d){
       if (d && d.ok){ log('imported ' + d.name); loadHier(); pick(d.name); }
     });
     return;
   }
   if (a.kind === 'texture'){
     if (!picked){ flash('select an object first, then click an image', true); return; }
-    api('skin', {name: picked, image: a.path}, function(d){
+    api('skin', {name: picked, image: a.file}, function(d){
       if (d && d.ok) log('painted ' + a.file + ' onto ' + picked);
     });
     return;
@@ -2314,7 +2388,8 @@ function fillClipFiles(){
   scanned.forEach(function(a){
     if (a.kind !== 'model' || !a.clips || !a.clips.length) return;
     var o = document.createElement('option');
-    o.value = a.path;
+    // Controls store the asset-relative name, never an absolute server path.
+    o.value = a.file;
     o.textContent = a.file + ' (' + a.clips.length + ')';
     sel.appendChild(o);
   });
@@ -2326,7 +2401,7 @@ function clipsOf(path){
   if (!sel) return;
   sel.innerHTML = '<option value="">-- none --</option>';
   scanned.forEach(function(a){
-    if (a.path !== path) return;
+    if (a.file !== path) return;
     (a.clips || []).forEach(function(c){
       var o = document.createElement('option');
       o.value = c;
@@ -2370,6 +2445,7 @@ function loadControls(){
         document.getElementById('cClipFile').value = c.clipFile;
         clipsOf(c.clipFile);
         document.getElementById('cClip').value = c.clip;
+        document.getElementById('cTarget').value = c.target || '';
         var key = '', pad = '', touch = false;
         (c.bindings || []).forEach(function(b){
           if (b.source === 'key') key = b.code;
@@ -2402,6 +2478,7 @@ function setControl(){
     size: document.getElementById('cSize').value,
     clipfile: document.getElementById('cClipFile').value,
     clip: document.getElementById('cClip').value,
+    target: document.getElementById('cTarget').value,
     sound: document.getElementById('cSound').value}, function(d){
       if (d && d.ok){ log('control saved'); loadControls(); }
     });

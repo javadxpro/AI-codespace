@@ -38,6 +38,8 @@ uniform vec3 uLightDir;
 uniform vec3 uAmbient;
 uniform vec3 uCameraPos;
 uniform sampler2DShadow uShadowMap;
+uniform sampler2D uBaseTexture;
+uniform float uHasTexture;
 out vec4 fragColor;
 void main() {
   vec3 N = normalize(vNormal);
@@ -61,6 +63,7 @@ void main() {
     shadow /= 9.0;
   }
   vec3 base = uColor * (uAmbient + diff * (1.0 - uAmbient));
+  if (uHasTexture > 0.5) base *= texture(uBaseTexture, vUV).rgb;
   float specStrength = (1.0 - uRoughness) * 0.6;
   vec3 color = shadow * base + vec3(specStrength * spec);
   color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));  // gamma

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <kimia/AssetPipeline.h>
+#include <kimia/Animator.h>
 #include <kimia/GameProfile.h>
 #include <kimia/Hud.h>
 #include <kimia/Input.h>
@@ -153,6 +154,10 @@ inline constexpr f64 kRulesTiredPace = 0.55;
 // Real clip lengths arrive with the skeleton work; this keeps a triggered
 // move visible for a sensible beat in the meantime.
 inline constexpr f64 kTriggerClipSeconds = 0.8;
+// Cross-fade between two clips on the same rig instead of snapping from the
+// old pose to the new one. The clip files in assets are separate one-clip
+// FBX exports, so the transition is owned by the runtime, not the importer.
+inline constexpr f64 kAnimationBlendSeconds = 0.15;
 
 // --- Arena mode (stage 30) ---
 // A shot leaves the muzzle at about chest height, not from the floor.
@@ -343,6 +348,12 @@ public:
   // the project assets folder, place it in the scene).
   void setImportDirectory(const std::string& dir) { importDir_ = dir; }
   const std::string& importDirectory() const { return importDir_; }
+  // Resolves a world-stored asset path against the configured project assets
+  // folder without changing the path saved in the .kimia file. World files
+  // may outlive the process working directory (especially published games),
+  // so renderers and inspectors must use this instead of opening meshFile
+  // or texture directly.
+  std::string assetPath(const std::string& file) const;
   void refreshImportFiles();
   usize importFileCount() const { return importFiles_.size(); }
   const std::string& importFileAt(usize index) const { return importFiles_[index]; }
@@ -644,8 +655,10 @@ public:
   // as an event the rules can listen for.
   bool fireControl(const std::string& name);
   // Plays a clip straight from a scanned model file, with no component
-  // needed. This is what a button bound to an FBX clip uses.
-  void playClip(const std::string& file, const std::string& clip);
+  // needed. This is what a button bound to an FBX clip uses. `target` can
+  // name a particular character; empty selects every matching model or the
+  // first compatible character.
+  void playClip(const std::string& file, const std::string& clip, const std::string& target = std::string());
 
   // --- Textures on objects ---
   // Puts an image on an object. The path comes from the file list, so a
@@ -823,18 +836,24 @@ public:
   u32 fireTrigger(const std::string& trigger);
   // The sounds queued by fireTrigger, drained by the app once a frame.
   std::vector<std::string> drainTriggeredSounds();
-  // Animation clips currently playing, as "<entity>:<clip>" — the app and
-  // the tests both read this to see what a button actually did.
+  // Animation clips currently playing. Object-local playback keeps the
+  // legacy "<entity>:<clip>" spelling; a control that explicitly names a
+  // source FBX reports "<source-file>:<clip>" for diagnostics.
   std::vector<std::string> playingAnimations() const;
+  // Human-readable diagnostic for the most recent missing/incompatible clip.
+  // A pending diagnostic never fabricates a pose; a successful play clears it.
+  const std::string& lastAnimationError() const { return animationError_; }
 
   // --- Real animation: the model's OWN skeleton, not a timer ---
   // Which clips the entity's model file holds ("Bend", ...). Empty when
   // the entity has no skeleton — the Inspector's clip list reads this.
   std::vector<std::string> animationClips(const std::string& entityName);
   bool hasSkeleton(const std::string& entityName);
-  // Poses the entity's mesh at its playing clip's current moment. False
-  // when there is nothing to pose (no skeleton, no clip playing, or the
-  // clip is not in the file) — then draw the bind mesh instead.
+  // Poses the entity's mesh at its playing clip's current moment. When a
+  // different clip starts, the previous and new local poses are cross-faded
+  // for kAnimationBlendSeconds. False when there is nothing to pose (no
+  // skeleton, no clip playing, or the clip is not in the file) — then draw
+  // the bind mesh instead.
   bool posedMesh(const std::string& entityName, MeshData& out);
   // A stick figure of the entity's live skeleton pose: one stretched box
   // per bone plus a cube on every joint. For an animation-only file (a
@@ -846,6 +865,11 @@ public:
   // one sub-mesh per material group plus the MTL/FBX colors. Null when
   // the file holds no materials — then the mesh draws in one color.
   const assets::MeshAsset* assetFor(const std::string& meshFile);
+  // Live named body anchors. Coordinates are in world space after the
+  // entity transform; `center.x` and `center.z` are stable targets for
+  // effects, hit markers, ball contact and camera framing.
+  std::vector<BoneMarker> characterBoneMarkers(const std::string& entityName);
+  std::optional<Vec3> characterBoneCenter(const std::string& entityName, const std::string& boneName);
   // One tint per sub-mesh of the entity's model: the entity's own color
   // times the material's color, so painting a model still tints it even
   // though the file brings the real colors. Empty when there is nothing
@@ -962,7 +986,10 @@ private:
   // The skeleton + clips of a model file, parsed once and kept: parsing
   // an FBX per frame would stall the phone. Null when the file holds none.
   const assets::SkinnedAsset* skinnedFor(const std::string& meshFile);
+  const assets::SkinnedAsset* skinnedForEntity(const EntityData& target);
   void startClip(const std::string& entityName, const std::string& clipName, bool loop, f64 speed);
+  void startClipFrom(const std::string& entityName, const std::string& sourceFile, const std::string& clipName,
+                     bool loop, f64 speed, const std::string& action);
   void arenaReset();              // full health and ammo for everyone
   bool arenaShoot(u32 id, const Vec3& aim);  // one fighter pulls the trigger
   Vec3 aiSeparation(u32 id) const;  // push away from crowding team-mates
@@ -1013,17 +1040,23 @@ private:
   f64 figureClock_ = 0.0;  // drives the walk cycle (stage 33)
   bool humanPassedBall_ = false;  // set by pass(), read once by the offside check
 
-  // Trigger state (stage 31): each clip plays from the model's OWN
-  // skeleton, so it needs a clock (time) and the clip's length.
+  // Trigger state (stage 31): the Animator owns the actual time, retarget
+  // map and cross-fade. This small wrapper keeps the editor's diagnostic
+  // spelling (`source.fbx:Clip` or `Entity:Clip`) and supports a pending
+  // request when a button is configured before a compatible character exists.
   struct PlayingClip {
-    std::string entity;
+    std::string entity;       // target entity; empty for a pending request
+    std::string displayAsset; // source FBX shown by playingAnimations()
     std::string clip;
-    f64 time = 0.0;      // seconds into the clip (speed already applied)
-    f64 duration = 0.0;  // clip length; <= 0 = unknown, kTriggerClipSeconds instead
-    f64 speed = 1.0;
+    bool valid = false;
     bool loop = false;
+    f64 speed = 1.0;
+    f64 pendingTime = 0.0;
+    f64 duration = kTriggerClipSeconds;
+    Animator animator;
   };
   std::vector<PlayingClip> playingClips_;
+  std::string animationError_;
   std::map<std::string, std::optional<assets::SkinnedAsset>> skinnedCache_;
   std::map<std::string, std::optional<assets::MeshAsset>> assetCache_;
   std::vector<std::string> triggeredSounds_;

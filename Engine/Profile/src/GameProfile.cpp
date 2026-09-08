@@ -2,10 +2,9 @@
 
 #include <kimia/TextFormat.h>
 
-#include <dirent.h>
-
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -265,13 +264,23 @@ std::vector<GameProfile> builtinProfiles() {
 std::vector<GameProfile> loadProfiles(const std::string& dir) {
   std::vector<GameProfile> profiles = builtinProfiles();
   std::vector<std::string> files;
-  DIR* handle = ::opendir(dir.c_str());
-  if (handle != nullptr) {
-    while (dirent* entry = ::readdir(handle)) {
-      const std::string name = entry->d_name;
+  namespace fs = std::filesystem;
+  std::error_code fsError;
+  fs::directory_iterator iterator;
+  if (!dir.empty()) iterator = fs::directory_iterator(fs::path(dir), fsError);
+  if (!fsError && !dir.empty()) {
+    const fs::directory_iterator end;
+    for (; iterator != end; iterator.increment(fsError)) {
+      if (fsError) {
+        fsError.clear();
+        continue;
+      }
+      const fs::directory_entry& entry = *iterator;
+      std::error_code entryError;
+      if (!entry.is_regular_file(entryError) || entryError) continue;
+      const std::string name = entry.path().filename().string();
       if (hasProfileExtension(name)) files.push_back(name);
     }
-    ::closedir(handle);
   }
   std::sort(files.begin(), files.end());
   for (const std::string& file : files) {

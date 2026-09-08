@@ -35,6 +35,23 @@ Bounds sceneBounds(const RenderScene& scene) {
   return bounds;
 }
 
+u64 textureSignature(const Image& image) {
+  // Workbench images are mutable. Hash their content so an edited image is
+  // uploaded again even when the caller keeps the same Image object.
+  u64 hash = 1469598103934665603ULL;
+  const auto mix = [&hash](u8 value) {
+    hash ^= static_cast<u64>(value);
+    hash *= 1099511628211ULL;
+  };
+  mix(static_cast<u8>(image.width & 0xff));
+  mix(static_cast<u8>((image.width >> 8) & 0xff));
+  mix(static_cast<u8>(image.height & 0xff));
+  mix(static_cast<u8>((image.height >> 8) & 0xff));
+  mix(static_cast<u8>(image.channels));
+  for (const u8 value : image.pixels) mix(value);
+  return hash;
+}
+
 }  // namespace
 
 Renderer::~Renderer() { shutdown(); }
@@ -104,6 +121,10 @@ bool Renderer::initialize(std::string& error) {
 
 void Renderer::shutdown() {
   GLFunctions& gl = GLFunctions::instance();
+  for (const auto& entry : gpuTextures_) {
+    if (entry.second.texture != 0U) gl.deleteTextures(1, &entry.second.texture);
+  }
+  gpuTextures_.clear();
   gpuMeshes_.clear();
   phong_.destroy();
   depth_.destroy();
@@ -157,14 +178,21 @@ void Renderer::render(const RenderScene& scene, i32 width, i32 height) {
   gl.activeTexture(GL_TEXTURE0 + 1);
   gl.bindTexture(GL_TEXTURE_2D, shadowTexture_);
   phong_.setInt("uShadowMap", 1);
+  phong_.setInt("uBaseTexture", 0);
   for (const RenderObject& object : scene.objects) {
     if (object.mesh == nullptr) continue;
     phong_.setMat4("uModel", object.model);
     phong_.setMat4("uNormalMat", object.model.inverseTranspose());
     phong_.setVec3("uColor", object.color);
     phong_.setFloat("uRoughness", object.roughness);
+    const GLuint texture = textureFor(object.texture);
+    gl.activeTexture(GL_TEXTURE0);
+    gl.bindTexture(GL_TEXTURE_2D, texture);
+    phong_.setFloat("uHasTexture", texture != 0U ? 1.0 : 0.0);
     meshFor(object.mesh).draw();
   }
+  gl.activeTexture(GL_TEXTURE0);
+  gl.bindTexture(GL_TEXTURE_2D, 0);
   gl.activeTexture(GL_TEXTURE0 + 1);
   gl.bindTexture(GL_TEXTURE_2D, 0);
   gl.disable(GL_CULL_FACE);
@@ -177,6 +205,55 @@ const GpuMesh& Renderer::meshFor(const MeshData* mesh) {
   auto inserted = gpuMeshes_.emplace(mesh, GpuMesh{});
   inserted.first->second.upload(*mesh);
   return inserted.first->second;
+}
+
+GLuint Renderer::textureFor(const Image* image) {
+  if (image == nullptr || image->isEmpty() || image->width <= 0 || image->height <= 0 ||
+      (image->channels != 3 && image->channels != 4)) {
+    return 0U;
+  }
+  const usize pixelCount = static_cast<usize>(image->width) * static_cast<usize>(image->height);
+  const usize required = pixelCount * static_cast<usize>(image->channels);
+  if (image->pixels.size() < required) return 0U;
+
+  GLFunctions& gl = GLFunctions::instance();
+  const u64 signature = textureSignature(*image);
+  auto found = gpuTextures_.find(image);
+  if (found != gpuTextures_.end() && found->second.signature == signature) return found->second.texture;
+  if (found != gpuTextures_.end() && found->second.texture != 0U) {
+    gl.deleteTextures(1, &found->second.texture);
+    found->second.texture = 0U;
+  }
+
+  std::vector<u8> rgba(pixelCount * 4U);
+  for (usize i = 0; i < pixelCount; ++i) {
+    const usize source = i * static_cast<usize>(image->channels);
+    const usize destination = i * 4U;
+    rgba[destination] = image->pixels[source];
+    rgba[destination + 1U] = image->pixels[source + 1U];
+    rgba[destination + 2U] = image->pixels[source + 2U];
+    rgba[destination + 3U] = image->channels == 4 ? image->pixels[source + 3U] : 255U;
+  }
+
+  GLuint texture = 0U;
+  gl.genTextures(1, &texture);
+  if (texture == 0U) return 0U;
+  gl.activeTexture(GL_TEXTURE0);
+  gl.bindTexture(GL_TEXTURE_2D, texture);
+  gl.pixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA), static_cast<GLsizei>(image->width),
+                static_cast<GLsizei>(image->height), 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+  gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(GL_LINEAR_MIPMAP_LINEAR));
+  gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(GL_LINEAR));
+  gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, static_cast<GLint>(GL_REPEAT));
+  gl.texParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, static_cast<GLint>(GL_REPEAT));
+  gl.generateMipmap(GL_TEXTURE_2D);
+  gl.bindTexture(GL_TEXTURE_2D, 0U);
+
+  TextureGpu& stored = gpuTextures_[image];
+  stored.texture = texture;
+  stored.signature = signature;
+  return texture;
 }
 
 bool Renderer::captureImage(i32 width, i32 height, Image& outImage) const {

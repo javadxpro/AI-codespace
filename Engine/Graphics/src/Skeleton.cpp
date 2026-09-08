@@ -75,6 +75,10 @@ bool Skeleton::isValid() const {
   return true;
 }
 
+Transform3D blendTransforms(const Transform3D& from, const Transform3D& to, f64 amount) {
+  return blend(from, to, amount);
+}
+
 f64 VertexSkin::totalWeight() const {
   f64 total = 0.0;
   for (u32 i = 0; i < kMaxBoneInfluences; ++i) total += weights[i];
@@ -156,6 +160,36 @@ void computeWorldMatrices(const Skeleton& skeleton, const std::vector<Transform3
       out[i] = out[static_cast<usize>(parent)] * local;
     }
   }
+}
+
+std::vector<BoneMarker> boneMarkers(const Skeleton& skeleton, const std::vector<Transform3D>& localPoses) {
+  std::vector<Mat4> world;
+  computeWorldMatrices(skeleton, localPoses, world);
+  std::vector<BoneMarker> markers;
+  markers.resize(skeleton.bones.size());
+  for (usize i = 0; i < skeleton.bones.size(); ++i) {
+    BoneMarker& marker = markers[i];
+    marker.name = skeleton.bones[i].name;
+    marker.start = world[i] * Vec3{0.0, 0.0, 0.0};
+    marker.end = Vec3{0.0, 0.0, 0.0};
+    usize childCount = 0U;
+    for (usize child = 0; child < skeleton.bones.size(); ++child) {
+      if (skeleton.bones[child].parent != static_cast<i32>(i)) continue;
+      marker.end += world[child] * Vec3{0.0, 0.0, 0.0};
+      ++childCount;
+    }
+    if (childCount > 0U) {
+      marker.end = marker.end * (1.0 / static_cast<f64>(childCount));
+    } else {
+      marker.end = marker.start;
+    }
+    marker.center = (marker.start + marker.end) * 0.5;
+    marker.localStart = marker.start;
+    marker.localEnd = marker.end;
+    marker.localCenter = marker.center;
+    marker.length = (marker.end - marker.start).length();
+  }
+  return markers;
 }
 
 void computeSkinMatrices(const Skeleton& skeleton, const std::vector<Transform3D>& localPoses,

@@ -49,6 +49,9 @@ struct Control {
   // Empty means the control does not animate anything.
   std::string clipFile;  // the FBX the clip came from
   std::string clip;      // the clip's name inside it
+  // Optional character entity. Empty means "find a compatible character";
+  // setting it makes a button drive exactly this player/enemy.
+  std::string target;
   std::string sound;     // a sound to play, by name
 };
 

@@ -113,6 +113,11 @@ struct AnimationClip {
   bool isEmpty() const { return tracks.empty(); }
 };
 
+// Blends two local bone transforms (linear position/scale, shortest-arc
+// spherical rotation). Runtime clip cross-fades and keyframe sampling use the
+// same operation, so a transition never snaps at a joint.
+Transform3D blendTransforms(const Transform3D& from, const Transform3D& to, f64 amount);
+
 // Samples one track at `time`, interpolating between the surrounding keys
 // (linear for position/scale, slerp for rotation). Before the first key or
 // after the last it holds that key — clamping is the caller's job via the
@@ -132,6 +137,26 @@ void samplePose(const Skeleton& skeleton, const AnimationClip& clip, f64 time, s
 // parent is always already done). `localPoses` must have one entry per bone.
 void computeWorldMatrices(const Skeleton& skeleton, const std::vector<Transform3D>& localPoses,
                           std::vector<Mat4>& out);
+
+// A live locator for gameplay, effects and editor tools. For a bone with
+// children, `end` is the average child-joint position; for a leaf bone the
+// joint itself is a stable point. This gives every named body bone a useful
+// center in the current pose without inventing a second rig.
+struct BoneMarker {
+  std::string name;
+  // `start/end/center` are in the skeleton's current space. The explicit
+  // local aliases let a World query add entity/world transforms without
+  // losing the source rig coordinates.
+  Vec3 start{0.0, 0.0, 0.0};
+  Vec3 end{0.0, 0.0, 0.0};
+  Vec3 center{0.0, 0.0, 0.0};
+  Vec3 localStart{0.0, 0.0, 0.0};
+  Vec3 localEnd{0.0, 0.0, 0.0};
+  Vec3 localCenter{0.0, 0.0, 0.0};
+  f64 length = 0.0;
+};
+
+std::vector<BoneMarker> boneMarkers(const Skeleton& skeleton, const std::vector<Transform3D>& localPoses);
 
 // The matrices skinning actually multiplies by: worldMatrix * inverseBind
 // for each bone. Pass these to skinMesh().

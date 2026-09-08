@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -632,4 +633,63 @@ KIMIA_TEST(street_pack_models_load_with_materials) {
       KIMIA_REQUIRE(named);
     }
   }
+}
+
+KIMIA_TEST(shipped_asset_pack_all_models_load_recursively) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::path(KIMIA_SOURCE_DIR) / "assets";
+  std::error_code rootError;
+  if (!fs::is_directory(root, rootError) || rootError) {
+    std::printf("SKIP: assets not next to the test runner\n");
+    return;
+  }
+
+  usize fbxCount = 0U;
+  usize objCount = 0U;
+  std::string error;
+  std::error_code iteratorError;
+  fs::recursive_directory_iterator iterator(root, fs::directory_options::skip_permission_denied,
+                                            iteratorError);
+  for (const fs::recursive_directory_iterator end; iterator != end; iterator.increment(iteratorError)) {
+    if (iteratorError) {
+      iteratorError.clear();
+      continue;
+    }
+    const fs::directory_entry& entry = *iterator;
+    std::error_code entryError;
+    if (!entry.is_regular_file(entryError) || entryError) continue;
+    const std::string extension = entry.path().extension().string();
+    if (extension == ".obj") {
+      ++objCount;
+      fs::path mtl = entry.path();
+      mtl.replace_extension(".mtl");
+      KIMIA_REQUIRE(fs::is_regular_file(mtl));
+      auto asset = kimia::assets::loadOBJAsset(entry.path().string(), error);
+      KIMIA_REQUIRE(asset.has_value());
+      KIMIA_REQUIRE(asset->mesh.isValid());
+      KIMIA_REQUIRE(!asset->materials.empty());
+      KIMIA_REQUIRE(!asset->subMeshes.empty());
+      for (const kimia::MaterialData& material : asset->materials) {
+        KIMIA_REQUIRE(!material.name.empty());
+        KIMIA_REQUIRE(material.color.x >= 0.0 && material.color.x <= 1.0);
+        KIMIA_REQUIRE(material.color.y >= 0.0 && material.color.y <= 1.0);
+        KIMIA_REQUIRE(material.color.z >= 0.0 && material.color.z <= 1.0);
+      }
+      for (const kimia::MeshData& subMesh : asset->subMeshes) {
+        KIMIA_REQUIRE(subMesh.isValid());
+        KIMIA_REQUIRE(!subMesh.materialName.empty());
+      }
+    } else if (extension == ".fbx") {
+      ++fbxCount;
+      auto asset = kimia::assets::loadFBXSkinned(entry.path().string(), error);
+      KIMIA_REQUIRE(asset.has_value());
+      KIMIA_REQUIRE(asset->hasSkeleton());
+      KIMIA_REQUIRE(asset->hasAnimation());
+      KIMIA_REQUIRE(!asset->clips[0].name.empty());
+      KIMIA_REQUIRE(!asset->clips[0].tracks.empty());
+      KIMIA_REQUIRE(asset->skinned.skeleton.isValid());
+    }
+  }
+  KIMIA_REQUIRE(fbxCount == 39U);
+  KIMIA_REQUIRE(objCount == 8U);
 }

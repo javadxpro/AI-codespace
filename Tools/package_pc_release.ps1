@@ -48,6 +48,13 @@ Write-Host "==> installing the staged runtime"
 Invoke-Checked "cmake" @("--install", $buildDirectory, "--config", "Release", "--prefix", $stage)
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "worlds") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "assets") | Out-Null
+# Keep the real project content beside the published executable. World files
+# store paths relative to this assets root, including spaces in animation
+# folders such as `pleyer move`.
+$sourceAssets = Join-Path $root "assets"
+if (Test-Path $sourceAssets) {
+    Copy-Item -Path (Join-Path $sourceAssets "*") -Destination (Join-Path $stage "assets") -Recurse -Force
+}
 
 $world = Join-Path $stage "kimia_world.exe"
 $smoke = Join-Path $stage "kimia_pc_d3d11_smoke.exe"

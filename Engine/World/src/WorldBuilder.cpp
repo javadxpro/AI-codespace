@@ -1,11 +1,10 @@
 #include <kimia/AssetPipeline.h>
 #include <kimia/World.h>
 
-#include <dirent.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 
 namespace kimia {
@@ -73,14 +72,28 @@ void WorldEditor::refreshProfiles() {
 
 void WorldEditor::refreshImportFiles() {
   importFiles_.clear();
-  DIR* dir = ::opendir(importDir_.c_str());
-  if (dir != nullptr) {
-    while (dirent* entry = ::readdir(dir)) {
-      const std::string name = entry->d_name;
+  namespace fs = std::filesystem;
+  std::error_code error;
+  const fs::path root(importDir_);
+  fs::recursive_directory_iterator iterator(
+      root, fs::directory_options::skip_permission_denied, error);
+  if (!error) {
+    const fs::recursive_directory_iterator end;
+    for (; iterator != end; iterator.increment(error)) {
+      if (error) {
+        error.clear();
+        continue;
+      }
+      const fs::directory_entry& entry = *iterator;
+      std::error_code entryError;
+      if (!entry.is_regular_file(entryError) || entryError) continue;
+      const std::string name = entry.path().filename().string();
       if (!hasExtension(name, ".obj") && !hasExtension(name, ".fbx")) continue;
-      importFiles_.push_back(name);
+      std::error_code relativeError;
+      const fs::path relative = fs::relative(entry.path(), root, relativeError);
+      importFiles_.push_back(relativeError ? entry.path().filename().generic_string()
+                                            : relative.generic_string());
     }
-    ::closedir(dir);
   }
   std::sort(importFiles_.begin(), importFiles_.end());
   if (importPage_ * 5U >= importFiles_.size()) importPage_ = 0U;

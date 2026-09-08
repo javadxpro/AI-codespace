@@ -178,6 +178,7 @@ add_library(kimia_assets STATIC
     Engine/Graphics/src/Mesh.cpp
     Engine/Graphics/src/BitmapFont.cpp
     Engine/Graphics/src/Skeleton.cpp
+    Engine/Graphics/src/Animator.cpp
     Engine/Assets/src/AssetPipeline.cpp
     Engine/Assets/src/Audio.cpp
 )

@@ -13,15 +13,16 @@
 # What it does, in order:
 #   1. Configures and builds a Release with -DKIMIA_WERROR=ON (zero warnings).
 #   2. Runs the whole test suite — a package is never cut from a red tree.
-#   3. Stages the runtime: the kimia_world binary, the game profiles, an
-#      empty worlds/ + assets/ folder, the licences, and a run script.
+#   3. Stages the runtime: the kimia_world binary, the game profiles, the
+#      reference assets (OBJ/MTL/FBX), worlds/, licences, and a run script.
 #   4. Writes VERSION/MANIFEST (engine version, git commit, sha256 of every
 #      shipped file) so a package can always be traced back to a commit.
 #   5. Smoke-tests the STAGED package: starts it on a spare port, checks the
 #      menu really answers, and only then makes the archive.
 #
-# The engine ships no game content: a release contains the game *maker* and
-# the profiles, and the player builds (or opens) their own course.
+# The engine does not ship a hidden game executable: a release contains the
+# game maker, profiles, and the reference asset pack. The player can still
+# build (or open) their own course and add more assets.
 set -u
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
@@ -95,6 +96,13 @@ package_one() {
   cp "$BIN" "$stage/kimia_world"
   chmod +x "$stage/kimia_world"
 
+  # Ship the repository's real KIMIA content, not an empty placeholder. A
+  # world saves asset paths relative to this folder, so copying the complete
+  # tree keeps OBJ/MTL and animation FBX references valid after publishing.
+  if [ -d "$ROOT/assets" ]; then
+    cp -a "$ROOT/assets/." "$stage/assets/"
+  fi
+
   # Profiles: one game, or all of them.
   if [ "$game" = "all" ]; then
     cp "$ROOT"/Profiles/*.kimiaprofile "$stage/profiles/"
@@ -148,6 +156,7 @@ LICEOF
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${1:-8080}"
+cd "$DIR" || exit 1
 echo "KIMIA is starting on port $PORT ..."
 echo "open this in your browser:  http://127.0.0.1:$PORT"
 echo "(Ctrl+C stops the game)"
@@ -178,7 +187,7 @@ KIMIA — نسخهٔ آفلاین
   play.sh       اجرای یک‌دستوره
   profiles/     فایل‌های متنی بازی‌ها — با ویرایش‌شان بازی عوض می‌شود
   worlds/       دنیاهایی که می‌سازی اینجا ذخیره می‌شوند
-  assets/       فایل‌های OBJ/FBX خودت را اینجا بگذار تا در بازی بگذاری‌شان
+  assets/       دارایی‌های مرجع KIMIA (OBJ/MTL/FBX)؛ فایل‌های خودت را هم اینجا بگذار
   Branding/     فیلم معرفی و لوگو که موقع باز شدن بازی پخش می‌شود
   licenses/     لایسنس کتابخانه‌های آزاد استفاده‌شده
   MANIFEST.txt  فهرست فایل‌ها با sha256

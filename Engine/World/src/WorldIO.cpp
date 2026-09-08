@@ -145,7 +145,8 @@ bool WorldIO::save(const WorldData& world, std::string& out) {
     stream << "# control " << escapeWord(control.name) << ' ' << formatFixed6(control.spot.x) << ' '
            << formatFixed6(control.spot.y) << ' ' << formatFixed6(control.spot.size) << ' '
            << escapeWord(control.spot.label) << ' ' << escapeWord(control.clipFile) << ' '
-           << escapeWord(control.clip) << ' ' << escapeWord(control.sound) << '\n';
+           << escapeWord(control.clip) << ' ' << escapeWord(control.sound) << ' '
+           << escapeWord(control.target) << '\n';
     for (const Binding& binding : control.bindings) {
       stream << "# bind " << sourceName(binding.source) << ' ' << escapeWord(binding.code) << '\n';
     }
@@ -328,6 +329,7 @@ bool WorldIO::load(const std::string& text, WorldData& out, std::string& error) 
         control.clipFile = unescapeWord(parts[5]);
         control.clip = unescapeWord(parts[6]);
         control.sound = unescapeWord(parts[7]);
+        if (parts.size() >= 9U) control.target = unescapeWord(parts[8]);
         out.input.controls.push_back(control);
       }
     } else if (line.rfind("# bind ", 0) == 0) {

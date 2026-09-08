@@ -40,9 +40,60 @@
 
 ## در ادیتور (KIMIA World)
 
-فایل‌های OBJ/FBX پوشهٔ `assets` در کاتالوگ با «مدل از فایل» فهرست و در
-صحنه جای‌گذاری می‌شوند (اندازهٔ انتخابی + فیت خودکار بزرگ‌ترین بُعد).
-رندر تکسچر/متریال روی صحنه در مرحلهٔ رندر می‌آید.
+فایل‌های OBJ/FBX پوشهٔ `assets` (با همهٔ زیرپوشه‌ها) در کاتالوگ با «مدل از فایل»
+فهرست و در صحنه جای‌گذاری می‌شوند (اندازهٔ انتخابی + فیت خودکار بزرگ‌ترین بُعد).
+نام‌های دارای فاصله و مسیرهایی مثل `animations/pleyer move/walk.fbx` معتبرند.
+Workbench نام نسبی را در صحنه ذخیره می‌کند؛ زمان اجرا آن را نسبت به ریشهٔ assets
+حل می‌کند، بنابراین world بعد از جابه‌جایی پوشه یا publish هم همان فایل را پیدا
+می‌کند. native editor نیز اسکن بازگشتی انجام می‌دهد.
+
+OBJ/MTL با چند material slot در software، OpenGL و D3D11 به‌صورت sub-meshهای
+جدا با رنگ `Kd` رندر می‌شوند. FBX دارای مشِ skin شده با اسکلت و clip در زمان
+اجرا sample و skin می‌شود؛ clipها loop/trigger می‌شوند و هنگام عوض‌شدن clip روی
+همان rig با cross-fade کوتاه blend می‌شوند. FBX animation-only (مثل pack فعلی)
+به‌عنوان rig زندهٔ stick-preview وارد می‌شود و برای نمایش شخصیت واقعی به FBX
+skin-compatible نیاز دارد؛ فایل‌های OBJ کودکان street عمداً static هستند و
+اسکلت ندارند.
+
+### اعتبارسنجی pack واقعی KIMIA
+
+تست `shipped_asset_pack_all_models_load_recursively` خود پوشهٔ `assets/` را
+recursive پیمایش می‌کند و تمام فایل‌های موجود را باز می‌کند: در pack فعلی
+۳۹ FBX (اسکلت و clip) و ۸ OBJ (هندسه، نرمال، UV، MTL و sub-mesh) با ۸ فایل MTL
+تأیید می‌شوند. این تست جایگزین اجرای native D3D11 روی RTX 3060 نیست؛ آن مرحله
+با `kimia_pc_d3d11_smoke.exe` روی Windows انجام می‌شود.
+
+
+## Animator، retarget و نقاط بدن
+
+`kimia::Animator` در `Engine/Graphics` مستقل از `WorldEditor` است: هر action به
+یک `AnimatorClip` (اسکلت، clip و source asset) bind می‌شود و `playAction`، زمان،
+سرعت، loop/one-shot، stop و cross-fade را مدیریت می‌کند. clip می‌تواند از FBX
+جدا از مدل شخصیت بیاید؛ نام استخوان‌ها با حذف prefixهای رایج مثل
+`mixamorig:`، `Armature|` و `skeleton|` retarget می‌شوند. اگر هیچ استخوان مشترکی
+وجود نداشته باشد bind رد می‌شود و runtime فقط diagnostic state نگه می‌دارد؛
+pose ساختگی یا خراب تولید نمی‌شود.
+
+هر `WorldEditor` assetهای FBX را cache می‌کند تا pointerهای Animator تا پایان
+world معتبر بمانند. `Control` علاوه بر `clipFile` و `clip`، فیلد اختیاری
+`target` دارد؛ بنابراین یک دکمه می‌تواند `animations/pleyer move/walk.fbx` یا
+هر فایلی با فاصله در نام را روی یک character مشخص اجرا کند. نبودن target همان
+رفتار سازگار قبلی را دارد و اولین character با skeleton سازگار انتخاب می‌شود.
+برای مدل بدون skeleton، rig ویرایش‌شدهٔ `EntityData::rig` fallback است؛ اسکلت
+واقعی FBX، در صورت وجود، همیشه اولویت دارد.
+
+`WorldEditor::characterBoneMarkers` و `characterBoneCenter` مرکز، start/end و
+طول استخوان را از pose فعلی برمی‌گردانند. APIهای `/api/bones` و
+`/api/object/bones` مختصات local و world را همراه `x/z` می‌دهند؛ transform خود
+entity نیز در world اعمال می‌شود. برای leaf bone، joint به‌عنوان نقطهٔ پایدار
+برگردانده می‌شود و برای boneهای دارای child، میانگین jointهای فرزند endpoint
+است.
+
+تأیید فعلی با assetهای tracked: aggregate suite با کامپایل مستقیم GCC در محیط
+Linux (این sandbox ابزار CMake نداشت) نتیجهٔ `467/467 tests passed` داد؛ تست
+EGL/OpenGL به‌دلیل نبود driver skip شد. این نتیجه build یا smoke واقعی
+MSVC/D3D11 روی Windows را ادعا نمی‌کند؛ آن باید روی RTX 3060/Windows X Lite با
+presetهای PC اجرا شود.
 
 ## API
 

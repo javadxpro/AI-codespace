@@ -798,7 +798,7 @@ int main(int argc, char** argv) {
         auto found = loadedMeshes.find(entity.meshFile);
         if (found == loadedMeshes.end()) {
           std::string loadError;
-          auto loaded = kimia::assets::loadMesh(entity.meshFile, loadError);
+          auto loaded = kimia::assets::loadMesh(editor.assetPath(entity.meshFile), loadError);
           if (loaded.has_value()) {
             found = loadedMeshes.emplace(entity.meshFile, std::move(loaded->mesh)).first;
           }
@@ -831,7 +831,7 @@ int main(int argc, char** argv) {
         if (skin == loadedTextures.end()) {
           kimia::Image image;
           std::string assetError;
-          auto asset = kimia::assets::loadMeshAsset(entity.meshFile, assetError);
+          auto asset = kimia::assets::loadMeshAsset(editor.assetPath(entity.meshFile), assetError);
           if (asset.has_value()) {
             for (const kimia::MaterialData& material : asset->materials) {
               if (material.texturePath.empty()) continue;
@@ -853,7 +853,7 @@ int main(int argc, char** argv) {
         if (chosen == loadedTextures.end()) {
           kimia::Image image;
           std::string imageError;
-          auto loadedImage = kimia::assets::loadImage(entity.texture, imageError);
+          auto loadedImage = kimia::assets::loadImage(editor.assetPath(entity.texture), imageError);
           if (loadedImage.has_value()) image = std::move(*loadedImage);
           chosen = loadedTextures.emplace(entity.texture, std::move(image)).first;
         }
@@ -879,19 +879,44 @@ int main(int argc, char** argv) {
       // A model whose file brings its own materials draws one tinted
       // piece per material; anything posed (or without materials) draws
       // whole in the entity color, exactly as before.
-      std::vector<std::pair<const MeshData*, kimia::Vec3>> draws;
+      struct DrawCall {
+        const MeshData* mesh = nullptr;
+        kimia::Vec3 color{1.0, 1.0, 1.0};
+        const kimia::Image* texture = nullptr;
+      };
+      std::vector<DrawCall> draws;
       if (!entity.meshFile.empty() && !isPosed) {
         const kimia::assets::MeshAsset* asset = editor.assetFor(entity.meshFile);
         const std::vector<kimia::Vec3> tints = editor.modelTints(entity.name);
         if (asset != nullptr && tints.size() == asset->subMeshes.size()) {
           for (usize i = 0; i < asset->subMeshes.size(); ++i) {
-            draws.push_back({&asset->subMeshes[i], tints[i]});
+            const kimia::Image* materialTexture = texture;
+            // Each MTL/FBX material owns its own map_Kd. An explicit image
+            // painted on the entity remains the override for every slot.
+            if (entity.texture.empty()) {
+              for (const kimia::MaterialData& material : asset->materials) {
+                if (material.name != asset->subMeshes[i].materialName || material.texturePath.empty()) continue;
+                auto loadedMaterial = loadedTextures.find(material.texturePath);
+                if (loadedMaterial == loadedTextures.end()) {
+                  kimia::Image image;
+                  std::string materialError;
+                  auto loadedImage = kimia::assets::loadImage(material.texturePath, materialError);
+                  if (loadedImage.has_value()) image = std::move(*loadedImage);
+                  loadedMaterial = loadedTextures.emplace(material.texturePath, std::move(image)).first;
+                }
+                if (loadedMaterial->second.width > 0 && loadedMaterial->second.height > 0) {
+                  materialTexture = &loadedMaterial->second;
+                }
+                break;
+              }
+            }
+            draws.push_back(DrawCall{&asset->subMeshes[i], tints[i], materialTexture});
           }
         }
       }
-      if (draws.empty()) draws.push_back({mesh, entity.color});
-      for (const auto& draw : draws) {
-        scene.objects.push_back({draw.first, model, draw.second, entity.roughness, texture});
+      if (draws.empty()) draws.push_back(DrawCall{mesh, entity.color, texture});
+      for (const DrawCall& draw : draws) {
+        scene.objects.push_back({draw.mesh, model, draw.color, entity.roughness, draw.texture});
       }
       // A full-body model needs no extra block head; the bare cube does.
       if (kind == ObjectKind::Player && entity.meshFile.empty()) {

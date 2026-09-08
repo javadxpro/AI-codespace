@@ -64,11 +64,18 @@ public:
   static Mat4 shadowViewProjection(const RenderScene& scene);
 
 private:
+  struct TextureGpu {
+    GLuint texture = 0;
+    u64 signature = 0U;
+  };
+
   const GpuMesh& meshFor(const MeshData* mesh);
+  GLuint textureFor(const Image* image);
 
   Shader phong_;
   Shader depth_;
   std::map<const MeshData*, GpuMesh> gpuMeshes_;
+  std::map<const Image*, TextureGpu> gpuTextures_;
   GLuint shadowFbo_ = 0;
   GLuint shadowTexture_ = 0;
   bool ready_ = false;

@@ -151,8 +151,13 @@ Game modules
   بودن device، D3D11 را مسیر نمایش اصلی می‌کند؛ WebWorkbench همچنان capture جانبی
   دریافت می‌کند.
 - D3D11 device، swap chain، depth buffer، mesh upload، shader، texture RGBA، UV و
-  sampler پایه وجود دارد. این هنوز material system نهایی نیست و تغییر محتوای یک
-  `Image` در cache باید در مرحلهٔ بعد با version/invalidation حل شود.
+  sampler پایه وجود دارد. OBJ/MTL با sub-mesh و رنگ `Kd` در software/OpenGL/D3D11
+  به renderer می‌رسد؛ تغییر محتوای یک `Image` با signature محتوایی cache را
+  invalidate می‌کند.
+- Asset pathها در Workbench نسبت به ریشهٔ assets ذخیره می‌شوند و زمان اجرا با
+  `WorldEditor::assetPath()` resolve می‌شوند؛ بنابراین نام‌های دارای فاصله،
+  `pleyer move` و publish از مسیر مطلق server جدا هستند. package scriptها نیز
+  pack واقعی `assets/` را کنار runtime کپی می‌کنند.
 - `CMakePresets.json` presetهای `windows-pc-debug` و `windows-pc-release` را برای
   Visual Studio 17 2022 x64 فراهم می‌کند.
 
@@ -179,9 +184,17 @@ cmake --build build-pc --config Release --parallel
 pwsh Tools/package_pc_release.ps1
 ```
 
-این script از `cmake --install` استفاده می‌کند، profileها و SDL2 runtime را کنار
-executable می‌گذارد، manifest هش می‌سازد و قبل از zip، smoke سیصد فریمی D3D11 را
-اجرا می‌کند.
+این script از `cmake --install` استفاده می‌کند، profileها، pack واقعی `assets/`
+و SDL2 runtime را کنار executable می‌گذارد، manifest هش می‌سازد و قبل از zip،
+smoke سیصد فریمی D3D11 را اجرا می‌کند. `play.sh` ابتدا به ریشهٔ package می‌رود
+تا مسیرهای نسبی world حتی وقتی script از پوشهٔ دیگری فراخوانی شده باشد معتبر بمانند.
+
+قبل از hardware smoke، تست import واقعی pack را هم اجرا کن؛ این تست ۳۹ FBX و ۸
+OBJ/MTL tracked در `assets/` را باز می‌کند و فقط unit fixture مصنوعی نیست:
+
+```text
+build-pc\\bin\\Release\\kimia_tests.exe
+```
 
 smoke target را روی سیستم هدف اجرا و خروجی adapter، feature level، FPS و memory را
 ثبت کن. نمونهٔ پیشنهادی:
@@ -213,8 +226,9 @@ kimia_world.exe --desktop --bind 0.0.0.0 --auth CHANGE_ME
   generation، چند texture و shader permutation هنوز باید اضافه شود.
 - viewport native editor، scene hierarchy و undo/redo هنوز از WebWorkbench جدا
   نشده‌اند؛ مسیر فعلی hybrid foundation است، نه editor نهایی.
-- packaging باید manifest، DLLهای لازم، shader cache و asset validation را قبل از
-  release بررسی کند.
+- packaging اکنون manifest، asset pack و validation parser را دارد؛ پس از build
+  Windows باید DLLهای واقعی، shader compile و اجرای publish روی همان PC نیز
+  بررسی شوند.
 
 هر مرحله باید با build، تست و یک اجرای واقعی روی Windows تأیید شود. sandbox فعلی
 Linux است و بنابراین compile/validation واقعی D3D11 باید روی سیستم Windows انجام

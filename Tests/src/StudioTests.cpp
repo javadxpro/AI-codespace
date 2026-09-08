@@ -1221,3 +1221,97 @@ KIMIA_TEST(studio_asset_scan_lists_the_animation_pack) {
   KIMIA_REQUIRE(has(list, "\"bones\":69"));
   KIMIA_REQUIRE(has(list, "\"skeleton\":true"));
 }
+
+KIMIA_TEST(studio_keeps_real_asset_paths_relative_and_plays_a_space_named_clip) {
+  WorldEditor editor;
+  streetWorld(editor);
+  editor.setImportDirectory("assets");
+
+  const std::string listing = ask(editor, "/api/assets");
+  KIMIA_REQUIRE(has(listing, "street/kids/kid_ali.obj"));
+  KIMIA_REQUIRE(has(listing, "animations/pleyer move/walk.fbx"));
+  KIMIA_REQUIRE(listing.find("\"path\":\"/") == std::string::npos);
+
+  std::string error;
+  const std::string prop = editor.importModel("street/kids/kid_ali.obj", 1.0, error);
+  KIMIA_REQUIRE(!prop.empty());
+  KIMIA_REQUIRE(error.empty());
+  KIMIA_REQUIRE(editor.entity(prop)->meshFile == "street/kids/kid_ali.obj");
+  KIMIA_REQUIRE(editor.assetPath(editor.entity(prop)->meshFile) == "assets/street/kids/kid_ali.obj");
+  KIMIA_REQUIRE(editor.assetFor(editor.entity(prop)->meshFile) != nullptr);
+  KIMIA_REQUIRE(has(ask(editor, "/api/dossier", {{"name", prop}}), "\"span\":"));
+
+  const std::string animation = editor.importModel("animations/pleyer move/walk.fbx", 1.0, error);
+  KIMIA_REQUIRE(!animation.empty());
+  KIMIA_REQUIRE(error.empty());
+  KIMIA_REQUIRE(editor.entity(animation)->meshFile == "animations/pleyer move/walk.fbx");
+  KIMIA_REQUIRE(editor.hasSkeleton(animation));
+  const std::vector<std::string> clips = editor.animationClips(animation);
+  KIMIA_REQUIRE(clips.size() == 1U);
+  KIMIA_REQUIRE(!clips[0].empty());
+  editor.playClip(editor.entity(animation)->meshFile, clips[0]);
+  KIMIA_REQUIRE(!editor.playingAnimations().empty());
+  KIMIA_REQUIRE(editor.enterPlayMode());
+  editor.update(1.0 / 60.0);
+  kimia::MeshData stick;
+  KIMIA_REQUIRE(editor.posedStickMesh(animation, stick));
+  KIMIA_REQUIRE(stick.isValid());
+
+  std::string saved;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), saved));
+  kimia::WorldData reloaded;
+  KIMIA_REQUIRE(kimia::WorldIO::load(saved, reloaded, error));
+  const kimia::EntityData* savedAnimation = reloaded.scene.get(reloaded.scene.find(animation));
+  KIMIA_REQUIRE(savedAnimation != nullptr);
+  KIMIA_REQUIRE(savedAnimation->meshFile == "animations/pleyer move/walk.fbx");
+}
+
+KIMIA_TEST(studio_control_targets_one_character_and_survives_serialization) {
+  WorldEditor editor;
+  streetWorld(editor);
+  std::string error;
+  const std::string first = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  const std::string second = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!first.empty() && !second.empty());
+
+  const std::string saved = ask(editor, "/api/set-control",
+                                {{"control", "kick"}, {"key", "k"},
+                                 {"clipfile", "Tests/assets/skinned_bar.fbx"},
+                                 {"clip", "Bend"}, {"target", second}});
+  KIMIA_REQUIRE(has(saved, "\"ok\":true"));
+  const std::string controls = ask(editor, "/api/controls");
+  KIMIA_REQUIRE(has(controls, "\"target\":\"" + second + "\""));
+
+  KIMIA_REQUIRE(has(ask(editor, "/api/do", {{"control", "kick"}}), "\"ok\":true"));
+  KIMIA_REQUIRE(editor.playingAnimations().size() == 1U);
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(editor.posedMesh(second, posed));
+  KIMIA_REQUIRE(!editor.posedMesh(first, posed));
+
+  std::string worldText;
+  KIMIA_REQUIRE(kimia::WorldIO::save(editor.world(), worldText));
+  kimia::WorldData reloaded;
+  KIMIA_REQUIRE(kimia::WorldIO::load(worldText, reloaded, error));
+  const kimia::Control* control = reloaded.input.find("kick");
+  KIMIA_REQUIRE(control != nullptr);
+  KIMIA_REQUIRE(control->target == second);
+}
+
+KIMIA_TEST(studio_bone_endpoint_returns_local_and_world_xz) {
+  WorldEditor editor;
+  streetWorld(editor);
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  kimia::RigBone bone;
+  bone.name = "muzzle";
+  bone.from = Vec3{0.0, 1.0, 0.0};
+  bone.to = Vec3{0.0, 2.0, 0.0};
+  KIMIA_REQUIRE(editor.setEntityBone(name, bone));
+  KIMIA_REQUIRE(editor.setEntityTransform(name, Vec3{2.0, 0.0, 3.0}, Vec3{1.0, 1.0, 1.0}));
+  const std::string response = ask(editor, "/api/bones", {{"name", name}, {"bone", "muzzle"}});
+  KIMIA_REQUIRE(has(response, "\"local\":[0.000000,1.500000,0.000000]"));
+  KIMIA_REQUIRE(has(response, "\"world\":[2.000000,1.500000,3.000000]"));
+  KIMIA_REQUIRE(has(response, "\"x\":2.000000"));
+  KIMIA_REQUIRE(has(response, "\"z\":3.000000"));
+}

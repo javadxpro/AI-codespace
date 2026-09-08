@@ -1,4 +1,5 @@
 #include <kimia/AssetPipeline.h>
+#include <kimia/Animator.h>
 #include <kimia/Skeleton.h>
 #include <kimia_test.h>
 
@@ -166,6 +167,18 @@ KIMIA_TEST(animation_rotation_uses_the_short_way_round) {
   const f64 length = std::sqrt(middle.rotation.x * middle.rotation.x + middle.rotation.y * middle.rotation.y +
                                middle.rotation.z * middle.rotation.z + middle.rotation.w * middle.rotation.w);
   KIMIA_REQUIRE(near(length, 1.0, 1e-12));
+}
+
+KIMIA_TEST(animation_clip_transition_blends_position_and_rotation) {
+  Transform3D from;
+  Transform3D to;
+  to.position = Vec3{2.0, 0.0, 0.0};
+  to.rotation = Quat::fromAxisAngle(Vec3{0.0, 0.0, 1.0}, kPi * 0.5);
+  const Transform3D middle = kimia::blendTransforms(from, to, 0.5);
+  KIMIA_REQUIRE(near3(middle.position, Vec3{1.0, 0.0, 0.0}));
+  const f64 root2 = std::sqrt(0.5);
+  const Vec3 turned = middle.rotation.toMat4() * Vec3{1.0, 0.0, 0.0};
+  KIMIA_REQUIRE(near3(turned, Vec3{root2, root2, 0.0}, 1e-9));
 }
 
 KIMIA_TEST(animation_clip_loops_or_stops_at_the_end) {
@@ -635,4 +648,82 @@ KIMIA_TEST(stick_figure_draws_a_rig_and_moves_with_it) {
   const MeshData autoStick = kimia::skeletonStickMesh(rig, rest, 0.0);
   KIMIA_REQUIRE(autoStick.isValid());
   KIMIA_REQUIRE(autoStick.positions.size() == standing.positions.size());
+}
+
+KIMIA_TEST(bone_markers_report_current_joint_centers) {
+  const Skeleton skeleton = twoBoneChain();
+  std::vector<Transform3D> pose;
+  for (const Bone& bone : skeleton.bones) pose.push_back(bone.restPose);
+  const std::vector<kimia::BoneMarker> markers = kimia::boneMarkers(skeleton, pose);
+  KIMIA_REQUIRE(markers.size() == 2U);
+  KIMIA_REQUIRE(markers[0].name == "root");
+  KIMIA_REQUIRE(near3(markers[0].start, Vec3{0.0, 0.0, 0.0}));
+  KIMIA_REQUIRE(near3(markers[0].end, Vec3{0.0, 1.0, 0.0}));
+  KIMIA_REQUIRE(near3(markers[0].center, Vec3{0.0, 0.5, 0.0}));
+  KIMIA_REQUIRE(near(markers[0].length, 1.0));
+  // A leaf has a stable joint marker even when it has no child endpoint.
+  KIMIA_REQUIRE(near3(markers[1].center, Vec3{0.0, 1.0, 0.0}));
+  KIMIA_REQUIRE(near3(markers[1].localCenter, markers[1].center));
+}
+
+KIMIA_TEST(animator_retargets_by_bone_name_and_crossfades_actions) {
+  Skeleton source;
+  Bone sourceRoot;
+  sourceRoot.name = "mixamorig:Hips";
+  source.bones.push_back(sourceRoot);
+  Bone sourceSpine;
+  sourceSpine.name = "mixamorig:Spine";
+  sourceSpine.parent = 0;
+  sourceSpine.restPose.position = Vec3{0.0, 1.0, 0.0};
+  source.bones.push_back(sourceSpine);
+
+  Skeleton target = source;
+  target.bones[0].name = "Hips";
+  target.bones[1].name = "Spine";
+
+  AnimationClip idle;
+  idle.name = "Idle";
+  idle.duration = 1.0;
+  idle.loop = true;
+  BoneTrack idleTrack;
+  idleTrack.bone = 0;
+  BoneKey idleKey;
+  idleKey.time = 0.0;
+  idleTrack.keys.push_back(idleKey);
+  idle.tracks.push_back(idleTrack);
+
+  AnimationClip kick;
+  kick.name = "Kick";
+  kick.duration = 1.0;
+  kick.loop = false;
+  BoneTrack kickTrack;
+  kickTrack.bone = 0;
+  BoneKey kickKey;
+  kickKey.time = 0.0;
+  kickKey.pose.position = Vec3{0.0, 0.4, 0.0};
+  kickTrack.keys.push_back(kickKey);
+  kick.tracks.push_back(kickTrack);
+
+  kimia::Animator animator(&target);
+  KIMIA_REQUIRE(kimia::Animator::retargetable(source, target));
+  KIMIA_REQUIRE(animator.bindAction("idle", kimia::AnimatorClip{&source, &idle, "idle.fbx"}, true, 1.0, 0.15));
+  KIMIA_REQUIRE(animator.playAction("idle"));
+  std::vector<Transform3D> pose;
+  KIMIA_REQUIRE(animator.samplePose(pose));
+  KIMIA_REQUIRE(pose.size() == target.bones.size());
+
+  KIMIA_REQUIRE(animator.bindAction("kick", kimia::AnimatorClip{&source, &kick, "kick.fbx"}, false, 1.0, 0.15));
+  KIMIA_REQUIRE(animator.playAction("kick"));
+  KIMIA_REQUIRE(animator.currentClip() == "Kick");
+  KIMIA_REQUIRE(animator.blendAmount() == 0.0);
+  animator.update(0.075);
+  KIMIA_REQUIRE(animator.samplePose(pose));
+  // Halfway through the fade the old local pose still contributes.
+  KIMIA_REQUIRE(pose[0].position.y > 0.0 && pose[0].position.y < 0.4);
+  animator.update(0.1);
+  KIMIA_REQUIRE(animator.blendAmount() == 1.0);
+  KIMIA_REQUIRE(animator.samplePose(pose));
+  KIMIA_REQUIRE(near(pose[0].position.y, 0.4));
+  animator.update(1.0);
+  KIMIA_REQUIRE(!animator.playing());
 }

@@ -4878,3 +4878,69 @@ KIMIA_TEST(world_model_tints_pair_each_material_with_its_color) {
   KIMIA_REQUIRE(editor.assetFor("Tests/assets/skinned_bar.fbx") == nullptr);
   KIMIA_REQUIRE(editor.assetFor("nope.obj") == nullptr);
 }
+
+KIMIA_TEST(world_clip_source_targets_one_character_and_bone_queries_keep_world_space) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string first = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  const std::string second = editor.importModel("Tests/assets/skinned_bar.fbx", 1.0, error);
+  KIMIA_REQUIRE(!first.empty() && !second.empty());
+  editor.playClip("Tests/assets/skinned_bar.fbx", "Bend", second);
+  KIMIA_REQUIRE(editor.playingAnimations().size() == 1U);
+  kimia::MeshData posed;
+  KIMIA_REQUIRE(editor.posedMesh(second, posed));
+  KIMIA_REQUIRE(!editor.posedMesh(first, posed));
+
+  const std::vector<kimia::BoneMarker> live = editor.characterBoneMarkers(second);
+  KIMIA_REQUIRE(!live.empty());
+  const Vec3 local = live.front().localCenter;
+  KIMIA_REQUIRE(editor.setEntityTransform(second, Vec3{3.0, 0.0, 4.0}, Vec3{2.0, 2.0, 2.0}));
+  const std::optional<Vec3> center = editor.characterBoneCenter(second, live.front().name);
+  KIMIA_REQUIRE(center.has_value());
+  KIMIA_REQUIRE(near(center->x, 3.0 + local.x * 2.0, 1e-6));
+  KIMIA_REQUIRE(near(center->z, 4.0 + local.z * 2.0, 1e-6));
+}
+
+KIMIA_TEST(world_entity_rig_is_a_bone_query_fallback_for_non_skinned_models) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string name = editor.importModel("Tests/assets/spider.obj", 1.0, error);
+  KIMIA_REQUIRE(!name.empty());
+  kimia::RigBone hand;
+  hand.name = "hand tip";
+  hand.from = Vec3{0.0, 1.0, 0.0};
+  hand.to = Vec3{0.0, 2.0, 0.0};
+  hand.thickness = 0.05;
+  KIMIA_REQUIRE(editor.setEntityBone(name, hand));
+  KIMIA_REQUIRE(editor.setEntityTransform(name, Vec3{5.0, 0.0, -2.0}, Vec3{1.5, 1.5, 1.5}));
+  const std::optional<Vec3> center = editor.characterBoneCenter(name, "hand tip");
+  KIMIA_REQUIRE(center.has_value());
+  KIMIA_REQUIRE(near3(*center, Vec3{5.0, 2.25, -2.0}, 1e-9));
+  // The explicit rig is a fallback for queries, but the OBJ still does not
+  // claim to contain a real FBX skeleton in the Inspector compatibility API.
+  KIMIA_REQUIRE(editor.animationClips(name).empty());
+}
+
+KIMIA_TEST(world_separate_animation_fbx_retargets_onto_an_entity_rig_with_spaces) {
+  WorldEditor editor = editorWithWorld();
+  std::string error;
+  const std::string target = editor.importModel("assets/street/kids/kid_ali.obj", 1.0, error);
+  if (target.empty()) {
+    std::printf("SKIP: tracked assets/street not next to the test runner\n");
+    return;
+  }
+  KIMIA_REQUIRE(editor.fitDefaultRig(target, 1.7));
+  auto source = kimia::assets::loadFBXSkinned("assets/animations/pleyer move/walk.fbx", error);
+  if (!source.has_value() || source->clips.empty()) {
+    std::printf("SKIP: tracked animation FBX not next to the test runner\n");
+    return;
+  }
+  editor.playClip("assets/animations/pleyer move/walk.fbx", source->clips.front().name, target);
+  KIMIA_REQUIRE(editor.playingAnimations().size() == 1U);
+  kimia::MeshData stick;
+  KIMIA_REQUIRE(editor.posedStickMesh(target, stick));
+  KIMIA_REQUIRE(stick.isValid());
+  editor.enterPlayMode();
+  editor.update(1.0 / 60.0);
+  KIMIA_REQUIRE(editor.posedStickMesh(target, stick));
+}
