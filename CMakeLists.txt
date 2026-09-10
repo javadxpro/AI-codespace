@@ -436,6 +436,31 @@ if(KIMIA_WERROR)
   target_compile_options(kimia_golf_app PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
 
+# --- Web (WebGL2 + WebAssembly via Emscripten) ---------------------------
+# Real client-side graphics/physics: the engine compiles to WASM and draws
+# with the GL renderer onto a WebGL2 canvas. Built with
+#   cmake --preset webgl-release && cmake --build --preset webgl-release
+# (requires an activated Emscripten SDK; see Documentation/WEBGL.md).
+if(EMSCRIPTEN)
+  add_executable(kimia_webgl Examples/WebGLApp.cpp)
+  set_target_properties(kimia_webgl PROPERTIES OUTPUT_NAME kimia_webgl SUFFIX ".html")
+  target_link_libraries(kimia_webgl PRIVATE kimia_renderer kimia_math)
+  target_compile_options(kimia_webgl PRIVATE ${KIMIA_STRICT_WARNINGS})
+  if(KIMIA_WERROR)
+    target_compile_options(kimia_webgl PRIVATE ${KIMIA_WERROR_FLAGS})
+  endif()
+  # WebGL2 + full GLES3 (the GL renderer's feature set), a persistent runtime
+  # for the main loop, and a custom shell with the brand theme.
+  target_link_options(kimia_webgl PRIVATE
+    -sUSE_WEBGL2=1
+    -sFULL_ES3=1
+    -sMAX_WEBGL_VERSION=2
+    -sALLOW_MEMORY_GROWTH=1
+    -sEXIT_RUNTIME=0
+    -sINITIAL_MEMORY=67108864
+    --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/Web/webgl-shell.html)
+endif()
+
 include(CTest)
 if(KIMIA_BUILD_TESTS)
   # Run from the source tree: several tests read real files out of

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KIMIA &mdash; WebGL</title>
+  <style>
+    /* The engine's charcoal metallic brand palette (see kimia-logo.png). */
+    :root { --bg: #0a0e11; --ink: #d7dade; --dim: #8a9299; --accent: #c9d2d8; }
+    html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+    body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    canvas#canvas { display: block; width: 100vw; height: 100vh; }
+    #overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+      color: var(--ink); background: var(--bg); transition: opacity 0.4s ease;
+    }
+    #overlay.hidden { opacity: 0; pointer-events: none; }
+    .ring {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 3px solid rgba(201, 210, 216, 0.15); border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status { color: var(--dim); font-size: 13px; letter-spacing: 0.04em; }
+    #error { color: #d08a80; font-size: 13px; display: none; max-width: 80vw; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="overlay">
+    <div class="ring"></div>
+    <div id="status">Loading KIMIA&hellip;</div>
+    <div id="error"></div>
+  </div>
+
+  <script>
+    var canvas = document.getElementById("canvas");
+    var statusEl = document.getElementById("status");
+    var overlay = document.getElementById("overlay");
+
+    // Match the canvas backing store to the window (device-pixel aware) so
+    // the WebGL frame is crisp on every screen.
+    function resizeCanvas() {
+      var dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.floor(window.innerWidth * dpr));
+      canvas.height = Math.max(1, Math.floor(window.innerHeight * dpr));
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    var Module = {
+      canvas: canvas,
+      setStatus: function (text) {
+        if (!text) return;
+        if (text.indexOf("Failed") >= 0 || text.indexOf("error") >= 0) {
+          var error = document.getElementById("error");
+          error.style.display = "block";
+          error.textContent = text;
+        }
+        statusEl.textContent = text;
+      },
+      onRuntimeInitialized: function () {
+        overlay.classList.add("hidden");
+      }
+    };
+  </script>
+
+  {{{ SCRIPT }}}
+</body>
+</html>

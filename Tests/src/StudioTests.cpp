@@ -32,10 +32,11 @@ bool has(const std::string& haystack, const std::string& needle) {
 }
 
 void streetWorld(WorldEditor& editor) {
-  editor.choose(0);  // Main -> which game?
+  // The reference games are hidden from the menu now, so reach «street»
+  // directly instead of walking the «which game?» screen.
   for (usize i = 0; i < editor.profileCount(); ++i) {
     if (editor.profileAt(i).name == "street") {
-      editor.choose(static_cast<i32>(i));
+      editor.createWorld(editor.profileAt(i));
       return;
     }
   }
@@ -1226,6 +1227,15 @@ KIMIA_TEST(studio_keeps_real_asset_paths_relative_and_plays_a_space_named_clip) 
   WorldEditor editor;
   streetWorld(editor);
   editor.setImportDirectory("assets");
+
+  // This test exists to prove the space-named clip path end to end; without
+  // the (removed) animation pack there is nothing to exercise, so it skips
+  // like the other tracked-animation tests.
+  std::string probe;
+  if (!kimia::assets::loadFBXSkinned("assets/animations/pleyer move/walk.fbx", probe).has_value()) {
+    std::printf("SKIP: assets/animations not next to the test runner\n");
+    return;
+  }
 
   const std::string listing = ask(editor, "/api/assets");
   KIMIA_REQUIRE(has(listing, "street/kids/kid_ali.obj"));

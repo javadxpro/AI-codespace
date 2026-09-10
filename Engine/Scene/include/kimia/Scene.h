@@ -100,6 +100,13 @@ struct EntityData {
   std::string texture;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
+  // Cook-Torrance metalness, 0..1 (0 = dielectric, 1 = full metal). See
+  // Pbr.h. Defaults to 0 so every scene saved before PBR keeps its look.
+  f64 metallic = 0.0;
+  // Self-illumination (LINEAR, HDR), added on top of the lights.
+  Vec3 emissive{0.0, 0.0, 0.0};
+  // Opacity: 1.0 = opaque; below blends over the frame (back-to-front).
+  f64 alpha = 1.0;
 
   // --- Components (stage 31) ---
   // Free-form labels. A tag is how one object refers to a GROUP of others

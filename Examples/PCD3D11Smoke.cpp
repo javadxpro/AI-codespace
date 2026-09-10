@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
   scene.view = kimia::Mat4::lookAt(scene.cameraPosition, kimia::Vec3{0.0, 0.0, 0.0}, kimia::Vec3{0.0, 1.0, 0.0});
   scene.lightDirection = kimia::Vec3{-0.4, -0.8, -0.5};
   scene.ambient = 0.25;
-  scene.objects.push_back({&cube, kimia::Mat4{}, kimia::Vec3{0.12, 0.48, 0.95}, 0.35, nullptr});
+  scene.objects.push_back({&cube, kimia::Mat4{}, kimia::Vec3{0.12, 0.48, 0.95}, 0.35, 0.0, nullptr});
 
   bool running = true;
   int frame = 0;

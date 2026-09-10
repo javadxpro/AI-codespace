@@ -57,9 +57,14 @@ enum : GLenum {
   GL_COMPARE_REF_TO_TEXTURE = 0x884E,
   GL_PACK_ALIGNMENT = 0x0D05,
   GL_UNPACK_ALIGNMENT = 0x0CF5,
+  GL_BLEND = 0x0BE2,
+  GL_SRC_ALPHA = 0x0302,
+  GL_ONE_MINUS_SRC_ALPHA = 0x0303,
   GL_NO_ERROR = 0,
-  GL_VERSION = 0x1F02,
+  GL_VENDOR = 0x1F00,
   GL_RENDERER = 0x1F01,
+  GL_VERSION = 0x1F02,
+  GL_SHADING_LANGUAGE_VERSION = 0x8B8C,
 };
 
 using GLGetProcFn = void* (*)(const char* name);
@@ -244,6 +249,9 @@ public:
   void depthMask(GLboolean flag) const {
     if (depthMaskFn != nullptr) depthMaskFn(flag);
   }
+  void blendFunc(GLenum src, GLenum dst) const {
+    if (blendFuncFn != nullptr) blendFuncFn(src, dst);
+  }
 
 private:
   void* handle_ = nullptr;
@@ -303,6 +311,7 @@ private:
   void (*deleteFramebuffersFn)(GLsizei, const GLuint*) = nullptr;
   void (*pixelStoreiFn)(GLenum, GLint) = nullptr;
   void (*depthMaskFn)(GLboolean) = nullptr;
+  void (*blendFuncFn)(GLenum, GLenum) = nullptr;
 };
 
 }  // namespace kimia

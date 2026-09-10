@@ -1,6 +1,56 @@
 #include <kimia/EGL.h>
 
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+
+#include <emscripten/html5.h>
+
+namespace kimia {
+
+// On the web there is no libEGL.so to dlopen: the context is a WebGL2
+// context on the page's canvas, created through the Emscripten HTML5 API.
+// The engine's GLFunctions already wire the GLES3 entry points directly, so
+// this is the only platform-specific context step.
+EGLContext::~EGLContext() { destroy(); }
+
+bool EGLContext::create(i32 width, i32 height) {
+  destroy();
+  // The page's shell (Web/webgl-shell.html) owns the canvas size and keeps
+  // it matched to the window and device-pixel ratio; the render loop reads
+  // the live size every frame.
+  static_cast<void>(width);
+  static_cast<void>(height);
+  EmscriptenWebGLContextAttributes attrs;
+  emscripten_webgl_init_context_attributes(&attrs);
+  attrs.majorVersion = 2;  // WebGL2: GLES3 core, the engine's GL 3.3 feature set
+  attrs.depth = true;
+  attrs.stencil = false;
+  attrs.antialias = false;
+  attrs.alpha = false;
+  const EMSCRIPTEN_WEBGL_CONTEXT_HANDLE handle = emscripten_webgl_create_context("canvas", &attrs);
+  if (handle <= 0) return false;
+  if (emscripten_webgl_make_context_current(handle) != EMSCRIPTEN_RESULT_SUCCESS) {
+    emscripten_webgl_destroy_context(handle);
+    return false;
+  }
+  context_ = reinterpret_cast<void*>(static_cast<i64>(handle));
+  valid_ = true;
+  return true;
+}
+
+void EGLContext::destroy() {
+  if (context_ != nullptr) {
+    emscripten_webgl_destroy_context(reinterpret_cast<EMSCRIPTEN_WEBGL_CONTEXT_HANDLE>(context_));
+  }
+  library_ = nullptr;
+  display_ = nullptr;
+  surface_ = nullptr;
+  context_ = nullptr;
+  valid_ = false;
+}
+
+}  // namespace kimia
+
+#elif defined(_WIN32)
 
 namespace kimia {
 
@@ -157,4 +207,4 @@ void EGLContext::destroy() {
 
 }  // namespace kimia
 
-#endif  // _WIN32
+#endif  // __EMSCRIPTEN__ / _WIN32 / dlopen-EGL

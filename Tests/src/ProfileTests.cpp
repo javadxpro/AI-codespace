@@ -210,8 +210,9 @@ KIMIA_TEST(profile_save_load_save_is_byte_identical) {
 KIMIA_TEST(profile_shipped_files_match_the_builtins) {
   // Profiles/*.kimiaprofile are the user-editable copies of the built-ins:
   // they must load to exactly the same values (so editing one really is a
-  // retune, not a divergence).
-  const char* names[] = {"golf", "street", "grass", "battleground"};
+  // retune, not a divergence). The street file was removed — street lives
+  // on as a built-in only — so it is no longer checked here.
+  const char* names[] = {"golf", "grass", "battleground"};
   const std::vector<GameProfile> builtins = kimia::builtinProfiles();
   for (const char* name : names) {
     GameProfile fromFile;

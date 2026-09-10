@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 
 namespace kimia {
@@ -173,24 +174,70 @@ void Renderer::render(const RenderScene& scene, i32 width, i32 height) {
   phong_.setMat4("uViewProj", viewProjection);
   phong_.setMat4("uLightViewProj", lightViewProjection);
   phong_.setVec3("uLightDir", lightDirection);
+  phong_.setVec3("uLightColor", scene.lightColor);
   phong_.setVec3("uAmbient", Vec3{scene.ambient, scene.ambient, scene.ambient});
   phong_.setVec3("uCameraPos", scene.cameraPosition);
+  phong_.setVec3("uFogColor", scene.fogColor);
+  phong_.setFloat("uFogDensity", scene.fogDensity);
   gl.activeTexture(GL_TEXTURE0 + 1);
   gl.bindTexture(GL_TEXTURE_2D, shadowTexture_);
   phong_.setInt("uShadowMap", 1);
   phong_.setInt("uBaseTexture", 0);
-  for (const RenderObject& object : scene.objects) {
-    if (object.mesh == nullptr) continue;
+  const usize lightCount =
+      scene.pointLights.size() < kMaxPointLights ? scene.pointLights.size() : kMaxPointLights;
+  phong_.setInt("uPointLightCount", static_cast<i32>(lightCount));
+  for (usize i = 0; i < lightCount; ++i) {
+    const PointLight& lamp = scene.pointLights[i];
+    char name[40];
+    std::snprintf(name, sizeof(name), "uPointLightPos[%zu]", i);
+    phong_.setVec3(name, lamp.position);
+    std::snprintf(name, sizeof(name), "uPointLightColor[%zu]", i);
+    phong_.setVec3(name, lamp.color);
+    std::snprintf(name, sizeof(name), "uPointLightRadius[%zu]", i);
+    phong_.setFloat(name, lamp.radius);
+  }
+  auto drawObject = [&](const RenderObject& object) {
     phong_.setMat4("uModel", object.model);
     phong_.setMat4("uNormalMat", object.model.inverseTranspose());
     phong_.setVec3("uColor", object.color);
     phong_.setFloat("uRoughness", object.roughness);
+    phong_.setFloat("uMetallic", object.metallic);
+    phong_.setVec3("uEmissive", object.emissive);
+    phong_.setFloat("uAlpha", object.alpha);
     const GLuint texture = textureFor(object.texture);
     gl.activeTexture(GL_TEXTURE0);
     gl.bindTexture(GL_TEXTURE_2D, texture);
     phong_.setFloat("uHasTexture", texture != 0U ? 1.0 : 0.0);
     meshFor(object.mesh).draw();
+  };
+
+  // Opaque first (they own the depth buffer), then translucent surfaces
+  // far-to-near with alpha blending and no depth write, exactly like the
+  // software rasteriser.
+  for (const RenderObject& object : scene.objects) {
+    if (object.mesh == nullptr || object.alpha < 1.0) continue;
+    drawObject(object);
   }
+  std::vector<const RenderObject*> translucent;
+  for (const RenderObject& object : scene.objects) {
+    if (object.mesh != nullptr && object.alpha < 1.0) translucent.push_back(&object);
+  }
+  if (!translucent.empty()) {
+    std::stable_sort(translucent.begin(), translucent.end(),
+                     [&](const RenderObject* a, const RenderObject* b) {
+                       const Vec3 pa = a->model * Vec3{0.0, 0.0, 0.0};
+                       const Vec3 pb = b->model * Vec3{0.0, 0.0, 0.0};
+                       return (pa - scene.cameraPosition).lengthSquared() >
+                              (pb - scene.cameraPosition).lengthSquared();
+                     });
+    gl.enable(GL_BLEND);
+    gl.blendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    for (const RenderObject* object : translucent) drawObject(*object);
+    gl.depthMask(true);
+    gl.disable(GL_BLEND);
+  }
+
   gl.activeTexture(GL_TEXTURE0);
   gl.bindTexture(GL_TEXTURE_2D, 0);
   gl.activeTexture(GL_TEXTURE0 + 1);

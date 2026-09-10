@@ -38,6 +38,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/stat.h>  // ::mkdir for the GPU probe's XDG_RUNTIME_DIR handoff
+#endif
+
 using kimia::Engine;
 using kimia::EngineOptions;
 using kimia::EntityData;
@@ -64,6 +68,55 @@ namespace {
 std::atomic<bool> running{true};
 
 void onSignal(int) { running.store(false); }
+
+// --gpuinfo: a standalone GPU probe (no window, no server). It reports
+// exactly what the engine's renderer will do on this machine — hardware GL
+// when libGL + a headless EGL context come up, the software rasteriser
+// otherwise. This is the one command to run on a PS4/headless box to see
+// whether the (patched) Mesa/amdgpu stack is actually live.
+int runGpuInfo() {
+  // Mirror Engine::initialize's Unix handoff: a private XDG_RUNTIME_DIR is
+  // what some Mesa/EGL platforms expect before they will surface a display.
+#ifndef _WIN32
+  if (std::getenv("XDG_RUNTIME_DIR") == nullptr) {
+    static const char* kRuntimeDir = "/tmp/kimia-xdg";
+    ::mkdir(kRuntimeDir, 0700);
+    ::setenv("XDG_RUNTIME_DIR", kRuntimeDir, 1);
+  }
+#endif
+
+  kimia::GLFunctions& gl = kimia::GLFunctions::instance();
+  if (!gl.loaded()) gl.load();
+  const bool hasLibGL = gl.loaded();
+
+  kimia::EGLContext egl;
+  const bool hasEgl = egl.create(640, 480);
+
+  std::printf("KIMIA GPU probe (engine %s)\n", kimia::kEngineVersion);
+  std::printf("  libGL loaded      : %s\n", hasLibGL ? "yes" : "no");
+  std::printf("  EGL context (3.3) : %s\n", hasEgl ? "yes" : "no");
+
+  if (!hasEgl) {
+    std::printf("  renderer          : SOFTWARE (no hardware GL available)\n");
+    std::printf("  verdict           : the GPU is not reachable from this kernel/userspace.\n");
+    std::printf("                      (a PS4 needs the patched amdgpu/radeon kernel driver\n");
+    std::printf("                       AND a Mesa build that knows the Liverpool chip; see\n");
+    std::printf("                       Documentation/PS4.md and Tools/ps4_gpu.sh)\n");
+    return 1;
+  }
+
+  auto read = [&gl](kimia::GLenum name) {
+    const kimia::GLchar* s = gl.getString(name);
+    return s != nullptr ? std::string(s) : std::string("(unknown)");
+  };
+  std::printf("  GL vendor         : %s\n", read(kimia::GL_VENDOR).c_str());
+  std::printf("  GL renderer       : %s\n", read(kimia::GL_RENDERER).c_str());
+  std::printf("  GL version        : %s\n", read(kimia::GL_VERSION).c_str());
+  std::printf("  GLSL version      : %s\n", read(kimia::GL_SHADING_LANGUAGE_VERSION).c_str());
+  std::printf("  renderer          : HARDWARE OpenGL (the engine's GL path)\n");
+  std::printf("  verdict           : GPU is live — kimia_world will use it.\n");
+  return 0;
+}
 
 const Vec3 kGhostColor{1.0, 0.85, 0.2};
 const Vec3 kSelectionColor{1.0, 0.9, 0.25};
@@ -290,7 +343,7 @@ void addLimbs(RenderScene& scene, const MeshData& cube, const std::vector<kimia:
     scene.objects.push_back({&cube,
                              Mat4::translation(middle) * orient *
                                  Mat4::scaling(Vec3{limb.thickness, length, limb.thickness}),
-                             color, 1.0, nullptr});
+                             color, 1.0, 0.0, nullptr});
   }
 }
 
@@ -421,6 +474,8 @@ void printUsage() {
       "  --branding DIR    folder with kimia-intro.mp4 / kimia-logo.png\n"
       "                    (default: Branding next to the app or the build)\n"
       "  --no-intro        do not play the intro film\n"
+      "  --gpuinfo         probe the GPU (libGL + headless EGL) and report which\n"
+      "                    renderer the engine will use, then exit\n"
       "  --version         print the engine version and exit\n"
       "  --help            print this text and exit\n"
       "\n"
@@ -467,6 +522,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--version") {
       std::printf("%s\n", kimia::kEngineVersionString);
       return 0;
+    } else if (arg == "--gpuinfo") {
+      return runGpuInfo();
     } else if (arg == "--help" || arg == "-h") {
       printUsage();
       return 0;
@@ -555,9 +612,16 @@ int main(int argc, char** argv) {
       engine.d3d11Available()
           ? engine.d3d11().adapterName() + " (FL " + engine.d3d11().featureLevelName() + ")"
           : std::string("off");
+  // Which GL renderer is actually behind the engine's GL path, so a
+  // headless box (PS4) reports its GPU by name in one glance.
+  std::string glStatus = "no (software)";
+  if (engine.glAvailable()) {
+    const kimia::GLchar* s = kimia::GLFunctions::instance().getString(kimia::GL_RENDERER);
+    glStatus = s != nullptr && s[0] != '\0' ? std::string("yes (") + s + ")" : std::string("yes");
+  }
   std::printf("KIMIA World %s serving on port %d | GL: %s | D3D11: %s | games: %d\n", kimia::kEngineVersion,
-              static_cast<i32>(engine.server()->port()), engine.glAvailable() ? "yes" : "no (software)",
-              d3dStatus.c_str(), static_cast<i32>(editor.profileCount()));
+              static_cast<i32>(engine.server()->port()), glStatus.c_str(),
+              d3dStatus.c_str(), static_cast<i32>(editor.menuProfileCount()));
   std::printf("intro: %s\n", intro ? "yes" : "no (no Branding/kimia-intro.mp4)");
 
   Renderer renderer;
@@ -916,7 +980,8 @@ int main(int argc, char** argv) {
       }
       if (draws.empty()) draws.push_back(DrawCall{mesh, entity.color, texture});
       for (const DrawCall& draw : draws) {
-        scene.objects.push_back({draw.mesh, model, draw.color, entity.roughness, draw.texture});
+        scene.objects.push_back({draw.mesh, model, draw.color, entity.roughness, entity.metallic,
+                                 draw.texture, entity.emissive, entity.alpha});
       }
       // A full-body model needs no extra block head; the bare cube does.
       if (kind == ObjectKind::Player && entity.meshFile.empty()) {
@@ -927,11 +992,16 @@ int main(int argc, char** argv) {
              entity.color, entity.roughness});
       }
     });
-    // The ball follows the physics body.
-    const f64 ballRadius = editor.world().ball.radius;
-    scene.objects.push_back(
-        {&sphereMesh, Mat4::translation(editor.ballPosition()) * Mat4::scaling(Vec3{ballRadius, ballRadius, ballRadius}),
-         editor.world().ball.color, 0.3});
+    // The ball follows the physics body — but only when there is one. A
+    // fresh world is an EMPTY stage (an empty Unity scene: a floor and
+    // nothing else), so no ball is drawn until the user adds a "Ball"
+    // object (or until PLAY, where the game needs one to run).
+    if (editor.world().scene.find("Ball") != 0 || editor.playing()) {
+      const f64 ballRadius = editor.world().ball.radius;
+      scene.objects.push_back(
+          {&sphereMesh, Mat4::translation(editor.ballPosition()) * Mat4::scaling(Vec3{ballRadius, ballRadius, ballRadius}),
+           editor.world().ball.color, 0.3});
+    }
     // Ghost preview while placing, selection markers while managing, the
     // aim chain in shot mode.
     if (editor.placing()) addGhostShape(scene, editor, cubeMesh, sphereMesh);
@@ -944,7 +1014,7 @@ int main(int argc, char** argv) {
       scene.objects.push_back({&cubeMesh,
                                Mat4::translation(particle.position) *
                                    Mat4::scaling(Vec3{size, size, size}),
-                               particle.colorNow(), 1.0, nullptr});
+                               particle.colorNow(), 1.0, 0.0, nullptr});
     }
 
     addSquads(scene, editor, cubeMesh);

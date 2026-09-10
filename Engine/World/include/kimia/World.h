@@ -328,6 +328,9 @@ public:
   void refreshProfiles();
   usize profileCount() const { return profiles_.size(); }
   const GameProfile& profileAt(usize index) const { return profiles_[index]; }
+  // How many games the «new world» menu actually shows (the reference games
+  // stay in the engine but are hidden from the menu).
+  usize menuProfileCount() const { return menuProfileIndex_.size(); }
   const GameProfile& profile() const { return world_.profile; }  // the current world's game
   bool choosingProfile() const { return screen_ == Screen::AskProfile; }
 
@@ -1116,8 +1119,14 @@ private:
   Vec3 ghost_{0.0, 0.0, 0.0};
 
   // Game profiles («دنیای جدید» -> «کدام بازی؟»).
+  // `profiles_` holds EVERYTHING (the four reference games plus the empty
+  // project and any *.kimiaprofile file) — tests and world loading rely on
+  // that. `menuProfileIndex_` is the subset the MENU shows: the reference
+  // games stay in the engine but are hidden from the editor, so a user
+  // starts from an empty project like an empty Unity scene.
   std::string profileDir_ = "profiles";
   std::vector<GameProfile> profiles_;
+  std::vector<usize> menuProfileIndex_;  // indices into profiles_ shown in the menu
   usize profilePage_ = 0U;  // 5 games per screen
 
   // Model file placement (catalog -> file list -> size -> place).

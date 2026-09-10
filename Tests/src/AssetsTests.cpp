@@ -690,6 +690,10 @@ KIMIA_TEST(shipped_asset_pack_all_models_load_recursively) {
       KIMIA_REQUIRE(asset->skinned.skeleton.isValid());
     }
   }
-  KIMIA_REQUIRE(fbxCount == 39U);
+  // The shipped reference pack is the 8 OBJ/MTL street models. The Mixamo
+  // animation FBX pack is now user content (removed from the repo), so
+  // there is no fixed FBX count to pin; any FBX still present in assets/
+  // was validated above by the generic skinned-load checks.
   KIMIA_REQUIRE(objCount == 8U);
+  (void)fbxCount;
 }

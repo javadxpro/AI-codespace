@@ -159,9 +159,9 @@ Game modules
   `pleyer move` و publish از مسیر مطلق server جدا هستند. package scriptها نیز
   pack واقعی `assets/` را کنار runtime کپی می‌کنند.
 - `CMakePresets.json` presetهای `windows-pc-debug` و `windows-pc-release` را برای
-  Visual Studio 17 2022 x64 فراهم می‌کند.
+  Visual Studio 18 2026 x64 فراهم می‌کند.
 
-روی Windows بعد از نصب Visual Studio 2022، Windows SDK و CMake اجرا کن:
+روی Windows بعد از نصب Visual Studio 2026 (یا 2022)، Windows SDK و CMake اجرا کن:
 
 ```text
 cmake --preset windows-pc-debug
@@ -173,7 +173,7 @@ cmake --build --preset windows-pc-release --parallel
 یا به‌صورت مستقیم:
 
 ```text
-cmake -S . -B build-pc -G "Visual Studio 17 2022" -A x64 ^
+cmake -S . -B build-pc -G "Visual Studio 18 2026" -A x64 ^
   -DKIMIA_BUILD_PC=ON -DKIMIA_RENDER_BACKEND=D3D11 -DKIMIA_BUILD_TESTS=OFF
 cmake --build build-pc --config Release --parallel
 ```

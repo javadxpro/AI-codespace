@@ -20,13 +20,38 @@ struct RenderObject {
   Mat4 model;
   Vec3 color{1.0, 1.0, 1.0};
   f64 roughness = 0.5;
+  // Cook-Torrance metalness, 0..1: 0 = dielectric (4% Fresnel), 1 = full
+  // metal (no diffuse, Fresnel tinted by `color`). Defaults to 0 so every
+  // scene built before PBR keeps its Lambert look.
+  f64 metallic = 0.0;
   // Optional texture (stage 34). When set, the mesh's UVs choose a pixel
   // from this image and `color` tints it. Null means a plain colour, which
   // is what everything drawn before this existed still gets.
   //
   // Not owned: the caller keeps the image alive for the frame.
   const Image* texture = nullptr;
+  // Self-illumination, LINEAR and HDR: added to the lit colour before the
+  // tone mapper, independent of every light. A bright emissive (say 3.0)
+  // reads as a light itself after tone mapping.
+  Vec3 emissive{0.0, 0.0, 0.0};
+  // Opacity: 1.0 is opaque; anything below blends over the frame (drawn
+  // after opaque geometry, back-to-front, without writing depth).
+  f64 alpha = 1.0;
 };
+
+// A local point light: a finite lamp in the world. `color` is LINEAR light
+// colour (it may exceed 1.0 — the filmic tone mapper rolls the excess off)
+// and `radius` is the distance at which the light has fully fallen off.
+struct PointLight {
+  Vec3 position{0.0, 0.0, 0.0};
+  Vec3 color{1.0, 1.0, 1.0};
+  f64 radius = 5.0;
+};
+
+// The renderer's fixed point-light budget. The GL shader declares the same
+// number of array uniforms and the software rasteriser caps to it too, so a
+// scene can hand over as many lights as it likes without breaking a frame.
+inline constexpr usize kMaxPointLights = 8;
 
 // Everything the renderer needs to draw a frame.
 struct RenderScene {
@@ -34,11 +59,24 @@ struct RenderScene {
   Mat4 view;
   Mat4 projection;
   Vec3 lightDirection{-0.4, -0.8, -0.4};  // directional key light (normalized on use)
+  // Key-light colour: LINEAR irradiance at a facing surface (1.0 = full
+  // light). See the convention note in Pbr.h.
+  Vec3 lightColor{1.0, 1.0, 1.0};
   Vec3 cameraPosition{0.0, 0.0, 0.0};
   f64 ambient = 0.25;
+  // Local lights on top of the key light, added additively (no shadows in
+  // this pass). Empty for every scene built before they existed.
+  std::vector<PointLight> pointLights;
+  // Distance fog (exponential-squared), linear-space: final = lerp(fogColor,
+  // colour, exp(-(density * dist)^2)). density 0 disables it, which is the
+  // default so every scene built before fog keeps its look.
+  Vec3 fogColor{0.55, 0.6, 0.68};
+  f64 fogDensity = 0.0;
 };
 
-// OpenGL 3.3 renderer: Phong + gamma + key-light shadow map pass, PNG capture.
+// OpenGL 3.3 renderer: Cook-Torrance PBR + filmic tone mapping + key-light
+// shadow map pass, PNG capture. Matches the software rasteriser pixel for
+// pixel (same BRDF and display pipeline).
 // Requires a current GL context (EGL pbuffer or window); initialize() reports
 // failure otherwise and every call becomes a no-op.
 class Renderer {

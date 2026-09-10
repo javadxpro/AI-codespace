@@ -155,6 +155,12 @@ bool SceneIO::save(const Scene& scene, std::string& out) {
     }
     stream << " color " << format(entity.color.x) << ' ' << format(entity.color.y) << ' ' << format(entity.color.z);
     stream << " rough " << format(entity.roughness);
+    if (entity.metallic != 0.0) stream << " metal " << format(entity.metallic);
+    if (entity.emissive.x != 0.0 || entity.emissive.y != 0.0 || entity.emissive.z != 0.0) {
+      stream << " emissive " << format(entity.emissive.x) << ' ' << format(entity.emissive.y) << ' '
+             << format(entity.emissive.z);
+    }
+    if (entity.alpha != 1.0) stream << " alpha " << format(entity.alpha);
     // Components (stage 31). Each is optional, so a scene that uses none
     // of them saves byte-identically to before they existed.
     for (const std::string& tag : entity.tags) stream << " tag " << quoteName(tag);
@@ -388,6 +394,35 @@ bool SceneIO::load(const std::string& text, Scene& out, std::string& error) {
           break;
         }
         entity.roughness = value;
+        i += 2U;
+        continue;
+      }
+      if (keyword == "metal" && i + 1U < tokens.size()) {
+        f64 value = 0.0;
+        if (!parseF64(tokens[i + 1U], value)) {
+          complete = false;
+          break;
+        }
+        entity.metallic = value;
+        i += 2U;
+        continue;
+      }
+      if (keyword == "emissive") {
+        Vec3 value;
+        if (!parseVec3(tokens, i, value)) {
+          complete = false;
+          break;
+        }
+        entity.emissive = value;
+        continue;
+      }
+      if (keyword == "alpha" && i + 1U < tokens.size()) {
+        f64 value = 1.0;
+        if (!parseF64(tokens[i + 1U], value)) {
+          complete = false;
+          break;
+        }
+        entity.alpha = value;
         i += 2U;
         continue;
       }

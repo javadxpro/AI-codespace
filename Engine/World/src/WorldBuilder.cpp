@@ -58,6 +58,15 @@ bool hasExtension(const std::string& name, const char* ext) {
   return true;
 }
 
+// The four reference games (golf / street / grass / battleground) stay in
+// the engine — they are the capability the engine provides and they drive
+// most of the test suite — but they are NOT shown in the «new world» menu.
+// A user starts from the empty project (sandbox) or a *.kimiaprofile file
+// of their own, like opening an empty scene in a general-purpose editor.
+bool isReferenceGame(const std::string& name) {
+  return name == "golf" || name == "street" || name == "grass" || name == "battleground";
+}
+
 }  // namespace
 
 void WorldEditor::setProfileDirectory(const std::string& dir) {
@@ -67,7 +76,11 @@ void WorldEditor::setProfileDirectory(const std::string& dir) {
 
 void WorldEditor::refreshProfiles() {
   profiles_ = loadProfiles(profileDir_);
-  if (profilePage_ * 5U >= profiles_.size()) profilePage_ = 0U;
+  menuProfileIndex_.clear();
+  for (usize i = 0; i < profiles_.size(); ++i) {
+    if (!isReferenceGame(profiles_[i].name)) menuProfileIndex_.push_back(i);
+  }
+  if (profilePage_ * 5U >= menuProfileIndex_.size()) profilePage_ = 0U;
 }
 
 void WorldEditor::refreshImportFiles() {
@@ -568,12 +581,14 @@ std::vector<std::string> WorldEditor::optionLabels() const {
     case Screen::Catalog:
       return {"بازیکن", "توپ", "بلوک", "دیوار", "دروازه", "جعبه", "مدل از فایل", "سوراخ", "بازگشت"};
     case Screen::AskProfile: {
-      // The games this engine can make: 5 per screen + more/back.
+      // The games this engine can make: 5 per screen + more/back. The
+      // reference games are hidden; only the empty project and the user's
+      // own *.kimiaprofile files are offered.
       std::vector<std::string> labels;
       const usize begin = profilePage_ * 5U;
-      const usize end = begin + 5U < profiles_.size() ? begin + 5U : profiles_.size();
-      for (usize i = begin; i < end; ++i) labels.push_back(profiles_[i].title);
-      if (end < profiles_.size()) {
+      const usize end = begin + 5U < menuProfileIndex_.size() ? begin + 5U : menuProfileIndex_.size();
+      for (usize i = begin; i < end; ++i) labels.push_back(profiles_[menuProfileIndex_[i]].title);
+      if (end < menuProfileIndex_.size()) {
         labels.push_back("بیشتر…");
       } else {
         labels.push_back("بازگشت");
@@ -753,17 +768,17 @@ void WorldEditor::choose(i32 optionIndex) {
     }
     case Screen::AskProfile: {
       const usize begin = profilePage_ * 5U;
-      const usize shown = begin + 5U < profiles_.size() ? 5U : profiles_.size() - begin;
-      if (profiles_.empty()) {
+      const usize shown = begin + 5U < menuProfileIndex_.size() ? 5U : menuProfileIndex_.size() - begin;
+      if (menuProfileIndex_.empty()) {
         screen_ = Screen::Main;
         break;
       }
       if (optionIndex >= 0 && static_cast<usize>(optionIndex) < shown) {
-        const GameProfile chosen = profiles_[begin + static_cast<usize>(optionIndex)];
+        const GameProfile chosen = profiles_[menuProfileIndex_[begin + static_cast<usize>(optionIndex)]];
         profilePage_ = 0U;
         createWorld(chosen);
       } else if (optionIndex == static_cast<i32>(shown)) {
-        if (begin + 5U < profiles_.size()) {
+        if (begin + 5U < menuProfileIndex_.size()) {
           ++profilePage_;
         } else {
           profilePage_ = 0U;

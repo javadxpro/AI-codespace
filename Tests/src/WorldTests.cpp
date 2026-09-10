@@ -76,29 +76,24 @@ bool fileExists(const std::string& path) {
   return true;
 }
 
-// Index of the sandbox game («زمین آزاد») in the profile menu.
-kimia::usize sandboxIndex(const WorldEditor& editor) {
-  for (kimia::usize i = 0; i < editor.profileCount(); ++i) {
-    if (editor.profileAt(i).name == "sandbox") return i;
-  }
-  return 0U;
-}
-
 // Walks the editor into the builder with a fresh empty SANDBOX world (the
 // 20 x 20 floor and the golf-tuned ball every test below was written for).
+// The reference games are hidden from the menu now, so the empty project is
+// the only built-in offered — its menu index is 0.
 WorldEditor editorWithWorld() {
   WorldEditor editor;
   editor.choose(0);  // Main -> «کدام بازی؟»
-  editor.choose(static_cast<i32>(sandboxIndex(editor)));  // زمین آزاد -> Builder
+  editor.choose(0);  // زمین آزاد -> Builder
   return editor;
 }
 
-// Picks the game with this profile name from the «کدام بازی؟» screen.
+// Creates a world straight from the profile of that name. The reference
+// games stay in the engine (profileAt sees them) but are hidden from the
+// menu, so tests reach them directly instead of walking the menu.
 void createWorldFor(WorldEditor& editor, const char* profileName) {
-  editor.choose(0);  // Main -> «کدام بازی؟»
   for (kimia::usize i = 0; i < editor.profileCount(); ++i) {
     if (editor.profileAt(i).name == profileName) {
-      editor.choose(static_cast<i32>(i));
+      editor.createWorld(editor.profileAt(i));
       return;
     }
   }
@@ -157,17 +152,16 @@ KIMIA_TEST(world_create_project_gives_empty_ground) {
   KIMIA_REQUIRE(!editor.hasWorld());
   KIMIA_REQUIRE(editor.optionLabels().size() == 3U);  // main menu
   editor.choose(0);
-  // «دنیای جدید» asks which game first: the 5 built-ins + «بازگشت»
-  // (exactly one page: 5 games + back).
+  // «دنیای جدید» asks which game first. The reference games are hidden
+  // from the menu, so the only built-in offered is the empty project
+  // («زمین آزاد») + «بازگشت» — exactly one page.
   KIMIA_REQUIRE(!editor.hasWorld());
   KIMIA_REQUIRE(editor.choosingProfile());
   KIMIA_REQUIRE(editor.menuTitle() == "دنیای جدید: کدام بازی؟");
-  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "گلف کیمیا");
-  KIMIA_REQUIRE(editor.optionLabels()[1] == "فوتبال خیابونی ایران: کوی ابوذر");
-  KIMIA_REQUIRE(editor.optionLabels()[4] == "زمین آزاد");
-  KIMIA_REQUIRE(editor.optionLabels()[5] == "بازگشت");
-  editor.choose(4);  // زمین آزاد
+  KIMIA_REQUIRE(editor.optionLabels().size() == 2U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "زمین آزاد");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازگشت");
+  editor.choose(0);  // زمین آزاد
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.world().name == "MyWorld");
   KIMIA_REQUIRE(editor.profile().name == "sandbox");
@@ -1256,19 +1250,18 @@ KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
   KIMIA_REQUIRE(near(editor.profileAt(1).fieldWidth, 6.0));
   editor.choose(0);  // دنیای جدید
   KIMIA_REQUIRE(editor.choosingProfile());
+  // The menu hides the four reference games (golf/street/grass/battleground
+  // — including the user's retuned «street»), so the visible list is the
+  // empty project + the 7 custom files = 8 entries across two pages.
   KIMIA_REQUIRE(editor.optionLabels().size() == 6U);  // 5 + بیشتر…
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "گلف کیمیا");
-  KIMIA_REQUIRE(editor.optionLabels()[1] == "خیابونی من");
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "زمین آزاد");
+  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازی سفارشی 0");
   KIMIA_REQUIRE(editor.optionLabels()[5] == "بیشتر…");
-  editor.choose(5);  // page 2: custom0..custom4
-  KIMIA_REQUIRE(editor.optionLabels().size() == 6U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 0");
-  editor.choose(5);  // page 3: two games + بازگشت
-  KIMIA_REQUIRE(editor.optionLabels().size() == 3U);
-  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 5");
-  KIMIA_REQUIRE(editor.optionLabels()[1] == "بازی سفارشی 6");
-  KIMIA_REQUIRE(editor.optionLabels()[2] == "بازگشت");
-  editor.choose(1);
+  editor.choose(5);  // page 2: custom4..custom6 + بازگشت
+  KIMIA_REQUIRE(editor.optionLabels().size() == 4U);
+  KIMIA_REQUIRE(editor.optionLabels()[0] == "بازی سفارشی 4");
+  KIMIA_REQUIRE(editor.optionLabels()[3] == "بازگشت");
+  editor.choose(2);  // custom6
   KIMIA_REQUIRE(editor.hasWorld());
   KIMIA_REQUIRE(editor.profile().name == "custom6");
   KIMIA_REQUIRE(near(editor.world().halfLength(), 8.0));  // (10 + 6) / 2
@@ -1277,8 +1270,7 @@ KIMIA_TEST(world_profile_menu_pages_and_user_profiles) {
   again.setProfileDirectory(dir);
   again.choose(0);
   again.choose(5);
-  again.choose(5);
-  again.choose(2);  // بازگشت
+  again.choose(3);  // بازگشت
   KIMIA_REQUIRE(!again.hasWorld());
   KIMIA_REQUIRE(again.optionLabels().size() == 3U);  // main menu
 }

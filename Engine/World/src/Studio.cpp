@@ -1078,8 +1078,8 @@ std::string benchPage() {
 <title>KIMIA Editor</title>
 <style>
 :root{
-  --bg:#1e1e1e; --panel:#252526; --panel2:#2d2d30; --edge:#3e3e42;
-  --ink:#d4d4d4; --dim:#9a9a9a; --accent:#4aa3ff; --go:#6abf6a; --bad:#e06c5b;
+  --bg:#0a0e11; --panel:#111518; --panel2:#161b1f; --edge:#3e4245;
+  --ink:#d7dade; --dim:#8a9299; --accent:#c9d2d8; --go:#7fbf9a; --bad:#d08a80;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -1106,55 +1106,55 @@ body{margin:0;background:var(--bg);color:var(--ink);
   overflow:auto;padding:8px;min-height:0}
 #insp{grid-area:insp;background:var(--panel);border-right:1px solid var(--edge);
   overflow:auto;padding:10px;min-height:0}
-#game{grid-area:game;position:relative;background:#101010;display:flex;
+#game{grid-area:game;position:relative;background:#05070a;display:flex;
   align-items:center;justify-content:center;overflow:hidden;min-width:0}
 #game img{max-width:100%;max-height:100%;image-rendering:pixelated;
   touch-action:none;user-select:none;-webkit-user-drag:none}
 #gamebar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:12px;
-  align-items:center;padding:6px 10px;background:rgba(20,20,20,.85);
+  align-items:center;padding:6px 10px;background:rgba(6,9,12,.85);
   border-top:1px solid var(--edge);font-size:11px;color:var(--dim)}
 #gametool{color:var(--accent);font-weight:600}
 #tapHint{margin-left:auto;color:var(--go)}
 #proj{grid-area:proj;background:var(--panel);border-top:1px solid var(--edge);
   border-right:1px solid var(--edge);overflow:auto;padding:8px 10px;min-height:0}
-#console{grid-area:console;background:#141414;border-top:1px solid var(--edge);
+#console{grid-area:console;background:#0a0e11;border-top:1px solid var(--edge);
   display:flex;flex-direction:column;min-height:0}
 #conbar{display:flex;align-items:center;gap:8px;padding:6px 10px;
   border-bottom:1px solid var(--edge);font-size:11px;color:var(--dim)}
 #conlog{flex:1;overflow:auto;padding:6px 10px;font-family:ui-monospace,Menlo,monospace;
   font-size:11px}
 #conlog div{white-space:nowrap}
-#conlog .t{color:#5a5a5a;margin-right:8px}
+#conlog .t{color:#4a5258;margin-right:8px}
 h2{font-size:11px;letter-spacing:.14em;color:var(--dim);margin:12px 0 6px;
   text-transform:uppercase;font-weight:600}
 h2:first-child{margin-top:0}
 .row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 .row label{color:var(--dim);min-width:48px;font-size:12px}
-button{background:#3c3c3c;color:var(--ink);border:1px solid var(--edge);
+button{background:#232a2f;color:var(--ink);border:1px solid var(--edge);
   border-radius:4px;padding:5px 9px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap}
 button:hover{border-color:var(--accent)}
-button.on{background:#094771;border-color:var(--accent)}
-button.go{background:#245a24;border-color:#3c7a3c;font-weight:600}
-button.bad{background:#5a2323;border-color:#7a3c3c}
+button.on{background:#2b3238;border-color:var(--accent)}
+button.go{background:#1f3a2a;border-color:#33553f;font-weight:600}
+button.bad{background:#3a2422;border-color:#5a3a36}
 button:disabled{opacity:.4;cursor:default}
-input,select{background:#141414;color:var(--ink);border:1px solid var(--edge);
+input,select{background:#0d1216;color:var(--ink);border:1px solid var(--edge);
   border-radius:4px;padding:4px 6px;font:inherit;font-size:12px;width:100%;min-width:0}
 input[type=color]{padding:1px;height:26px}
 input[type=checkbox]{width:auto}
 .item{padding:5px 7px;border:1px solid transparent;border-radius:4px;cursor:pointer;
   display:flex;align-items:center;gap:6px;font-size:12px}
-.item:hover{background:#2a2d2e}
-.item.on{background:#094771;border-color:var(--accent)}
+.item:hover{background:#1a2126}
+.item.on{background:#232b31;border-color:var(--accent)}
 .item button{padding:1px 7px;font-size:10px}
-.pip{width:7px;height:7px;border-radius:50%;background:#4a4a4a;flex:none}
+.pip{width:7px;height:7px;border-radius:50%;background:#3e4245;flex:none}
 .pip.solid{background:var(--accent)}
 .pip.moving{background:var(--go)}
-.tag{display:inline-flex;align-items:center;gap:4px;background:#3c3c3c;
+.tag{display:inline-flex;align-items:center;gap:4px;background:#232a2f;
   border:1px solid var(--edge);border-radius:10px;padding:1px 7px;font-size:11px;margin:0 4px 4px 0}
 .tag b{cursor:pointer;color:var(--dim)}
 .tag b:hover{color:var(--bad)}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-.wire{background:#1a1a1a;border:1px solid var(--edge);border-radius:4px;
+.wire{background:#0d1216;border:1px solid var(--edge);border-radius:4px;
   padding:4px 6px;margin-bottom:4px;font-size:11px;display:flex;justify-content:space-between;gap:6px}
 .wire span{color:var(--accent)}
 .hint{color:var(--dim);font-size:11px;line-height:1.6}
@@ -1170,14 +1170,14 @@ input[type=checkbox]{width:auto}
 @media(max-width:1200px){.sheetbody{grid-template-columns:1fr 1fr}}
 @media(max-width:900px){.sheetbody{grid-template-columns:1fr}}
 .col{background:var(--panel);border:1px solid var(--edge);border-radius:6px;padding:10px}
-.rule{background:#1a1a1a;border:1px solid var(--edge);border-radius:4px;
+.rule{background:#0d1216;border:1px solid var(--edge);border-radius:4px;
   padding:6px 8px;margin-bottom:5px;font-size:11px;cursor:pointer;line-height:1.5}
 .rule.on{border-color:var(--accent)}
 .rule.off{opacity:.45}
 .rule .tools{display:flex;gap:4px;margin-top:5px}
 .rule .tools button{padding:1px 6px;font-size:10px}
 #flash{position:fixed;bottom:200px;left:50%;transform:translateX(-50%);
-  background:#141414;border:1px solid var(--accent);border-radius:6px;
+  background:#0d1216;border:1px solid var(--accent);border-radius:6px;
   padding:7px 14px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
 #flash.on{opacity:1}
 #flash.err{border-color:var(--bad);color:#f0b5ae}

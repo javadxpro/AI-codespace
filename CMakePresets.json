@@ -9,7 +9,7 @@
     {
       "name": "windows-pc-release",
       "displayName": "KIMIA Windows PC Release",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/out/build/windows-pc-release",
       "condition": {
@@ -35,6 +35,23 @@
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Debug"
       }
+    },
+    {
+      "name": "webgl-release",
+      "displayName": "KIMIA WebGL/WASM Release (Emscripten)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/webgl-release",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "KIMIA_RENDER_BACKEND": "OPENGL",
+        "KIMIA_ENABLE_SDL2": "OFF",
+        "KIMIA_BUILD_PC": "OFF",
+        "KIMIA_ENABLE_D3D11": "OFF",
+        "KIMIA_BUILD_TESTS": "OFF",
+        "KIMIA_BUILD_TOOLS": "OFF",
+        "KIMIA_WERROR": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -47,6 +64,11 @@
       "name": "windows-pc-debug",
       "configurePreset": "windows-pc-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "webgl-release",
+      "configurePreset": "webgl-release",
+      "configuration": "Release"
     }
   ]
 }
