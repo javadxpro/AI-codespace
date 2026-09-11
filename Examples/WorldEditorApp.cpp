@@ -466,6 +466,9 @@ void printUsage() {
       "  --port N          web port to serve the game on (default 8080)\n"
       "  --bind ADDRESS    WebWorkbench bind address (default 127.0.0.1)\n"
       "  --auth TOKEN      Bearer token required by the remote Workbench\n"
+      "  --width N         frame width in pixels (default 640; lower = cooler)\n"
+      "  --height N        frame height in pixels (default 480; lower = cooler)\n"
+      "  --fps N           frame cap over the web (default 30; lower = cooler)\n"
       "  --desktop         open a native Windows/SDL window and use D3D11 when available\n"
       "  --world FILE      world file to save/load (default my_world.kimia)\n"
       "  --assets DIR      OBJ/FBX files you can place in a scene (default assets)\n"
@@ -495,6 +498,9 @@ int main(int argc, char** argv) {
   std::string brandingDir;  // empty = look in Branding, ../Branding, ../../Branding
   std::string playWorld;    // non-empty = a published game, not the editor
   bool desktopMode = false;
+  int frameWidth = 640;   // software-capture size; the phone runs cooler with less
+  int frameHeight = 480;
+  int maxFps = 30;        // web frame cap; lower = less CPU, cooler device
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
@@ -505,6 +511,12 @@ int main(int argc, char** argv) {
       webAuthToken = argv[++i];
     } else if (arg == "--desktop") {
       desktopMode = true;
+    } else if (arg == "--width" && i + 1 < argc) {
+      frameWidth = std::atoi(argv[++i]);
+    } else if (arg == "--height" && i + 1 < argc) {
+      frameHeight = std::atoi(argv[++i]);
+    } else if (arg == "--fps" && i + 1 < argc) {
+      maxFps = std::atoi(argv[++i]);
     } else if (arg == "--world" && i + 1 < argc) {
       worldPath = argv[++i];
     } else if (arg == "--assets" && i + 1 < argc) {
@@ -535,6 +547,12 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
+
+  // Clamp the knobs that control CPU load so a typo cannot ask for a
+  // 1x1 frame or a 0-fps loop.
+  frameWidth = std::max(64, std::min(frameWidth, 4096));
+  frameHeight = std::max(64, std::min(frameHeight, 4096));
+  maxFps = std::max(5, std::min(maxFps, 60));
 
   WorldEditor editor;
   // A published game opens straight into its world; the editor opens on
@@ -665,8 +683,8 @@ int main(int argc, char** argv) {
   const MeshData cubeMesh = kimia::makeCube(1.0);
   const MeshData planeMesh = kimia::makePlane(1.0, 1.0);
   const MeshData sphereMesh = kimia::makeSphere(16, 8);
-  i32 width = 640;
-  i32 height = 480;
+  i32 width = frameWidth;
+  i32 height = frameHeight;
 
   std::signal(SIGINT, onSignal);
   std::map<std::string, kimia::MeshData> loadedMeshes;  // meshFile -> mesh
@@ -682,7 +700,9 @@ int main(int argc, char** argv) {
   f64 restingCameraDistance = orbitCamera.distance;
   const auto frameStart = std::chrono::steady_clock::now();
   auto lastTime = frameStart;
-  const std::chrono::microseconds frameBudget(33333);  // ~30 fps over the web
+  // Cap the web loop at maxFps. Every frame is a full software raster plus a
+  // PNG encode, so the cap is what keeps a phone from cooking itself.
+  const std::chrono::microseconds frameBudget(1000000 / maxFps);
   kimia::RuntimeLoop runtimeLoop;
   bool d3dFailed = false;
 
