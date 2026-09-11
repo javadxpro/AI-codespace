@@ -15,3 +15,6 @@
 
 # Python
 __pycache__/
+
+# One-off source archives exported for the user (not part of the engine)
+/kimia_desktop_src.zip

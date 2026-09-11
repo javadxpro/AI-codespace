@@ -1,0 +1,29 @@
+{
+  "name": "KIMIA Engine — Linux headless + WebViewer",
+  "image": "mcr.microsoft.com/devcontainers/cpp:1-debian-12",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "KIMIA WebViewer",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "twxs.cmake"
+      ],
+      "settings": {
+        "cmake.buildDirectory": "${workspaceFolder}/build",
+        "cmake.configureArgs": [
+          "-DKIMIA_ENABLE_SDL2=OFF",
+          "-DKIMIA_WERROR=ON",
+          "-DCMAKE_BUILD_TYPE=Release"
+        ]
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh"
+}
