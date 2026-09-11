@@ -2122,7 +2122,7 @@ void WorldEditor::playClip(const std::string& file, const std::string& clip, con
     // Legacy wiring to a model file still means "all characters using this
     // file". A basename match keeps old worlds portable when their asset root
     // spelling changed.
-    world_.scene.forEach([this, &file, &targets](EntityHandle, const EntityData& candidate) {
+    world_.scene.forEach([&file, &targets](EntityHandle, const EntityData& candidate) {
       if (candidate.meshFile.empty()) return;
       if (candidate.meshFile == file || baseName(candidate.meshFile) == baseName(file)) targets.push_back(candidate.name);
     });
