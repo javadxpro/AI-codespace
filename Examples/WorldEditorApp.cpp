@@ -632,7 +632,9 @@ int runWorldServer(const WorldServerOptions& opts) {
     return 1;
   }
   if (engine.server() == nullptr) {
-    std::printf("web server failed to start\n");
+    std::printf("web server failed to start on %s:%d — the port is probably already in use.\n"
+                "  kill the old process (pkill -f kimia_world) or pick another port with --port N.\n",
+                webBindAddress.c_str(), port);
     return 1;
   }
 

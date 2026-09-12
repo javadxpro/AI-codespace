@@ -24,6 +24,7 @@ android {
             cmake {
                 cppFlags '-std=c++17'
                 arguments '-DKIMIA_ENABLE_SDL2=OFF',
+                          '-DKIMIA_BUILD_ANDROID_JNI=ON',
                           '-DKIMIA_WERROR=OFF',
                           '-DKIMIA_BUILD_TESTS=OFF',
                           '-DKIMIA_BUILD_TOOLS=OFF',

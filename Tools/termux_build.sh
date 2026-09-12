@@ -13,6 +13,7 @@
 #   3. cmake -B build -DKIMIA_WERROR=ON (Release by default) + build.
 #   4. Runs build/bin/kimia_tests and prints the next commands.
 set -u
+set -o pipefail  # a failed `cmake --build | tee` must fail the script, not tee
 
 BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
 say()  { printf '%s==>%s %s\n' "$BOLD" "$RESET" "$*"; }

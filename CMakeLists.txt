@@ -25,6 +25,11 @@ endif()
 option(KIMIA_ENABLE_SDL2 "Use SDL2 for the window backend when available" ON)
 option(KIMIA_BUILD_PC "Build the Windows desktop path when targeting Windows" ON)
 option(KIMIA_ENABLE_D3D11 "Build the Direct3D 11 renderer on Windows" ON)
+# Explicit opt-in for the Android APK build. Deliberately NOT gated on the
+# CMake `ANDROID` variable: Termux also defines ANDROID but must keep building
+# only the plain headless executables. Only Android/app/build.gradle turns
+# this on.
+option(KIMIA_BUILD_ANDROID_JNI "Build the JNI shared library for the Android APK" OFF)
 set(KIMIA_RENDER_BACKEND "AUTO" CACHE STRING "Primary renderer: AUTO, D3D11, OPENGL or SOFTWARE")
 set_property(CACHE KIMIA_RENDER_BACKEND PROPERTY STRINGS AUTO D3D11 OPENGL SOFTWARE)
 string(TOUPPER "${KIMIA_RENDER_BACKEND}" KIMIA_RENDER_BACKEND_NORMALIZED)
@@ -42,6 +47,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
+
+# The JNI target is a shared library that links the static kimia_* archives.
+# Those must be position-independent to link into a .so on arm64; the
+# executables don't care either way.
+if(KIMIA_BUILD_ANDROID_JNI)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 # No build type given (the usual `cmake -B build` on a phone) -> Release: the
 # software rasterizer draws every frame on the CPU, and an unoptimized build
@@ -416,8 +428,8 @@ endif()
 # and builds only kimia_jni. The library runs the KIMIA World WebViewer server
 # headless (software renderer) inside the app process; a WebView in the APK
 # then shows http://127.0.0.1:<port> — the same dependable path used on PS4
-# and Termux. Only defined when cross-compiling with the Android NDK.
-if(ANDROID)
+# and Termux. Built only when Gradle sets KIMIA_BUILD_ANDROID_JNI=ON.
+if(KIMIA_BUILD_ANDROID_JNI)
   add_library(kimia_jni SHARED
       Android/app/src/main/cpp/jni_glue.cpp
       Examples/WorldEditorApp.cpp
