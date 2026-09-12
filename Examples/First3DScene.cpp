@@ -131,24 +131,24 @@ int main(int argc, char** argv) {
                              kimia::Vec3{0.92, 0.92, 0.88}, 0.25});
 
     kimia::Image image;
-    std::vector<u8> png;
+    std::vector<u8> jpg;
     if (renderer.ready()) {
       renderer.render(scene, width, height);
-      if (!renderer.capturePNG(width, height, png)) png.clear();
+      if (!renderer.captureImage(width, height, image)) image = kimia::Image{};
     }
-    if (png.empty()) {
+    if (image.isEmpty()) {
       kimia::renderSoftware(scene, width, height, kimia::Vec3{0.05, 0.05, 0.06}, image);
-      png = image.encodePNG();
     }
+    jpg = image.encodeJPG();
     if (engine.window() != nullptr && !image.isEmpty()) engine.window()->present(image);
     if (engine.server() != nullptr) {
-      engine.server()->publishFrame(std::move(png),
+      engine.server()->publishFrame(std::move(jpg),
                                     "KIMIA First3DScene | frame " + std::to_string(frame) + " | GL " +
                                         (renderer.ready() ? "on" : "off") + " | software " +
                                         (renderer.ready() ? "off" : "on"));
     }
     if (!capturePath.empty() && frame == frameCount - 1) {
-      if (writeFile(capturePath, png)) std::printf("captured %s\n", capturePath.c_str());
+      if (writeFile(capturePath, jpg)) std::printf("captured %s\n", capturePath.c_str());
     }
     ++frame;
     if (enableWeb) std::this_thread::sleep_for(std::chrono::milliseconds(33));

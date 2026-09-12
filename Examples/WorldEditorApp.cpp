@@ -469,6 +469,7 @@ void printUsage() {
       "  --width N         frame width in pixels (default 640; lower = cooler)\n"
       "  --height N        frame height in pixels (default 480; lower = cooler)\n"
       "  --fps N           frame cap over the web (default 30; lower = cooler)\n"
+      "  --quality N       JPEG quality 10..100 (default 80; lower = cooler)\n"
       "  --desktop         open a native Windows/SDL window and use D3D11 when available\n"
       "  --world FILE      world file to save/load (default my_world.kimia)\n"
       "  --assets DIR      OBJ/FBX files you can place in a scene (default assets)\n"
@@ -501,6 +502,7 @@ int main(int argc, char** argv) {
   int frameWidth = 640;   // software-capture size; the phone runs cooler with less
   int frameHeight = 480;
   int maxFps = 30;        // web frame cap; lower = less CPU, cooler device
+  int jpegQuality = 80;   // JPEG encode quality; lower = faster + cooler
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--port" && i + 1 < argc) {
@@ -517,6 +519,8 @@ int main(int argc, char** argv) {
       frameHeight = std::atoi(argv[++i]);
     } else if (arg == "--fps" && i + 1 < argc) {
       maxFps = std::atoi(argv[++i]);
+    } else if (arg == "--quality" && i + 1 < argc) {
+      jpegQuality = std::atoi(argv[++i]);
     } else if (arg == "--world" && i + 1 < argc) {
       worldPath = argv[++i];
     } else if (arg == "--assets" && i + 1 < argc) {
@@ -553,6 +557,7 @@ int main(int argc, char** argv) {
   frameWidth = std::max(64, std::min(frameWidth, 4096));
   frameHeight = std::max(64, std::min(frameHeight, 4096));
   maxFps = std::max(5, std::min(maxFps, 60));
+  jpegQuality = std::max(10, std::min(jpegQuality, 100));
 
   WorldEditor editor;
   // A published game opens straight into its world; the editor opens on
@@ -1146,7 +1151,7 @@ int main(int argc, char** argv) {
     if (desktopMode && engine.window() != nullptr && (d3dFailed || !engine.d3d11Available())) {
       engine.window()->present(image);
     }
-    std::vector<u8> png = image.encodePNG();
+    std::vector<u8> jpg = image.encodeJPG(jpegQuality);
 
     // --- Menu (buttons the user sees) ---
     kimia::web::Menu menu;
@@ -1160,7 +1165,7 @@ int main(int argc, char** argv) {
 
     const std::string stats = editor.statsLine();
     editorLock.unlock();  // never hold the world lock while calling the server
-    engine.server()->publishFrame(std::move(png), stats);
+    engine.server()->publishFrame(std::move(jpg), stats);
     engine.server()->setMenu(menu);
     engine.endFrame();
 

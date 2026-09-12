@@ -19,12 +19,12 @@ namespace kimia {
 
 namespace {
 
-struct PngWriteContext {
+struct WriteContext {
   std::vector<u8>* buffer;
 };
 
-void pngWriteCallback(void* context, void* data, int size) {
-  auto* ctx = static_cast<PngWriteContext*>(context);
+void writeCallback(void* context, void* data, int size) {
+  auto* ctx = static_cast<WriteContext*>(context);
   const u8* bytes = static_cast<const u8*>(data);
   ctx->buffer->insert(ctx->buffer->end(), bytes, bytes + size);
 }
@@ -62,9 +62,20 @@ Image Image::loadOrThrow(const std::string& path) {
 std::vector<u8> Image::encodePNG() const {
   std::vector<u8> result;
   if (isEmpty()) return result;
-  PngWriteContext context{&result};
+  WriteContext context{&result};
   const int stride = width * channels;
-  if (stbi_write_png_to_func(pngWriteCallback, &context, width, height, channels, pixels.data(), stride) == 0) {
+  if (stbi_write_png_to_func(writeCallback, &context, width, height, channels, pixels.data(), stride) == 0) {
+    result.clear();
+  }
+  return result;
+}
+
+std::vector<u8> Image::encodeJPG(i32 quality) const {
+  std::vector<u8> result;
+  if (isEmpty() || channels < 3) return result;
+  quality = std::max(1, std::min(quality, 100));
+  WriteContext context{&result};
+  if (stbi_write_jpg_to_func(writeCallback, &context, width, height, channels, pixels.data(), quality) == 0) {
     result.clear();
   }
   return result;

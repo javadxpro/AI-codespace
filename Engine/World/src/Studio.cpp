@@ -2616,7 +2616,7 @@ document.addEventListener('keydown', function(e){
 });
 
 setInterval(function(){
-  document.getElementById('view').src = '/frame.png?t=' + Date.now();
+  document.getElementById('view').src = '/frame.jpg?t=' + Date.now();
 }, 500);
 setInterval(function(){
   api('pulse', {}, function(d){

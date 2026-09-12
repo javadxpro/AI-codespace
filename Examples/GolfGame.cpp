@@ -331,17 +331,17 @@ int main(int argc, char** argv) {
     scene.lightDirection = Vec3{-0.4, -0.8, -0.4};
 
     Image image;
-    std::vector<u8> png;
+    std::vector<u8> jpg;
     if (renderer.ready()) {
       renderer.render(scene, width, height);
-      if (!renderer.capturePNG(width, height, png)) png.clear();
+      if (!renderer.captureImage(width, height, image)) image = Image{};
     }
-    if (png.empty()) {
+    if (image.isEmpty()) {
       kimia::renderSoftware(scene, width, height, Vec3{0.05, 0.05, 0.06}, image);
-      png = image.encodePNG();
     }
+    jpg = image.encodeJPG();
     if (engine.server() != nullptr) {
-      engine.server()->publishFrame(std::move(png), game.statsLine());
+      engine.server()->publishFrame(std::move(jpg), game.statsLine());
     } else if (engine.window() != nullptr) {
       engine.window()->present(image);
     }

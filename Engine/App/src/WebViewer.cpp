@@ -571,11 +571,11 @@ void handleConnection(SocketHandle socket, Server::Impl* impl) {
     // Already answered by the API or an extra page.
   } else if (path == "/") {
     response = httpResponse(statusLine(200), "text/html; charset=utf-8", impl->page);
-  } else if (path == "/frame.png") {
+  } else if (path == "/frame.jpg") {
     std::lock_guard<std::mutex> lock(impl->mutex);
     if (impl->hasFrame) {
       const std::string body(reinterpret_cast<const char*>(impl->frame.data()), impl->frame.size());
-      response = httpResponse(statusLine(200), "image/png", body);
+      response = httpResponse(statusLine(200), "image/jpeg", body);
     } else {
       response = httpResponse(statusLine(503), "text/plain; charset=utf-8", "no frame yet");
     }
@@ -766,9 +766,9 @@ void Server::stop() {
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
 
-void Server::publishFrame(std::vector<u8> pngBytes, const std::string& statsLine) {
+void Server::publishFrame(std::vector<u8> jpgBytes, const std::string& statsLine) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->frame = std::move(pngBytes);
+  impl_->frame = std::move(jpgBytes);
   impl_->hasFrame = true;
   impl_->stats = statsLine;
 }
@@ -953,7 +953,7 @@ std::string makePageHtml(const std::string& title, const std::vector<PadButton>&
   out << "});\n";
   out << "look.addEventListener('pointerup',function(){dragging=false;});\n";
   out << "var img=document.getElementById('frame');\n";
-  out << "setInterval(function(){img.src='/frame.png?t='+Date.now();},100);\n";
+  out << "setInterval(function(){img.src='/frame.jpg?t='+Date.now();},100);\n";
   // Intro film: shown once per tab, and only when /intro.mp4 really exists.
   // Any failure (404, codec, autoplay policy) just hides it and starts the
   // game, so the engine never gets stuck behind its own logo.

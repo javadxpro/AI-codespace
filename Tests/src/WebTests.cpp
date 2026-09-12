@@ -157,24 +157,24 @@ KIMIA_TEST(web_get_root_returns_html_page) {
   server.stop();
 }
 
-KIMIA_TEST(web_frame_png_503_before_first_publish) {
+KIMIA_TEST(web_frame_jpg_503_before_first_publish) {
   kimia::web::Server server;
   KIMIA_REQUIRE(server.start(0, makeTestPage()));
-  const HttpResponse before = request(server.port(), "GET", "/frame.png");
+  const HttpResponse before = request(server.port(), "GET", "/frame.jpg");
   KIMIA_REQUIRE(before.status == 503);
   server.stop();
 }
 
-KIMIA_TEST(web_frame_png_200_after_publish_with_exact_bytes) {
+KIMIA_TEST(web_frame_jpg_200_after_publish_with_exact_bytes) {
   kimia::web::Server server;
   KIMIA_REQUIRE(server.start(0, makeTestPage()));
-  std::vector<u8> png = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4};
-  server.publishFrame(png, "frame 1");
-  const HttpResponse response = request(server.port(), "GET", "/frame.png");
+  std::vector<u8> jpg = {0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 1, 2, 3, 4};
+  server.publishFrame(jpg, "frame 1");
+  const HttpResponse response = request(server.port(), "GET", "/frame.jpg");
   KIMIA_REQUIRE(response.status == 200);
-  KIMIA_REQUIRE(response.headers.at("content-type").find("image/png") != std::string::npos);
-  KIMIA_REQUIRE(response.body.size() == png.size());
-  KIMIA_REQUIRE(std::memcmp(response.body.data(), png.data(), png.size()) == 0);
+  KIMIA_REQUIRE(response.headers.at("content-type").find("image/jpeg") != std::string::npos);
+  KIMIA_REQUIRE(response.body.size() == jpg.size());
+  KIMIA_REQUIRE(std::memcmp(response.body.data(), jpg.data(), jpg.size()) == 0);
   server.stop();
 }
 
@@ -279,7 +279,7 @@ KIMIA_TEST(web_make_page_contains_title_buttons_and_keymap) {
   KIMIA_REQUIRE(page.find("Place") != std::string::npos);
   KIMIA_REQUIRE(page.find("keymap") != std::string::npos);
   KIMIA_REQUIRE(page.find("hint text") != std::string::npos);
-  KIMIA_REQUIRE(page.find("/frame.png") != std::string::npos);
+  KIMIA_REQUIRE(page.find("/frame.jpg") != std::string::npos);
   KIMIA_REQUIRE(page.find("/stats") != std::string::npos);
   // The sound poller and the gesture unlock are part of every page.
   KIMIA_REQUIRE(page.find("/sound") != std::string::npos);

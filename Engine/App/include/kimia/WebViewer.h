@@ -55,7 +55,7 @@ struct ServerOptions {
 // Tiny HTTP server on native sockets + threads (Winsock on Windows, POSIX
 // sockets elsewhere; no external HTTP library). Routes:
 //   GET  /          -> 200 text/html (the control page)
-//   GET  /frame.png -> 200 image/png (latest published frame) or 503 if none
+//   GET  /frame.jpg -> 200 image/jpeg (latest published frame) or 503 if none
 //   GET  /stats     -> 200 text/plain (last stats line)
 //   GET  /menu      -> 200 application/json (the dynamic menu; empty by default)
 //   POST /input?key=<k>&down=0|1&tap=<k>&lookX=<dx>&lookY=<dy>&zoom=<dz> -> 200
@@ -82,7 +82,7 @@ public:
   bool running() const;
   void stop();
 
-  void publishFrame(std::vector<u8> pngBytes, const std::string& statsLine);
+  void publishFrame(std::vector<u8> jpgBytes, const std::string& statsLine);
   void setMenu(const Menu& menu);
   DrainedInput drain();
 

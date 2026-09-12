@@ -233,7 +233,7 @@ KIMIA_TEST(studio_bench_page_is_self_contained) {
   KIMIA_REQUIRE(!has(page, "<script src"));
   // It talks to the API this file implements.
   KIMIA_REQUIRE(has(page, "/api/"));
-  KIMIA_REQUIRE(has(page, "frame.png"));
+  KIMIA_REQUIRE(has(page, "frame.jpg"));
 }
 
 // --- Stage 34: an imported model keeps its texture ---

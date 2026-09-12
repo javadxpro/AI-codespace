@@ -26,6 +26,10 @@ struct Image {
   static Image loadOrThrow(const std::string& path);
 
   std::vector<u8> encodePNG() const;
+  // JPEG is lossy but several times faster to encode than PNG, so the web
+  // frame stream uses it to keep a phone CPU cool. quality: 1..100 (80 is a
+  // good speed/quality balance). Channels must be 3 (RGB) or 4 (RGBA).
+  std::vector<u8> encodeJPG(i32 quality = 80) const;
   bool writePNG(const std::string& path) const;
   bool writeJPG(const std::string& path, i32 quality = 90) const;
 };

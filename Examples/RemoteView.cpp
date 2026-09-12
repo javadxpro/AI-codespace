@@ -125,16 +125,16 @@ int main(int argc, char** argv) {
                              kimia::Vec3{0.92, 0.92, 0.88}, 0.25});
 
     kimia::Image image;
-    std::vector<u8> png;
+    std::vector<u8> jpg;
     if (renderer.ready()) {
       renderer.render(scene, width, height);
-      if (!renderer.capturePNG(width, height, png)) png.clear();
+      if (!renderer.captureImage(width, height, image)) image = kimia::Image{};
     }
-    if (png.empty()) {
+    if (image.isEmpty()) {
       kimia::renderSoftware(scene, width, height, kimia::Vec3{0.05, 0.05, 0.06}, image);
-      png = image.encodePNG();
     }
-    engine.server()->publishFrame(std::move(png),
+    jpg = image.encodeJPG();
+    engine.server()->publishFrame(std::move(jpg),
                                   "KIMIA RemoteView | frame " + std::to_string(frame) + " | camera yaw " +
                                       std::to_string(yaw) + " pitch " + std::to_string(pitch) + " dist " +
                                       std::to_string(distance) + " | " + (renderer.ready() ? "GL" : "software"));
