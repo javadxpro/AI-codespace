@@ -33,7 +33,7 @@ public final class MainActivity extends Activity {
     webView.setWebViewClient(new WebViewClient());     // stay in-app, no browser
     setContentView(webView);
 
-    NativeEngine.start(PORT);
+    NativeEngine.start(PORT, getFilesDir().getAbsolutePath());
     webView.loadUrl("http://127.0.0.1:" + PORT + "/");
   }
 

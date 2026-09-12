@@ -8,6 +8,7 @@
 // opened manually.
 #include <jni.h>
 
+#include <string>
 #include <thread>
 
 #include <kimia/WorldServer.h>
@@ -19,7 +20,8 @@ std::thread gServerThread;
 }  // namespace
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_kimia_world_NativeEngine_nativeStart(JNIEnv* /*env*/, jobject /*thiz*/, jint port) {
+Java_com_kimia_world_NativeEngine_nativeStart(JNIEnv* env, jobject /*thiz*/,
+                                              jint port, jstring filesDir) {
   if (gServerThread.joinable()) return;  // already running
 
   WorldServerOptions options;
@@ -31,6 +33,15 @@ Java_com_kimia_world_NativeEngine_nativeStart(JNIEnv* /*env*/, jobject /*thiz*/,
   options.frameHeight = 360;
   options.maxFps = 20;
   options.jpegQuality = 70;
+  // The app's files dir is writable; the embedded assets (Profiles/Worlds/
+  // Branding) are unpacked there instead of the system temp dir.
+  if (filesDir != nullptr) {
+    const char* path = env->GetStringUTFChars(filesDir, nullptr);
+    if (path != nullptr) {
+      options.unpackDir = path;
+      env->ReleaseStringUTFChars(filesDir, path);
+    }
+  }
 
   gServerThread = std::thread(
       [](WorldServerOptions o) { runWorldServer(o); },

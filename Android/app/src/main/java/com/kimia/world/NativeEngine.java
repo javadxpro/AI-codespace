@@ -11,11 +11,11 @@ public final class NativeEngine {
 
   private NativeEngine() {}
 
-  public static native void nativeStart(int port);
+  public static native void nativeStart(int port, String filesDir);
   public static native void nativeStop();
 
-  public static void start(int port) {
-    nativeStart(port);
+  public static void start(int port, String filesDir) {
+    nativeStart(port, filesDir);
   }
 
   public static void stop() {

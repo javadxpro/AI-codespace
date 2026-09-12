@@ -37,6 +37,16 @@ gradle assembleDebug
 # خروجی: app/build/outputs/apk/debug/app-debug.apk
 ```
 
+- ABIها: `arm64-v8a` (گوشی‌های مدرن ازجمله Poco X3 Pro)، `armeabi-v7a` و
+  `x86_64` (شبیه‌ساز). هر سه در APK قرار می‌گیرند.
+- **تک‌فایلی:** بیلد APK با `KIMIA_EMBED_ASSETS=ON` انجام می‌شود، یعنی
+  `Profiles/`، `Worlds/` و `Branding/` داخل `libkimia_jni.so` جاسازی و در
+  اولین اجرا در پوشهٔ files برنامه extract می‌شوند — APK هیچ فایل کناری
+  لازم ندارد. جزئیات: `Documentation/ONE_FILE_BUILDS.md`.
+- رزولوشن/فریم پیش‌فرض در APK سبک‌تر از دسکتاپ تنظیم شده است
+  (۴۸۰×۳۶۰ @ ۲۰fps، JPEG کیفیت ۷۰) تا CPU گوشی داغ نکند. می‌توانی همین
+  مقادیر را در `jni_glue.cpp` تغییر دهی.
+
 ## ساختار
 
 | فایل | نقش |
@@ -49,11 +59,6 @@ gradle assembleDebug
 
 ## نکته‌ها
 
-- ABIها: `arm64-v8a` (گوشی‌های مدرن ازجمله Poco X3 Pro)، `armeabi-v7a` و
-  `x86_64` (شبیه‌ساز). هر سه در APK قرار می‌گیرند.
-- رزولوشن/فریم پیش‌فرض در APK سبک‌تر از دسکتاپ تنظیم شده است
-  (۴۸۰×۳۶۰ @ ۲۰fps، JPEG کیفیت ۷۰) تا CPU گوشی داغ نکند. می‌توانی همین
-  مقادیر را در `jni_glue.cpp` تغییر دهی.
 - APK اشکال‌زدایی (debug) است و با کلید debug امضا می‌شود؛ برای انتشار
   عمومی باید signing رسمی در `Android/app/build.gradle` اضافه شود.
 - قدم بعدی برای گرافیک GPU بومی: پورت رندرر GL به GLES 3 (کار WebGL2/GLES3

@@ -30,6 +30,10 @@ option(KIMIA_ENABLE_D3D11 "Build the Direct3D 11 renderer on Windows" ON)
 # only the plain headless executables. Only Android/app/build.gradle turns
 # this on.
 option(KIMIA_BUILD_ANDROID_JNI "Build the JNI shared library for the Android APK" OFF)
+# Self-contained single-file builds: embed Profiles/Worlds/Branding into the
+# binary and unpack them at runtime, so a lone .exe/.apk runs with nothing
+# next to it. Needs a Python interpreter at build time.
+option(KIMIA_EMBED_ASSETS "Embed game assets into the binary (self-contained exe/apk)" OFF)
 set(KIMIA_RENDER_BACKEND "AUTO" CACHE STRING "Primary renderer: AUTO, D3D11, OPENGL or SOFTWARE")
 set_property(CACHE KIMIA_RENDER_BACKEND PROPERTY STRINGS AUTO D3D11 OPENGL SOFTWARE)
 string(TOUPPER "${KIMIA_RENDER_BACKEND}" KIMIA_RENDER_BACKEND_NORMALIZED)
@@ -437,6 +441,40 @@ if(KIMIA_BUILD_ANDROID_JNI)
   target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world)
   target_compile_options(kimia_jni PRIVATE ${KIMIA_STRICT_WARNINGS})
 endif()
+
+# --- Embedded assets (self-contained single-file exe/apk) -------------------
+# Off by default. When on, Tools/make_embedded_assets.py packs Profiles/,
+# Worlds/ and Branding/ into a generated C++ source; the app unpacks them at
+# runtime. Only the self-contained builds (Windows exe CI, Android APK) enable
+# this, so the Termux/native headless builds stay exactly as before.
+if(KIMIA_EMBED_ASSETS)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(KIMIA_EMBED_OUT ${CMAKE_BINARY_DIR}/generated/EmbeddedAssetsData.cpp)
+  add_custom_command(
+      OUTPUT ${KIMIA_EMBED_OUT}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/generated
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/Tools/make_embedded_assets.py
+              ${KIMIA_EMBED_OUT}
+              ${CMAKE_CURRENT_SOURCE_DIR}/Profiles=profiles
+              ${CMAKE_CURRENT_SOURCE_DIR}/Worlds=worlds
+              ${CMAKE_CURRENT_SOURCE_DIR}/Branding=Branding
+      DEPENDS Tools/make_embedded_assets.py
+      VERBATIM)
+  add_library(kimia_embedded STATIC
+      Engine/App/src/EmbeddedAssets.cpp
+      ${KIMIA_EMBED_OUT})
+  target_include_directories(kimia_embedded PUBLIC Engine/App/include)
+  target_compile_definitions(kimia_embedded PUBLIC KIMIA_EMBEDDED_ASSETS=1)
+  target_compile_options(kimia_embedded PRIVATE ${KIMIA_STRICT_WARNINGS})
+  if(KIMIA_WERROR)
+    target_compile_options(kimia_embedded PRIVATE ${KIMIA_WERROR_FLAGS})
+  endif()
+  target_link_libraries(kimia_world_app PRIVATE kimia_embedded)
+  if(KIMIA_BUILD_ANDROID_JNI)
+    target_link_libraries(kimia_jni PRIVATE kimia_embedded)
+  endif()
+endif()
+
 # The game profile files ship next to the binaries (kimia_world looks in
 # ./profiles by default, --profiles DIR overrides).
 add_custom_command(TARGET kimia_world_app POST_BUILD

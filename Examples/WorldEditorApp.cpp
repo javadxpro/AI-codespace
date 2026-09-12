@@ -27,6 +27,12 @@
 #include <kimia/World.h>
 #include <kimia/WorldServer.h>
 
+#ifdef KIMIA_EMBEDDED_ASSETS
+#include <kimia/EmbeddedAssets.h>
+#include <filesystem>
+#include <fstream>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -584,8 +590,8 @@ int runWorldServer(const WorldServerOptions& opts) {
   const std::string webBindAddress = opts.bindAddress;
   const std::string webAuthToken = opts.authToken;
   const std::string worldPath = opts.worldPath;
-  const std::string assetsDir = opts.assetsDir;
-  const std::string profilesDir = opts.profilesDir;
+  std::string assetsDir = opts.assetsDir;
+  std::string profilesDir = opts.profilesDir;
   std::string brandingDir = opts.brandingDir;
   const std::string playWorld = opts.playWorld;
   const bool desktopMode = opts.desktopMode;
@@ -593,6 +599,42 @@ int runWorldServer(const WorldServerOptions& opts) {
   const int frameHeight = opts.frameHeight;
   const int maxFps = opts.maxFps;
   const int jpegQuality = opts.jpegQuality;
+
+#ifdef KIMIA_EMBEDDED_ASSETS
+  // Self-contained build (single .exe / .apk): unpack the bundled
+  // Profiles/Worlds/Branding once into a writable directory and point the
+  // editor there, so the app runs with nothing next to it. CLI defaults are
+  // only replaced when the user did not pass an explicit path.
+  {
+    static std::string embeddedRoot;
+    static bool embeddedResolved = false;
+    if (!embeddedResolved) {
+      embeddedResolved = true;
+      std::filesystem::path base = opts.unpackDir.empty()
+                                       ? std::filesystem::temp_directory_path()
+                                       : std::filesystem::path(opts.unpackDir);
+      base /= "kimia_engine";
+      base /= kimia::kEngineVersion;
+      std::error_code ec;
+      const std::filesystem::path sentinel = base / ".complete";
+      if (!std::filesystem::exists(sentinel, ec)) {
+        ec.clear();
+        std::filesystem::remove_all(base, ec);
+        ec.clear();
+        if (kimia::embedded::extractAll(base.string())) {
+          std::ofstream stamp(sentinel, std::ios::binary);
+          if (stamp) stamp << kimia::kEngineVersion;
+        }
+      }
+      if (std::filesystem::exists(sentinel, ec)) embeddedRoot = base.string();
+    }
+    if (!embeddedRoot.empty()) {
+      if (assetsDir == "assets") assetsDir = embeddedRoot + "/assets";
+      if (profilesDir == "profiles") profilesDir = embeddedRoot + "/profiles";
+      if (brandingDir.empty()) brandingDir = embeddedRoot + "/Branding";
+    }
+  }
+#endif
 
   WorldEditor editor;
   // A published game opens straight into its world; the editor opens on

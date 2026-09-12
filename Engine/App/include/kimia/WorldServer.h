@@ -18,6 +18,7 @@ struct WorldServerOptions {
   std::string profilesDir = "profiles";
   std::string brandingDir;    // empty = auto-detect Branding/; "-" = skip intro
   std::string playWorld;      // non-empty = a published game, not the editor
+  std::string unpackDir;      // embedded-asset unpack root (empty = system temp)
   bool desktopMode = false;   // native window + D3D11 (PC only)
   int frameWidth = 640;       // software-capture size (lower = cooler phone)
   int frameHeight = 480;

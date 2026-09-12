@@ -1,0 +1,59 @@
+name: Build Windows EXE (self-contained)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'arena/01a080a4-ai-codespace'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install SDL2 (static)
+        shell: pwsh
+        run: |
+          vcpkg install sdl2:x64-windows-static --clean-after-build
+
+      - name: Configure (Ninja, static CRT, embedded assets)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DKIMIA_WERROR=OFF `
+            -DKIMIA_BUILD_TESTS=OFF `
+            -DKIMIA_BUILD_TOOLS=OFF `
+            -DKIMIA_ENABLE_SDL2=ON `
+            -DKIMIA_BUILD_PC=ON `
+            -DKIMIA_ENABLE_D3D11=ON `
+            -DKIMIA_EMBED_ASSETS=ON `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Smoke (version + headless server)
+        shell: pwsh
+        run: |
+          .\build\bin\kimia_world.exe --version
+
+      - name: Upload single-file EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: kimia-world-windows-x64
+          path: build/bin/kimia_world.exe
+          if-no-files-found: error
