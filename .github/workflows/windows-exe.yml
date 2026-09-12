@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build:
@@ -44,9 +45,12 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release
+        run: |
+          $output = & cmake --build build --config Release 2>&1
+          $output | Tee-Object -FilePath build\build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Smoke (version + headless server)
+      - name: Smoke (version)
         shell: pwsh
         run: |
           .\build\bin\kimia_world.exe --version
@@ -57,3 +61,14 @@ jobs:
           name: kimia-world-windows-x64
           path: build/bin/kimia_world.exe
           if-no-files-found: error
+
+      - name: Report failure details
+        if: failure()
+        shell: pwsh
+        run: |
+          $tail = if (Test-Path build\build.log) {
+            (Get-Content build\build.log -Tail 80) -join "`n"
+          } else { "(no build.log)" }
+          $body = "### windows-exe build failed`n`nCommit: $env:GITHUB_SHA`n`n``````text`n$tail`n``````"
+          gh issue create --repo javadxpro/AI-codespace `
+            --title "CI: windows-exe failed at $env:GITHUB_SHA" --body $body
