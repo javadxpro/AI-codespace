@@ -410,6 +410,21 @@ target_compile_options(kimia_world_app PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_world_app PRIVATE ${KIMIA_WERROR_FLAGS})
 endif()
+
+# --- Android (JNI shared library for the APK) --------------------------------
+# The Gradle app in Android/ points its externalNativeBuild at this CMakeLists
+# and builds only kimia_jni. The library runs the KIMIA World WebViewer server
+# headless (software renderer) inside the app process; a WebView in the APK
+# then shows http://127.0.0.1:<port> — the same dependable path used on PS4
+# and Termux. Only defined when cross-compiling with the Android NDK.
+if(ANDROID)
+  add_library(kimia_jni SHARED
+      Android/app/src/main/cpp/jni_glue.cpp
+      Examples/WorldEditorApp.cpp
+  )
+  target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world)
+  target_compile_options(kimia_jni PRIVATE ${KIMIA_STRICT_WARNINGS})
+endif()
 # The game profile files ship next to the binaries (kimia_world looks in
 # ./profiles by default, --profiles DIR overrides).
 add_custom_command(TARGET kimia_world_app POST_BUILD

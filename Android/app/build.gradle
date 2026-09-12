@@ -1,0 +1,57 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.kimia.world'
+    compileSdk 34
+    ndkVersion '26.3.11579264'
+
+    defaultConfig {
+        applicationId 'com.kimia.world'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '0.29.0'
+
+        ndk {
+            // Poco X3 Pro and all modern phones are arm64; the other ABIs keep
+            // emulators and older 32-bit devices working.
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags '-std=c++17'
+                arguments '-DKIMIA_ENABLE_SDL2=OFF',
+                          '-DKIMIA_WERROR=OFF',
+                          '-DKIMIA_BUILD_TESTS=OFF',
+                          '-DKIMIA_BUILD_TOOLS=OFF',
+                          '-DKIMIA_BUILD_PC=OFF',
+                          '-DKIMIA_ENABLE_D3D11=OFF',
+                          '-DKIMIA_RENDER_BACKEND=SOFTWARE'
+                targets 'kimia_jni'
+            }
+        }
+    }
+
+    // The engine is built from the repository's own CMakeLists, so the APK
+    // and the native builds share one source of truth for the engine sources.
+    externalNativeBuild {
+        cmake {
+            path '../../CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}

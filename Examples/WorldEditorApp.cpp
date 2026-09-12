@@ -25,6 +25,7 @@
 #include <kimia/Studio.h>
 #include <kimia/Version.h>
 #include <kimia/World.h>
+#include <kimia/WorldServer.h>
 
 #include <algorithm>
 #include <atomic>
@@ -558,6 +559,40 @@ int main(int argc, char** argv) {
   frameHeight = std::max(64, std::min(frameHeight, 4096));
   maxFps = std::max(5, std::min(maxFps, 60));
   jpegQuality = std::max(10, std::min(jpegQuality, 100));
+
+  WorldServerOptions opts;
+  opts.port = port;
+  opts.bindAddress = webBindAddress;
+  opts.authToken = webAuthToken;
+  opts.worldPath = worldPath;
+  opts.assetsDir = assetsDir;
+  opts.profilesDir = profilesDir;
+  opts.brandingDir = brandingDir;
+  opts.playWorld = playWorld;
+  opts.desktopMode = desktopMode;
+  opts.frameWidth = frameWidth;
+  opts.frameHeight = frameHeight;
+  opts.maxFps = maxFps;
+  opts.jpegQuality = jpegQuality;
+  return runWorldServer(opts);
+}
+
+int runWorldServer(const WorldServerOptions& opts) {
+  running.store(true);  // re-arm after a shutdown, so the APK can restart
+
+  const int port = opts.port;
+  const std::string webBindAddress = opts.bindAddress;
+  const std::string webAuthToken = opts.authToken;
+  const std::string worldPath = opts.worldPath;
+  const std::string assetsDir = opts.assetsDir;
+  const std::string profilesDir = opts.profilesDir;
+  std::string brandingDir = opts.brandingDir;
+  const std::string playWorld = opts.playWorld;
+  const bool desktopMode = opts.desktopMode;
+  const int frameWidth = opts.frameWidth;
+  const int frameHeight = opts.frameHeight;
+  const int maxFps = opts.maxFps;
+  const int jpegQuality = opts.jpegQuality;
 
   WorldEditor editor;
   // A published game opens straight into its world; the editor opens on
@@ -1177,3 +1212,5 @@ int main(int argc, char** argv) {
   std::printf("bye | %s\n", editor.statsLine().c_str());
   return 0;
 }
+
+void requestWorldServerShutdown() { running.store(false); }
