@@ -1975,7 +1975,8 @@ function loadLibrary(){
       bp.innerHTML = '<div class="hint">Select an object and Keep it, then ' +
         'stamp copies without setting it up again.</div>';
     }
-    (d.blueprints || []).forEach(function(name){
+)BENCH"
+         R"BENCH(    (d.blueprints || []).forEach(function(name){
       var el = document.createElement('div');
       el.className = 'item';
       var label = document.createElement('span');
