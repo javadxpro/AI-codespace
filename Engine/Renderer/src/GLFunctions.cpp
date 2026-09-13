@@ -9,6 +9,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <type_traits>
 #endif
 
 namespace kimia {
@@ -34,6 +35,23 @@ void* resolve(const char* name) {
   return gLibraryHandle != nullptr ? dlsym(gLibraryHandle, name) : nullptr;
 #endif
 }
+
+#ifdef __ANDROID__
+// Android GLES3: glBufferData's GLsizeiptr is pointer-sized (32-bit on
+// armeabi-v7a, 64-bit on arm64/x86_64) while the engine always passes an
+// i64, and glClearDepth (double) does not exist — it is glClearDepthf.
+// Shim both through the dlopen'd library so the ABI matches on every ABI.
+using NativeGLSize = std::conditional<sizeof(void*) == 8, kimia::i64, kimia::i32>::type;
+void bufferDataShim(kimia::GLenum target, kimia::GLsizeiptr size, const void* data, kimia::GLenum usage) {
+  const auto fn = reinterpret_cast<void (*)(kimia::GLenum, NativeGLSize, const void*, kimia::GLenum)>(
+      resolve("glBufferData"));
+  if (fn != nullptr) fn(target, static_cast<NativeGLSize>(size), data, usage);
+}
+void clearDepthShim(kimia::f64 depth) {
+  const auto fn = reinterpret_cast<void (*)(kimia::GLfloat)>(resolve("glClearDepthf"));
+  if (fn != nullptr) fn(static_cast<kimia::GLfloat>(depth));
+}
+#endif
 
 #define LOAD(name) name##Fn = reinterpret_cast<decltype(name##Fn)>(resolver("gl" #name))
 #endif  // !__EMSCRIPTEN__
@@ -124,6 +142,10 @@ bool GLFunctions::load(GLGetProcFn proc) {
   if (resolver == nullptr) {
 #ifdef _WIN32
     handle_ = reinterpret_cast<void*>(::LoadLibraryA("opengl32.dll"));
+#elif defined(__ANDROID__)
+    // Android exposes GLES3 (and ES2) directly; there is no desktop libGL.
+    handle_ = dlopen("libGLESv3.so", RTLD_NOW | RTLD_LOCAL);
+    if (handle_ == nullptr) handle_ = dlopen("libGLESv2.so", RTLD_NOW | RTLD_LOCAL);
 #else
     handle_ = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
     if (handle_ == nullptr) handle_ = dlopen("libGL.so", RTLD_NOW | RTLD_LOCAL);
@@ -151,7 +173,11 @@ bool GLFunctions::load(GLGetProcFn proc) {
   LOAD(deleteVertexArrays);
   LOAD(genBuffers);
   LOAD(bindBuffer);
+#ifdef __ANDROID__
+  bufferDataFn = bufferDataShim;
+#else
   LOAD(bufferData);
+#endif
   LOAD(deleteBuffers);
   LOAD(enableVertexAttribArray);
   LOAD(vertexAttribPointer);
@@ -170,7 +196,11 @@ bool GLFunctions::load(GLGetProcFn proc) {
   LOAD(viewport);
   LOAD(clear);
   LOAD(clearColor);
+#ifdef __ANDROID__
+  clearDepthFn = clearDepthShim;
+#else
   LOAD(clearDepth);
+#endif
   LOAD(enable);
   LOAD(disable);
   LOAD(depthFunc);

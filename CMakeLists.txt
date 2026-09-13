@@ -429,16 +429,22 @@ endif()
 
 # --- Android (JNI shared library for the APK) --------------------------------
 # The Gradle app in Android/ points its externalNativeBuild at this CMakeLists
-# and builds only kimia_jni. The library runs the KIMIA World WebViewer server
-# headless (software renderer) inside the app process; a WebView in the APK
-# then shows http://127.0.0.1:<port> — the same dependable path used on PS4
-# and Termux. Built only when Gradle sets KIMIA_BUILD_ANDROID_JNI=ON.
+# and builds only kimia_jni. The library boots the engine in-process and
+# renders natively: an ANativeWindow from the Activity's SurfaceView is wrapped
+# in an EGL window surface and drawn with GLES3 (Cook-Torrance PBR, shadows,
+# fog, filmic tone map), with the software rasteriser as the on-device
+# fallback. There is no WebView and no HTTP server. jni_glue.cpp is fully
+# self-contained (game boot, touch, HUD, on-screen controls, settings flags),
+# so the desktop WorldEditorApp server is NOT part of the APK. Built only when
+# Gradle sets KIMIA_BUILD_ANDROID_JNI=ON.
 if(KIMIA_BUILD_ANDROID_JNI)
   add_library(kimia_jni SHARED
       Android/app/src/main/cpp/jni_glue.cpp
-      Examples/WorldEditorApp.cpp
   )
-  target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world)
+  # liblog (__android_log_print) and libandroid (ANativeWindow_*). Both are
+  # system libraries on every Android device; EGL/GLES stay dlopen'd at
+  # runtime so there is no build-time GPU dependency.
+  target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world log android)
   target_compile_options(kimia_jni PRIVATE ${KIMIA_STRICT_WARNINGS})
 endif()
 

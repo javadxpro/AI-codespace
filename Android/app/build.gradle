@@ -31,7 +31,7 @@ android {
                           '-DKIMIA_BUILD_TOOLS=OFF',
                           '-DKIMIA_BUILD_PC=OFF',
                           '-DKIMIA_ENABLE_D3D11=OFF',
-                          '-DKIMIA_RENDER_BACKEND=SOFTWARE'
+                          '-DKIMIA_RENDER_BACKEND=OPENGL'
                 targets 'kimia_jni'
             }
         }

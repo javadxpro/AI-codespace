@@ -3,10 +3,11 @@
 namespace kimia {
 namespace shaders {
 
-// The shader body is written once and shared by desktop GL and WebGL2: only
-// the version line and the mandatory fragment precision differ. Emscripten
-// compiles GLSL ES 3.00, native desktop GL wants 330 core.
-#ifdef __EMSCRIPTEN__
+// The shader body is written once and shared by desktop GL, Android GLES3
+// and WebGL2: only the version line and the mandatory fragment precision
+// differ. Emscripten and Android compile GLSL ES 3.00, native desktop GL
+// wants 330 core.
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
 #define KIMIA_GLSL_VERSION "#version 300 es\nprecision highp float;\nprecision highp int;\n"
 #else
 #define KIMIA_GLSL_VERSION "#version 330 core\n"

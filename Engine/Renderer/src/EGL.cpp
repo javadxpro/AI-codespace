@@ -37,6 +37,9 @@ bool EGLContext::create(i32 width, i32 height) {
   return true;
 }
 
+bool EGLContext::createWindow(void*, i32, i32, bool) { return false; }
+bool EGLContext::swapBuffers() { return false; }
+
 void EGLContext::destroy() {
   if (context_ != nullptr) {
     emscripten_webgl_destroy_context(reinterpret_cast<EMSCRIPTEN_WEBGL_CONTEXT_HANDLE>(context_));
@@ -56,6 +59,8 @@ namespace kimia {
 
 EGLContext::~EGLContext() { destroy(); }
 bool EGLContext::create(i32, i32) { return false; }
+bool EGLContext::createWindow(void*, i32, i32, bool) { return false; }
+bool EGLContext::swapBuffers() { return false; }
 void EGLContext::destroy() {
   library_ = nullptr;
   display_ = nullptr;
@@ -70,6 +75,8 @@ void EGLContext::destroy() {
 
 #include <dlfcn.h>
 
+#include <vector>
+
 namespace kimia {
 
 namespace {
@@ -77,6 +84,7 @@ namespace {
 // EGL constants (defined locally: no build-time dependency on EGL headers).
 constexpr i32 kDefaultDisplay = 0;
 constexpr i32 kPbufferBit = 0x0001;
+constexpr i32 kWindowBit = 0x0004;
 constexpr i32 kOpenGLBit = 0x0008;
 constexpr i32 kRenderableType = 0x3040;
 constexpr i32 kSurfaceType = 0x3033;
@@ -86,10 +94,13 @@ constexpr i32 kBlueSize = 0x3022;
 constexpr i32 kDepthSize = 0x3025;
 constexpr i32 kNone = 0x3038;
 constexpr i32 kOpenGLApi = 0x30A2;
+constexpr i32 kOpenGLEsApi = 0x30A0;
 constexpr i32 kContextMajorVersion = 0x3098;
 constexpr i32 kContextMinorVersion = 0x3097;
 constexpr i32 kWidth = 0x3057;
 constexpr i32 kHeight = 0x3056;
+constexpr i32 kSampleBuffers = 0x3031;
+constexpr i32 kSamples = 0x3032;
 
 using EglDisplay = void*;
 using EglConfig = void*;
@@ -104,11 +115,56 @@ using PFNBindAPI = EglBoolean (*)(EglInt);
 using PFNChooseConfig = EglBoolean (*)(EglDisplay, const EglInt*, EglConfig*, EglInt, EglInt*);
 using PFNCreateContext = EglContextHandle (*)(EglDisplay, EglConfig, EglContextHandle, const EglInt*);
 using PFNCreatePbufferSurface = EglSurface (*)(EglDisplay, EglConfig, const EglInt*);
+using PFNCreateWindowSurface = EglSurface (*)(EglDisplay, EglConfig, void*, const EglInt*);
 using PFNMakeCurrent = EglBoolean (*)(EglDisplay, EglSurface, EglSurface, EglContextHandle);
+using PFNSwapBuffers = EglBoolean (*)(EglDisplay, EglSurface);
 using PFNDestroyContext = EglBoolean (*)(EglDisplay, EglContextHandle);
 using PFNDestroySurface = EglBoolean (*)(EglDisplay, EglSurface);
 using PFNTerminate = EglBoolean (*)(EglDisplay);
-using PFNGetError = EglInt (*)();
+
+// Everything resolved from one dlopen'd libEGL.
+struct EglApi {
+  PFNGetDisplay getDisplay = nullptr;
+  PFNInitialize initialize = nullptr;
+  PFNBindAPI bindAPI = nullptr;
+  PFNChooseConfig chooseConfig = nullptr;
+  PFNCreateContext createContext = nullptr;
+  PFNCreatePbufferSurface createPbuffer = nullptr;
+  PFNCreateWindowSurface createWindowSurface = nullptr;
+  PFNMakeCurrent makeCurrent = nullptr;
+  PFNSwapBuffers swapBuffers = nullptr;
+  PFNDestroyContext destroyContext = nullptr;
+  PFNDestroySurface destroySurface = nullptr;
+  PFNTerminate terminate = nullptr;
+};
+
+// dlopens the platform EGL and resolves the shared entry points, or returns
+// null. Android's bionic ships libEGL.so with no .1 suffix; Mesa on Linux
+// has both, so the .1 name is tried first exactly as before.
+void* openEgl(EglApi& api) {
+  void* library = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) library = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) return nullptr;
+  api.getDisplay = reinterpret_cast<PFNGetDisplay>(dlsym(library, "eglGetDisplay"));
+  api.initialize = reinterpret_cast<PFNInitialize>(dlsym(library, "eglInitialize"));
+  api.bindAPI = reinterpret_cast<PFNBindAPI>(dlsym(library, "eglBindAPI"));
+  api.chooseConfig = reinterpret_cast<PFNChooseConfig>(dlsym(library, "eglChooseConfig"));
+  api.createContext = reinterpret_cast<PFNCreateContext>(dlsym(library, "eglCreateContext"));
+  api.createPbuffer = reinterpret_cast<PFNCreatePbufferSurface>(dlsym(library, "eglCreatePbufferSurface"));
+  api.createWindowSurface = reinterpret_cast<PFNCreateWindowSurface>(dlsym(library, "eglCreateWindowSurface"));
+  api.makeCurrent = reinterpret_cast<PFNMakeCurrent>(dlsym(library, "eglMakeCurrent"));
+  api.swapBuffers = reinterpret_cast<PFNSwapBuffers>(dlsym(library, "eglSwapBuffers"));
+  api.destroyContext = reinterpret_cast<PFNDestroyContext>(dlsym(library, "eglDestroyContext"));
+  api.destroySurface = reinterpret_cast<PFNDestroySurface>(dlsym(library, "eglDestroySurface"));
+  api.terminate = reinterpret_cast<PFNTerminate>(dlsym(library, "eglTerminate"));
+  if (api.getDisplay == nullptr || api.initialize == nullptr || api.bindAPI == nullptr ||
+      api.chooseConfig == nullptr || api.createContext == nullptr || api.createWindowSurface == nullptr ||
+      api.makeCurrent == nullptr || api.swapBuffers == nullptr) {
+    dlclose(library);
+    return nullptr;
+  }
+  return library;
+}
 
 }  // namespace
 
@@ -116,33 +172,18 @@ EGLContext::~EGLContext() { destroy(); }
 
 bool EGLContext::create(i32 width, i32 height) {
   destroy();
-  library_ = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
-  if (library_ == nullptr) library_ = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
+  EglApi api;
+  library_ = openEgl(api);
   if (library_ == nullptr) return false;
-  const auto getDisplay = reinterpret_cast<PFNGetDisplay>(dlsym(library_, "eglGetDisplay"));
-  const auto initialize = reinterpret_cast<PFNInitialize>(dlsym(library_, "eglInitialize"));
-  const auto bindAPI = reinterpret_cast<PFNBindAPI>(dlsym(library_, "eglBindAPI"));
-  const auto chooseConfig = reinterpret_cast<PFNChooseConfig>(dlsym(library_, "eglChooseConfig"));
-  const auto createContext = reinterpret_cast<PFNCreateContext>(dlsym(library_, "eglCreateContext"));
-  const auto createPbuffer = reinterpret_cast<PFNCreatePbufferSurface>(dlsym(library_, "eglCreatePbufferSurface"));
-  const auto makeCurrent = reinterpret_cast<PFNMakeCurrent>(dlsym(library_, "eglMakeCurrent"));
-  const auto destroyContext = reinterpret_cast<PFNDestroyContext>(dlsym(library_, "eglDestroyContext"));
-  const auto destroySurface = reinterpret_cast<PFNDestroySurface>(dlsym(library_, "eglDestroySurface"));
-  const auto terminate = reinterpret_cast<PFNTerminate>(dlsym(library_, "eglTerminate"));
-  if (getDisplay == nullptr || initialize == nullptr || bindAPI == nullptr || chooseConfig == nullptr ||
-      createContext == nullptr || createPbuffer == nullptr || makeCurrent == nullptr) {
-    destroy();
-    return false;
-  }
 
-  display_ = getDisplay(kDefaultDisplay);
+  display_ = api.getDisplay(kDefaultDisplay);
   if (display_ == nullptr) {
     destroy();
     return false;
   }
   EglInt major = 0;
   EglInt minor = 0;
-  if (initialize(display_, &major, &minor) == 0 || bindAPI(kOpenGLApi) == 0) {
+  if (api.initialize(display_, &major, &minor) == 0 || api.bindAPI(kOpenGLApi) == 0) {
     destroy();
     return false;
   }
@@ -152,7 +193,7 @@ bool EGLContext::create(i32 width, i32 height) {
                                   kNone};
   EglConfig config = nullptr;
   EglInt configCount = 0;
-  if (chooseConfig(display_, configAttribs, &config, 1, &configCount) == 0 || configCount < 1) {
+  if (api.chooseConfig(display_, configAttribs, &config, 1, &configCount) == 0 || configCount < 1) {
     destroy();
     return false;
   }
@@ -164,7 +205,7 @@ bool EGLContext::create(i32 width, i32 height) {
   for (i32 attempt = 0; attempt < 3; ++attempt) {
     const EglInt contextAttribs[] = {kContextMajorVersion, majorVersions[attempt],
                                      kContextMinorVersion, minorVersions[attempt], kNone};
-    context_ = createContext(display_, config, nullptr, contextAttribs);
+    context_ = api.createContext(display_, config, nullptr, contextAttribs);
     if (context_ != nullptr) break;
   }
   if (context_ == nullptr) {
@@ -173,16 +214,107 @@ bool EGLContext::create(i32 width, i32 height) {
   }
 
   const EglInt surfaceAttribs[] = {kWidth, width, kHeight, height, kNone};
-  surface_ = createPbuffer(display_, config, surfaceAttribs);
-  if (surface_ == nullptr || makeCurrent(display_, surface_, surface_, context_) == 0) {
+  surface_ = api.createPbuffer(display_, config, surfaceAttribs);
+  if (surface_ == nullptr || api.makeCurrent(display_, surface_, surface_, context_) == 0) {
     destroy();
     return false;
   }
-  static_cast<void>(destroyContext);
-  static_cast<void>(destroySurface);
-  static_cast<void>(terminate);
   valid_ = true;
   return true;
+}
+
+bool EGLContext::createWindow(void* nativeWindow, i32 width, i32 height, bool msaa) {
+  destroy();
+  if (nativeWindow == nullptr || width <= 0 || height <= 0) return false;
+  EglApi api;
+  library_ = openEgl(api);
+  if (library_ == nullptr) return false;
+
+  display_ = api.getDisplay(kDefaultDisplay);
+  if (display_ == nullptr) {
+    destroy();
+    return false;
+  }
+  EglInt major = 0;
+  EglInt minor = 0;
+  if (api.initialize(display_, &major, &minor) == 0) {
+    destroy();
+    return false;
+  }
+
+#ifdef __ANDROID__
+  // Android has no desktop GL: bind GLES and ask for an ES 3 context, which
+  // is the engine's GL 3.3 feature set (the Emscripten/WebGL2 path already
+  // proves the renderer works on ES 3.00).
+  if (api.bindAPI(kOpenGLEsApi) == 0) {
+    destroy();
+    return false;
+  }
+  const i32 renderableBit = kOpenGLEsApi;
+#else
+  if (api.bindAPI(kOpenGLApi) == 0) {
+    destroy();
+    return false;
+  }
+  const i32 renderableBit = kOpenGLBit;
+#endif
+
+  std::vector<EglInt> configAttribs = {kSurfaceType,    kWindowBit, kRenderableType, renderableBit,
+                                       kRedSize,        8,          kGreenSize,      8,
+                                       kBlueSize,       8,          kDepthSize,      24};
+  if (msaa) {
+    configAttribs.push_back(kSampleBuffers);
+    configAttribs.push_back(1);
+    configAttribs.push_back(kSamples);
+    configAttribs.push_back(4);
+  }
+  configAttribs.push_back(kNone);
+  EglConfig config = nullptr;
+  EglInt configCount = 0;
+  if (api.chooseConfig(display_, configAttribs.data(), &config, 1, &configCount) == 0 || configCount < 1) {
+    destroy();
+    return false;
+  }
+
+#ifdef __ANDROID__
+  // kContextMajorVersion == EGL_CONTEXT_CLIENT_VERSION (0x3098): the ES 3
+  // context request. Fall back to ES 2 so an old driver still gets a context
+  // (the 3.00 shaders report their own failure at compile time).
+  const EglInt contextAttribs[] = {kContextMajorVersion, 3, kNone};
+  context_ = api.createContext(display_, config, nullptr, contextAttribs);
+  if (context_ == nullptr) {
+    const EglInt fallbackAttribs[] = {kContextMajorVersion, 2, kNone};
+    context_ = api.createContext(display_, config, nullptr, fallbackAttribs);
+  }
+#else
+  const EglInt majorVersions[] = {3, 3, 2};
+  const EglInt minorVersions[] = {3, 0, 1};
+  for (i32 attempt = 0; attempt < 3; ++attempt) {
+    const EglInt contextAttribs[] = {kContextMajorVersion, majorVersions[attempt],
+                                     kContextMinorVersion, minorVersions[attempt], kNone};
+    context_ = api.createContext(display_, config, nullptr, contextAttribs);
+    if (context_ != nullptr) break;
+  }
+#endif
+  if (context_ == nullptr) {
+    destroy();
+    return false;
+  }
+
+  surface_ = api.createWindowSurface(display_, config, nativeWindow, nullptr);
+  if (surface_ == nullptr || api.makeCurrent(display_, surface_, surface_, context_) == 0) {
+    destroy();
+    return false;
+  }
+  valid_ = true;
+  return true;
+}
+
+bool EGLContext::swapBuffers() {
+  if (!valid_ || library_ == nullptr || display_ == nullptr || surface_ == nullptr) return false;
+  const auto swap = reinterpret_cast<PFNSwapBuffers>(dlsym(library_, "eglSwapBuffers"));
+  if (swap == nullptr) return false;
+  return swap(display_, surface_) != 0;
 }
 
 void EGLContext::destroy() {
