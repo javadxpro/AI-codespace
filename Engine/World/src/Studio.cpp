@@ -1401,7 +1401,8 @@ input[type=checkbox]{width:auto}
       <div id="ruleList"></div>
       <h2>New rule</h2>
       <div class="row"><input id="rName" placeholder="what it does"></div>
-      <div class="row"><label>when</label>
+)BENCH"
+         R"BENCH(      <div class="row"><label>when</label>
         <select id="rTrigger">
           <option value="start">start (once)</option>
           <option value="every-frame">every frame</option>
@@ -1751,7 +1752,8 @@ function pick(name){
     o.motions.forEach(function(m){
       var w = document.createElement('div');
       w.className = 'wire';
-      var left = document.createElement('i');
+)BENCH"
+         R"BENCH(      var left = document.createElement('i');
       left.textContent = m.clip;
       var right = document.createElement('span');
       right.textContent = '<- ' + m.wiring;
@@ -1975,8 +1977,7 @@ function loadLibrary(){
       bp.innerHTML = '<div class="hint">Select an object and Keep it, then ' +
         'stamp copies without setting it up again.</div>';
     }
-)BENCH"
-         R"BENCH(    (d.blueprints || []).forEach(function(name){
+    (d.blueprints || []).forEach(function(name){
       var el = document.createElement('div');
       el.className = 'item';
       var label = document.createElement('span');
@@ -2197,7 +2198,8 @@ function loadRules(){
       tool('v', function(){ api('move-rule', {index: r.index, dir: 'down'}, loadRules); });
       tool('x', function(){ api('drop-rule', {index: r.index}, function(){
         pickedRule = -1; loadRules(); }); });
-      el.appendChild(tools);
+)BENCH"
+         R"BENCH(      el.appendChild(tools);
       el.onclick = function(){
         pickedRule = r.index;
         document.getElementById('pickedRule').textContent = r.name || ('#' + r.index);
@@ -2601,7 +2603,8 @@ function setVar(){
 // Typing in a field never triggers these.
 document.addEventListener('keydown', function(e){
   var tag = (e.target && e.target.tagName) || '';
-  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+)BENCH"
+         R"BENCH(  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
   if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')){
     e.preventDefault();
     duplicate();
