@@ -1,54 +1,70 @@
-// HelpPanel tests — see Engine/EditorUI/include/kimia/HelpPanel.h.
-
 #include <kimia_test.h>
 #include <kimia/HelpPanel.h>
 
-KIMIA_TEST(HelpPanel_KnownShortcutsPresent) {
-  // We can't iterate the constexpr array directly without exposing
-  // it, so the test pins a few well-known entries by their string
-  // contents. The header's kShortcuts is the source of truth — if
-  // anyone removes Ctrl+Z this test breaks.
-  bool foundUndo = false, foundRedo = false, foundPlay = false;
-  for (const auto& s : kimia::ui::kShortcuts) {
-    if (std::string(s.keys) == "Ctrl+Z" &&
-        std::string(s.description) == "Undo") foundUndo = true;
-    if (std::string(s.keys) == "Ctrl+Shift+Z" &&
-        std::string(s.description) == "Redo") foundRedo = true;
-    if (std::string(s.keys) == "F5" &&
-        std::string(s.description) == "Play / Stop") foundPlay = true;
+KIMIA_TEST(Help_DrawEmptyDoesNotCrash) {
+  kimia::ui::drawHelpPanel({0, 0, 320, 240}, {}, "", 0);
+}
+
+KIMIA_TEST(Help_DrawOneEntry) {
+  std::vector<kimia::ui::HelpEntry> v(1);
+  v[0] = {"Ctrl+S", "Save scene", "File"};
+  kimia::ui::drawHelpPanel({0, 0, 320, 240}, v, "", 0);
+}
+
+KIMIA_TEST(Help_DrawManyEntries) {
+  std::vector<kimia::ui::HelpEntry> v;
+  v.push_back({"Ctrl+S",       "Save scene",       "File"});
+  v.push_back({"Ctrl+O",       "Open scene",       "File"});
+  v.push_back({"Ctrl+N",       "New scene",        "File"});
+  v.push_back({"Ctrl+Z",       "Undo",             "Edit"});
+  v.push_back({"Ctrl+Y",       "Redo",             "Edit"});
+  v.push_back({"Ctrl+X",       "Cut",              "Edit"});
+  v.push_back({"Ctrl+C",       "Copy",             "Edit"});
+  v.push_back({"Ctrl+V",       "Paste",            "Edit"});
+  v.push_back({"F",            "Focus selected",   "View"});
+  v.push_back({"Ctrl+1",       "Switch to scene",  "View"});
+  v.push_back({"Ctrl+2",       "Switch to game",   "View"});
+  v.push_back({"W",            "Move tool",        "Tools"});
+  v.push_back({"E",            "Rotate tool",      "Tools"});
+  v.push_back({"R",            "Scale tool",       "Tools"});
+  kimia::ui::drawHelpPanel({0, 0, 360, 320}, v, "", 0);
+}
+
+KIMIA_TEST(Help_DrawWithFilter) {
+  std::vector<kimia::ui::HelpEntry> v;
+  v.push_back({"Ctrl+S", "Save",   "File"});
+  v.push_back({"Ctrl+Z", "Undo",   "Edit"});
+  v.push_back({"Ctrl+C", "Copy",   "Edit"});
+  v.push_back({"S",      "Scale",  "Tools"});
+  kimia::ui::drawHelpPanel({0, 0, 360, 240}, v, "ctrl", 0);
+  kimia::ui::drawHelpPanel({0, 0, 360, 240}, v, "sca", 0);
+  kimia::ui::drawHelpPanel({0, 0, 360, 240}, v, "noMatch", 0);
+}
+
+KIMIA_TEST(Help_DrawAtScroll) {
+  std::vector<kimia::ui::HelpEntry> v;
+  for (int i = 0; i < 30; ++i) {
+    v.push_back({"Key" + std::to_string(i),
+                 "Desc " + std::to_string(i),
+                 "Cat"});
   }
-  KIMIA_REQUIRE(foundUndo);
-  KIMIA_REQUIRE(foundRedo);
-  KIMIA_REQUIRE(foundPlay);
+  kimia::ui::drawHelpPanel({0, 0, 320, 240}, v, "", -100);
+  kimia::ui::drawHelpPanel({0, 0, 320, 240}, v, "", 200);
 }
 
-KIMIA_TEST(HelpPanel_AllShortcutsHaveNonEmptyFields) {
-  for (const auto& s : kimia::ui::kShortcuts) {
-    KIMIA_REQUIRE(s.keys != nullptr);
-    KIMIA_REQUIRE(std::string(s.keys).size() > 0);
-    KIMIA_REQUIRE(s.description != nullptr);
-    KIMIA_REQUIRE(std::string(s.description).size() > 0);
+KIMIA_TEST(Help_DrawAtPhonePortrait) {
+  std::vector<kimia::ui::HelpEntry> v;
+  v.push_back({"A", "Do thing", "Tools"});
+  v.push_back({"B", "Do other", "Tools"});
+  kimia::ui::drawHelpPanel({0, 0, 240, 320}, v, "", 0);
+}
+
+KIMIA_TEST(Help_DrawAtTabletLandscape) {
+  std::vector<kimia::ui::HelpEntry> v;
+  for (int i = 0; i < 20; ++i) {
+    v.push_back({"K" + std::to_string(i),
+                 "Desc" + std::to_string(i),
+                 "Cat" + std::to_string(i / 5)});
   }
-}
-
-KIMIA_TEST(HelpPanel_AtLeastTenShortcuts) {
-  KIMIA_REQUIRE(sizeof(kimia::ui::kShortcuts) /
-                sizeof(kimia::ui::kShortcuts[0]) >= 10);
-}
-
-KIMIA_TEST(HelpPanel_DrawDoesNotCrash) {
-  kimia::ui::drawHelpPanel({0, 0, 400, 300});
-}
-
-KIMIA_TEST(HelpPanel_DrawAtPhonePortrait) {
-  kimia::ui::drawHelpPanel({0, 0, 240, 320});
-}
-
-KIMIA_TEST(HelpPanel_DrawAtTabletLandscape) {
-  kimia::ui::drawHelpPanel({0, 0, 800, 400});
-}
-
-KIMIA_TEST(HelpPanel_DrawTinyRectStillDoesNotCrash) {
-  // Degenerate rect — should not crash, just clip.
-  kimia::ui::drawHelpPanel({0, 0, 10, 10});
+  kimia::ui::drawHelpPanel({0, 0, 480, 320}, v, "", 0);
 }
