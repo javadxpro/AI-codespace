@@ -36,6 +36,7 @@
 #include <kimia/Version.h>
 #include <kimia/EditorUI.h>
 #include <kimia/RasterBridge.h>
+#include <kimia/NativePainter.h>
 #ifdef KIMIA_EMBEDDED_ASSETS
 #include <kimia/EmbeddedAssets.h>
 #include <filesystem>
@@ -824,119 +825,6 @@ void refreshEditSnapshot(WorldEditor& editor) {
 // exact same entity state the Java ListView shows, but the rendering and
 // the touch input happen in-process via RasterBridge — no JNI trip per
 // frame for the UI itself.
-void paintNativeEditor(Image& image, const WorldEditor& editor) {
-  if (image.isEmpty() || image.channels < 4) return;
-  kimia::ui::FrameContext ctx;
-  ctx.scene.valid = true;
-  ctx.scene.playing = editor.playing();
-  ctx.scene.paused = editor.paused();
-  ctx.scene.scenePath = editor.worldPath();
-  const std::string selected = editor.selectedName();
-  if (!selected.empty()) ctx.scene.selectedNames.push_back(selected);
-  // We only need a coarse snapshot for the overlay — names, transforms,
-  // colors. The Java side has the full list, but we re-read here so the
-  // editor stays the single source of truth.
-  editor.world().scene.forEach([&](kimia::EntityHandle, const EntityData& entity) {
-    kimia::ui::EntityRef ref;
-    ref.name = entity.name;
-    ref.posX = static_cast<f32>(entity.transform.position.x);
-    ref.posY = static_cast<f32>(entity.transform.position.y);
-    ref.posZ = static_cast<f32>(entity.transform.position.z);
-    ref.scaleX = static_cast<f32>(entity.transform.scale.x);
-    ref.scaleY = static_cast<f32>(entity.transform.scale.y);
-    ref.scaleZ = static_cast<f32>(entity.transform.scale.z);
-    ref.colorR = static_cast<f32>(entity.color.x);
-    ref.colorG = static_cast<f32>(entity.color.y);
-    ref.colorB = static_cast<f32>(entity.color.z);
-    ref.locked = (entity.name == "Player" || entity.name == "Ball" ||
-                  entity.name == "Ground");
-    ctx.scene.entities.push_back(ref);
-  });
-  ctx.scene.logLines = editor.hudLines();
-
-  kimia::ui::draw(ctx);
-
-  // Drain the per-frame draw commands and composite them over the
-  // captured scene. rasteriseOver() handles both the GPU (RGBA) and the
-  // software (RGB) outputs, so the editor overlay survives whichever
-  // renderer actually drew this frame.
-  const std::vector<kimia::ui::DrawCmd> cmds = kimia::ui::takeDrawCmds();
-  kimia::ui::rasteriseOver(cmds, image);
-  for (const kimia::ui::UiCommand& cmd : ctx.commands) {
-    switch (cmd.kind) {
-      case kimia::ui::UiCommandKind::SelectEntity:
-        editor.selectEntity(cmd.name);
-        gEditSelected = cmd.name;
-        gEditSelectionChanged = true;
-        break;
-      case kimia::ui::UiCommandKind::ClearSelection:
-        editor.selectEntity(std::string());
-        gEditSelected.clear();
-        gEditSelectionChanged = true;
-        break;
-      case kimia::ui::UiCommandKind::SetPosition:
-        if (!cmd.name.empty()) {
-          // WorldEditor has no setEntityPosition() yet — mutate the
-          // transform in place. Scene owns the entity data; only the
-          // selected-entity position is touched here.
-          if (EntityData* e = editor.world().scene.get(editor.world().scene.find(cmd.name))) {
-            e->transform.position = Vec3{static_cast<f64>(cmd.x),
-                                         static_cast<f64>(cmd.y),
-                                         static_cast<f64>(cmd.z)};
-          }
-        }
-        break;
-      case kimia::ui::UiCommandKind::SetColor:
-        if (!cmd.name.empty()) {
-          editor.setEntityColor(cmd.name, Vec3{cmd.r, cmd.g, cmd.b});
-        }
-        break;
-      case kimia::ui::UiCommandKind::CreateCube:
-      case kimia::ui::UiCommandKind::CreateSphere:
-      case kimia::ui::UiCommandKind::CreatePlane: {
-        const char* kind = cmd.kind == kimia::ui::UiCommandKind::CreateCube   ? "cube"
-                         : cmd.kind == kimia::ui::UiCommandKind::CreateSphere ? "sphere"
-                                                                               : "plane";
-        const std::string name = editor.createObject(kind, Vec3{0.0, 0.0, 0.0});
-        if (!name.empty()) {
-          editor.selectEntity(name);
-          gEditSelected = name;
-          gEditSelectionChanged = true;
-        }
-        break;
-      }
-      case kimia::ui::UiCommandKind::DeleteSelected:
-        if (!gEditSelected.empty()) {
-          editor.deleteEntity(gEditSelected);
-          gEditSelected.clear();
-          gEditSelectionChanged = true;
-        }
-        break;
-      case kimia::ui::UiCommandKind::SaveScene: {
-        std::string error;
-        const std::string path = cmd.name.empty()
-                                     ? (editor.worldPath().empty()
-                                            ? std::string("my_world.kimia")
-                                            : editor.worldPath())
-                                     : cmd.name;
-        if (!editor.saveWorld(path, error)) {
-          LOGE("saveWorld failed: %s", error.c_str());
-        } else {
-          editor.setWorldPath(path);
-        }
-        break;
-      }
-      case kimia::ui::UiCommandKind::PlayPressed: editor.enterPlayMode(); break;
-      case kimia::ui::UiCommandKind::PausePressed: editor.setPaused(true); break;
-      case kimia::ui::UiCommandKind::StopPressed: editor.setPaused(true); break;
-      case kimia::ui::UiCommandKind::StepPressed:
-        editor.setPaused(false);
-        editor.setPaused(true);
-        break;
-      default: break;
-    }
-  }
-}
 
 void renderLoop() {
   const std::string root = unpackAssets(gConfig.filesDir);
@@ -1130,7 +1018,7 @@ void renderLoop() {
         if (renderer.captureImage(width, height, image)) {
           drawHud(image, editor);
           drawControls(image, editor);
-          if (gConfig.useNativeEditor) paintNativeEditor(image, editor);
+          if (gConfig.useNativeEditor) kimia::ui::paintNativeEditor(image, editor);
           overlay.blit(image);
         }
         egl.swapBuffers();
@@ -1139,7 +1027,7 @@ void renderLoop() {
         kimia::renderSoftware(scene, width, height, colors.clear, image);
         drawHud(image, editor);
         drawControls(image, editor);
-        if (gConfig.useNativeEditor) paintNativeEditor(image, editor);
+        if (gConfig.useNativeEditor) kimia::ui::paintNativeEditor(image, editor);
         presentSoftware(window, image);
       }
 

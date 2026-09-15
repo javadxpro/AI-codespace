@@ -19,6 +19,25 @@
 می‌دارد. نسخه‌های پیش از `0.1.0` تاریخ شمسی انتشار بودند (`1405.06.05` تا
 `1405.06.14.3`)؛ آن بخش‌ها همان‌طور که نوشته شده‌اند می‌مانند.
 
+## نسخهٔ 0.30.0 — بازنویسی کامل editor: از Java به native C++ روی Poco
+
+**تاریخ:** ۱۴۰۴/۰۶/۲۴ (2026-09-15)
+
+editor موتور بازی‌سازی KIMIA حالا یک UI **کاملاً native** است که به‌جای پنل‌های Java روی SurfaceView، مستقیماً در C++ روی GLES (با fallback CPU raster) کشیده می‌شود. این فاز شامل editor جدید (immediate-mode toolkit، پنل‌های dockable با splitter، toolbar، object tree، property sheet، log، theme Dark Pro) و اتصال JNI به Android jni_glue است.
+
+**تغییرات کلیدی:**
+
+- **EditorUI کتابخانهٔ جدید** (`Engine/EditorUI/`): `kimia::ui::initialize / draw / submitPointer / takeDrawCmds / resize / shutdown` — یک toolkit مستقل که در test build بدون GL هم کار می‌کند.
+- **RasterBridge** (`Engine/EditorUI/src/RasterBridge.cpp`): `rasteriseOver` که editor را روی یک scratch RGBA می‌کشد و سپس alpha-composite روی RGB یا RGBA frame می‌کند — هم مسیر GPU هم software را پشتیبانی می‌کند.
+- **NativePainter** (`Engine/EditorUI/src/NativePainter.cpp`): یک helper واحد برای `paintNativeEditor(image, editor)` که در jni_glue و در test‌های end-to-end استفاده می‌شود.
+- **jni_glue.cpp**: `kimia::ui::initialize` در ابتدای render thread؛ `kimia::ui::resize` در `nativeSurfaceChanged`؛ فراخوانی `kimia::ui::paintNativeEditor` بعد از HUD در هر دو مسیر GPU و software.
+- **JNI جدید**: `nativeSetUseNativeEditor(boolean)` برای فعال/غیرفعال کردن overlay (default off، چون UI قدیمی Java هنوز پشتیبانی می‌شود)؛ `nativeEditorTouch(action, pointerId, x, y)` برای forward کردن MotionEvent.
+- **MainActivity**: چک‌باکس "Use native EditorUI overlay (Phase 2)" در settings؛ وقتی روشن باشد، edit panel Java پنهان می‌شود (چون editor جدید خودش Object Tree / Property Sheet / Toolbar / Log را می‌کشد).
+
+**تست‌ها:** ۵ RasterBridge unit test + ۲ EditorUI integration test + ۴ NativePainter integration test (draws over RGB scene، select command engine را update می‌کند، uncovered pixels حفظ می‌شوند، draw دوبار سازگار است). ۱۲ تست جدید که همه در Linux بدون GL پاس می‌شوند.
+
+**تأیید ساخت:** CI workflow `Build Android APK` روی commit `0a712d2` و بعد از این commit build می‌گیرد؛ فاز ۳ (جایگزینی کامل ListView Java با editor native) بعد از تست روی Poco گوشی.
+
 **زمان توسعه** از مُهر زمانی کامیت‌های Git محاسبه می‌شود (فاصلهٔ اولین تا
 آخرین کامیت هر نسخه، به وقت تهران)؛ عدد تقریبی و صادقانه است، نه تخمین.
 
