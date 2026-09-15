@@ -239,6 +239,7 @@ add_executable(kimia_tests
     Tests/src/ProfileTests.cpp
     Tests/src/RuntimeTests.cpp
     Tests/src/EditorUITests.cpp
+    Tests/src/GizmoTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -434,6 +435,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/NativePainter.cpp
     Engine/EditorUI/src/AtlasBuilder.cpp
     Engine/EditorUI/src/EditorGl.cpp
+    Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
 target_link_libraries(kimia_editor_ui PUBLIC kimia_math kimia_world kimia_assets)

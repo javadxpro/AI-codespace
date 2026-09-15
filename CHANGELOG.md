@@ -38,6 +38,10 @@ editor موتور بازی‌سازی KIMIA حالا یک UI **کاملاً nati
 
 **تأیید ساخت:** CI workflow `Build Android APK` روی commit `0a712d2` و بعد از این commit build می‌گیرد؛ فاز ۳ (جایگزینی کامل ListView Java با editor native) بعد از تست روی Poco گوشی.
 
+**فاز ۴ — GLES3 inline pipeline (GitHub `a07825f`):** EditorGl حالا واقعاً paint می‌کند. در `init()` shader rounded-rect + atlas-sampling را compile/link می‌کند، VAO+VBO با ۵ per-vertex attribute می‌سازد، و texture atlas (2048×8 RGBA) از buildAtlas() بارگذاری می‌کند. `paint()` همهٔ DrawCmd‌ها را bake می‌کند، `bufferData` با `GL_STREAM_DRAW` می‌کند، و یک `drawArrays` صادر می‌کند. `GLFunctions` با `drawArraysFn`، `uniform2f` (از `uniform3f` با z=0)، `GL_TRUE/GL_FALSE/GL_STREAM_DRAW/GL_DYNAMIC_DRAW` extend شد. NativePainter مسیر GPU-aware: اگر `gl.ready()` باشد GPU paint می‌کند، در غیر این صورت CPU rasteriseOver. EditorGlTests به ۷ تست extend شد (init builds atlas، destroy not-ready، paint empty no-op، paintEditorGl function exists، paint rect/glyph safe، atlas populated after init).
+
+**فاز ۴+ — Gizmo API (placeholder):** `Gizmo.h/Gizmo.cpp` با `GizmoMode::{Select,Move,Rotate,Scale}`، `gizmoHitTest(worldOrigin, viewProjection, w, h, mode, mx, my)` (فعلاً no-hit) و `drawGizmo(...)` که یک marker زرد ۱۲×۱۲ در جای screen-space origin می‌کشد. ray-vs-arrow / ray-vs-ring / ray-vs-cube math در فاز ۵ می‌آید.
+
 **زمان توسعه** از مُهر زمانی کامیت‌های Git محاسبه می‌شود (فاصلهٔ اولین تا
 آخرین کامیت هر نسخه، به وقت تهران)؛ عدد تقریبی و صادقانه است، نه تخمین.
 
