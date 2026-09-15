@@ -5,14 +5,16 @@
 
 namespace kimia::ui {
 
-struct ConsoleLine {
+enum class LogLevel { Info, Warn, Error };
+
+struct LogLine {
+  LogLevel level = LogLevel::Info;
   std::string text;
-  i32 severity = 0;  // 0=plain, 1=info, 2=warning, 3=error
 };
 
 void drawConsolePanel(const Rect& rect,
-                      const std::vector<ConsoleLine>& lines,
-                      const std::string& inputBuffer,
+                      const std::vector<LogLine>& lines,
+                      const std::string& input,
                       i32 scrollY,
                       bool autoScroll);
 

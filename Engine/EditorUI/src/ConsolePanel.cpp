@@ -6,62 +6,65 @@
 namespace kimia::ui {
 
 namespace {
-Color severityColor(i32 s) {
+Color levelColor(LogLevel l) {
   using namespace theme;
-  switch (s) {
-    case 1: return kSuccess;
-    case 2: return kWarning;
-    case 3: return kError;
-    default: return kText;
-  }
+  if (l == LogLevel::Info)  return kText;
+  if (l == LogLevel::Warn)  return kWarning;
+  return kError;
+}
+const char* levelTag(LogLevel l) {
+  if (l == LogLevel::Info)  return "I";
+  if (l == LogLevel::Warn)  return "W";
+  return "E";
 }
 }
 
 void drawConsolePanel(const Rect& rect,
-                      const std::vector<ConsoleLine>& lines,
-                      const std::string& inputBuffer,
+                      const std::vector<LogLine>& lines,
+                      const std::string& input,
                       i32 scrollY,
                       bool autoScroll) {
   using namespace theme;
   drawRect(rect, kPanel, 0.0f);
-
   drawText("Console", rect.x + 6.0f, rect.y + 4.0f, 1, kText);
-  if (autoScroll) {
-    drawText("auto", rect.x + rect.w - 36.0f, rect.y + 4.0f, 1, kAccent);
-  }
 
-  // Lines area: between the header and the input bar.
-  const f32 headerH = 14.0f;
-  const f32 inputH = 18.0f;
-  const f32 lineH = 12.0f;
-  const Rect linesArea{
-      rect.x, rect.y + headerH,
-      rect.w, rect.h - headerH - inputH - 4.0f};
+  constexpr f32 inputH = 18.0f;
+  constexpr f32 lineH = 14.0f;
+  const Rect inputRect = {rect.x + 4.0f,
+                          rect.y + rect.h - inputH - 4.0f,
+                          rect.w - 8.0f,
+                          inputH};
+  const Rect linesRect = {rect.x + 4.0f,
+                          rect.y + 18.0f,
+                          rect.w - 8.0f,
+                          rect.h - 18.0f - inputH - 8.0f};
+  drawRect(linesRect, kPanelAlt, 0.0f);
 
-  pushClip(linesArea);
-  const f32 startY = linesArea.y - static_cast<f32>(scrollY);
+  pushClip(linesRect);
+  const f32 startY = linesRect.y + linesRect.h - 14.0f -
+                     static_cast<f32>(scrollY);
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    const f32 y = startY + static_cast<float>(i) * lineH;
-    if (y + lineH < linesArea.y) continue;
-    if (y > linesArea.y + linesArea.h) break;
+    const f32 y = startY - static_cast<float>(lines.size() - 1 - i) * lineH;
+    if (y + lineH < linesRect.y) continue;
+    if (y > linesRect.y + linesRect.h) break;
+    drawText(levelTag(lines[i].level),
+             linesRect.x + 2.0f, y, 1, levelColor(lines[i].level));
     drawText(lines[i].text.c_str(),
-             linesArea.x + 4.0f, y, 1, severityColor(lines[i].severity));
+             linesRect.x + 14.0f, y, 1, levelColor(lines[i].level));
   }
   popClip();
 
-  // Input bar at the bottom.
-  const Rect inputBar{
-      rect.x, rect.y + rect.h - inputH,
-      rect.w, inputH};
-  drawRect(inputBar, kPanelAlt, 2.0f);
-  drawText(">", inputBar.x + 4.0f, inputBar.y + 4.0f, 1, kAccent);
-  drawText(inputBuffer.c_str(),
-           inputBar.x + 14.0f, inputBar.y + 4.0f, 1, kText);
-  // Caret.
-  const f32 caretX = inputBar.x + 14.0f +
-                     static_cast<f32>(inputBuffer.size()) * 6.0f;
-  drawRect({caretX, inputBar.y + 3.0f, 1.0f, inputBar.h - 6.0f},
-           kAccent, 0.0f);
+  // Input line.
+  drawRect(inputRect, kPanel, 2.0f);
+  const std::string prompt = "> " + input;
+  drawText(prompt.c_str(),
+           inputRect.x + 4.0f, inputRect.y + 2.0f, 1,
+           input.empty() ? kTextMuted : kText);
+
+  if (autoScroll) {
+    drawText("[auto]", rect.x + rect.w - 36.0f,
+             rect.y + 6.0f, 1, kAccent);
+  }
 }
 
 }
