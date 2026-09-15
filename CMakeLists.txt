@@ -292,6 +292,7 @@ add_executable(kimia_tests
     Tests/src/GameProfilePanelTests.cpp
     Tests/src/BuildSettingsPanelTests.cpp
     Tests/src/CheatSheetPanelTests.cpp
+    Tests/src/AssetImportPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -539,6 +540,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/GameProfilePanel.cpp
     Engine/EditorUI/src/BuildSettingsPanel.cpp
     Engine/EditorUI/src/CheatSheetPanel.cpp
+    Engine/EditorUI/src/AssetImportPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
