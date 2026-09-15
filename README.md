@@ -98,6 +98,7 @@ Web/              پوستهٔ WebGL (Emscripten)
 | [Scene](Documentation/Scene.md) | صحنه، SceneIO و قراردادهای ریاضی |
 | [WorldEditor](Documentation/WorldEditor.md) | ویرایشگر و رابط کاربری |
 | [Games](Documentation/Games.md) | پروفایل‌ها، گیم‌پلی و کنترل‌ها |
+| [GameTutorial](Documentation/GameTutorial.md) | آموزش قدم‌به‌قدم ساخت اولین بازی |
 | [Logic](Documentation/Logic.md) | منطق بصری، HUD، ورودی، ذرات، انتشار |
 | [Animation](Documentation/Animation.md) | اسکلت، retarget و آدمک |
 | [Assets](Documentation/Assets.md) | خط لولهٔ دارایی |
