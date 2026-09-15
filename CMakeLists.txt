@@ -268,6 +268,7 @@ add_executable(kimia_tests
     Tests/src/LightingPanelTests.cpp
     Tests/src/TerrainPanelTests.cpp
     Tests/src/NavMeshPanelTests.cpp
+    Tests/src/MaterialPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -491,6 +492,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/LightingPanel.cpp
     Engine/EditorUI/src/TerrainPanel.cpp
     Engine/EditorUI/src/NavMeshPanel.cpp
+    Engine/EditorUI/src/MaterialPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
