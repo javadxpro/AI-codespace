@@ -238,9 +238,10 @@ add_executable(kimia_tests
     Tests/src/InputTests.cpp
     Tests/src/ProfileTests.cpp
     Tests/src/RuntimeTests.cpp
+    Tests/src/EditorUITests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
-target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer)
+target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer kimia_editor_ui)
 target_compile_options(kimia_tests PRIVATE ${KIMIA_STRICT_WARNINGS})
 if(KIMIA_WERROR)
   target_compile_options(kimia_tests PRIVATE ${KIMIA_WERROR_FLAGS})
@@ -412,6 +413,20 @@ add_library(kimia_world STATIC
     Engine/World/src/Input.cpp
     Engine/World/src/WorldIO.cpp
 )
+
+# --- EditorUI (immediate-mode UI toolkit for the in-app editor) ---
+# A native GLES-rendered UI that replaces the WebViewer Workbench. Phase 1
+# keeps the renderer stubbed (CPU-side logic only); the Android JNI wires
+# up the real GL path on top of the same code.
+add_library(kimia_editor_ui STATIC
+    Engine/EditorUI/src/EditorUI.cpp
+    Engine/EditorUI/src/Widget.cpp
+    Engine/EditorUI/src/Panel.cpp
+    Engine/EditorUI/src/Theme.cpp
+    Engine/EditorUI/src/Icons.cpp
+)
+target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
+target_link_libraries(kimia_editor_ui PUBLIC kimia_math)
 target_include_directories(kimia_world PUBLIC Engine/World/include)
 target_link_libraries(kimia_world PUBLIC kimia_profile kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
