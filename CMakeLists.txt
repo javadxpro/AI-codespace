@@ -262,6 +262,7 @@ add_executable(kimia_tests
     Tests/src/ContextMenuPanelTests.cpp
     Tests/src/ProfilerPanelTests.cpp
     Tests/src/SearchPanelTests.cpp
+    Tests/src/StatusBarPanelTests.cpp
     Tests/src/HierarchyTreePanelTests.cpp
     Tests/src/AnimationPanelTests.cpp
     Tests/src/AudioPanelTests.cpp
@@ -318,6 +319,7 @@ add_executable(kimia_tests
     Tests/src/GpuPanelTests.cpp
     Tests/src/CrashLogPanelTests.cpp
     Tests/src/SearchPanelTests.cpp
+    Tests/src/StatusBarPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -535,6 +537,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ContextMenuPanel.cpp
     Engine/EditorUI/src/ProfilerPanel.cpp
     Engine/EditorUI/src/SearchPanel.cpp
+    Engine/EditorUI/src/StatusBarPanel.cpp
     Engine/EditorUI/src/HierarchyTreePanel.cpp
     Engine/EditorUI/src/AnimationPanel.cpp
     Engine/EditorUI/src/AudioPanel.cpp
@@ -591,6 +594,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/GpuPanel.cpp
     Engine/EditorUI/src/CrashLogPanel.cpp
     Engine/EditorUI/src/SearchPanel.cpp
+    Engine/EditorUI/src/StatusBarPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
