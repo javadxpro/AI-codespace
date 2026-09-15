@@ -298,6 +298,7 @@ add_executable(kimia_tests
     Tests/src/RecentFilesPanelTests.cpp
     Tests/src/TagPanelTests.cpp
     Tests/src/AssetMetadataPanelTests.cpp
+    Tests/src/DependencyPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -551,6 +552,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/RecentFilesPanel.cpp
     Engine/EditorUI/src/TagPanel.cpp
     Engine/EditorUI/src/AssetMetadataPanel.cpp
+    Engine/EditorUI/src/DependencyPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
