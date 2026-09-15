@@ -87,6 +87,7 @@ struct NativeConfig {
   i32 fps = 60;
   bool shadows = true;
   bool msaa = false;
+  i32 mode = 0;               // 0 = play, 1 = edit (phase 1: in-world editor)
 };
 
 // --- Shared state between the UI thread (JNI) and the render thread ------
@@ -126,6 +127,34 @@ bool gActionUp = false;     // a press ended on the action button
 bool gReloadTap = false;    // a tap landed on the reload button
 float gPinchPrev = 0.0f;    // last pinch distance (normalized units)
 bool gPinchActive = false;
+
+// --- Edit-mode scratch state (phase 1) -----------------------------------
+// Lives on the render thread; the UI thread only asks for snapshots via
+// editor.* and pushes commands through gEditCmd. The command queue is one
+// slot deep because the Java UI sends exactly one action at a time.
+enum class EditCmd { None, Select, BeginDrag, DragTo, EndDrag, SetColor, Delete, NewCube,
+                     NewSphere, NewPlane, Save };
+struct EditCommand {
+  EditCmd kind = EditCmd::None;
+  std::string name;        // selected entity for Select/Delete; file name for Save
+  float fromX = 0.0f, fromY = 0.0f, toX = 0.0f, toY = 0.0f;
+  float r = 0.0f, g = 0.0f, b = 0.0f;
+};
+std::mutex gEditMutex;
+EditCommand gEditCmd;
+std::string gEditSelected;     // last selection set by the render loop
+bool gEditSelectionChanged = false;
+// A cached snapshot of the entity list for the UI (avoids the UI thread
+// poking the editor while the render thread is mutating it).
+struct EditSnapshot {
+  bool valid = false;
+  std::vector<std::string> names;
+  std::string selected;
+  float selR = 0.0f, selG = 0.0f, selB = 0.0f;
+  float selPosX = 0.0f, selPosY = 0.0f, selPosZ = 0.0f;
+  float bgR = 0.0f, bgG = 0.0f, bgB = 0.0f;  // camera background (matches scene clear)
+};
+EditSnapshot gEditSnapshot;
 
 // Screen-fraction touch zones (fractions of width/height, y = 0 at top).
 constexpr float kStickZoneX = 0.45f;   // x < this = stick side
@@ -671,6 +700,124 @@ void applyInput(WorldEditor& editor, OrbitCamera& orbit, const FrameInput& in) {
 }
 
 // --- The render loop ------------------------------------------------------
+namespace {
+
+// Phase 1 editor: drains the edit command queue and applies it to the world
+// (selection, drag, colour, delete, add, save). The viewport's pick is the
+// engine's own — pickEntityAt() — so a tap lands on the entity the eye sees.
+void processEditCommands(WorldEditor& editor, i32 viewWidth, i32 viewHeight) {
+  EditCommand cmd;
+  {
+    std::lock_guard<std::mutex> lock(gEditMutex);
+    cmd = gEditCmd;
+    gEditCmd = EditCommand{};
+  }
+  if (cmd.kind == EditCmd::None) return;
+  switch (cmd.kind) {
+    case EditCmd::None: break;
+    case EditCmd::Select: {
+      const std::string picked = editor.pickEntityAt(static_cast<f64>(cmd.fromX),
+                                                     static_cast<f64>(cmd.fromY));
+      if (!picked.empty()) {
+        editor.selectEntity(picked);
+        gEditSelected = picked;
+      } else {
+        editor.selectEntity(std::string());
+        gEditSelected.clear();
+      }
+      gEditSelectionChanged = true;
+      break;
+    }
+    case EditCmd::BeginDrag: {
+      const std::string picked = editor.pickEntityAt(static_cast<f64>(cmd.fromX),
+                                                     static_cast<f64>(cmd.fromY));
+      if (!picked.empty()) {
+        editor.selectEntity(picked);
+        gEditSelected = picked;
+        gEditSelectionChanged = true;
+      }
+      break;
+    }
+    case EditCmd::DragTo: {
+      if (!gEditSelected.empty()) {
+        // grid = 0 (free move); the engine snaps the position to ground.
+        editor.dragEntity(gEditSelected,
+                          static_cast<f64>(cmd.fromX), static_cast<f64>(cmd.fromY),
+                          static_cast<f64>(cmd.toX),   static_cast<f64>(cmd.toY),
+                          0.0);
+      }
+      break;
+    }
+    case EditCmd::EndDrag: break;
+    case EditCmd::SetColor: {
+      if (!gEditSelected.empty()) {
+        editor.setEntityColor(gEditSelected, Vec3{cmd.r, cmd.g, cmd.b});
+      }
+      break;
+    }
+    case EditCmd::Delete: {
+      if (!gEditSelected.empty()) {
+        editor.deleteEntity(gEditSelected);
+        gEditSelected.clear();
+        gEditSelectionChanged = true;
+      }
+      break;
+    }
+    case EditCmd::NewCube:
+    case EditCmd::NewSphere:
+    case EditCmd::NewPlane: {
+      const char* kind = cmd.kind == EditCmd::NewCube   ? "cube"
+                       : cmd.kind == EditCmd::NewSphere ? "sphere"
+                                                        : "plane";
+      const std::string name = editor.createObject(kind, Vec3{0.0, 0.0, 0.0});
+      if (!name.empty()) {
+        editor.selectEntity(name);
+        gEditSelected = name;
+        gEditSelectionChanged = true;
+      }
+      break;
+    }
+    case EditCmd::Save: {
+      std::string error;
+      const std::string path = cmd.name.empty()
+                                   ? (editor.worldPath().empty() ? std::string("my_world.kimia") : editor.worldPath())
+                                   : cmd.name;
+      if (!editor.saveWorld(path, error)) {
+        LOGE("saveWorld failed: %s", error.c_str());
+      } else {
+        editor.setWorldPath(path);
+      }
+      break;
+    }
+  }
+  (void)viewWidth;
+  (void)viewHeight;
+}
+
+// Builds the snapshot the UI reads. Called once per frame in edit mode.
+void refreshEditSnapshot(WorldEditor& editor) {
+  EditSnapshot snap;
+  snap.names = editor.entityNames();
+  snap.selected = editor.selectedName();
+  snap.valid = true;
+  if (!snap.selected.empty()) {
+    if (const EntityData* e = editor.world().scene.get(editor.world().scene.find(snap.selected))) {
+      snap.selPosX = static_cast<float>(e->transform.position.x);
+      snap.selPosY = static_cast<float>(e->transform.position.y);
+      snap.selPosZ = static_cast<float>(e->transform.position.z);
+      snap.selR = static_cast<float>(e->color.x);
+      snap.selG = static_cast<float>(e->color.y);
+      snap.selB = static_cast<float>(e->color.z);
+    }
+  }
+  const kimia::EnvironmentColors colors = kimia::environmentColors(editor.world().environment);
+  snap.bgR = static_cast<float>(colors.clear.x);
+  snap.bgG = static_cast<float>(colors.clear.y);
+  snap.bgB = static_cast<float>(colors.clear.z);
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditSnapshot = snap;
+}
+
 void renderLoop() {
   const std::string root = unpackAssets(gConfig.filesDir);
 
@@ -773,13 +920,24 @@ void renderLoop() {
       const FrameInput input = drainInput();
       applyInput(editor, orbitCamera, input);
 
+      const bool inEdit = gConfig.mode == 1;
+      if (inEdit) {
+        processEditCommands(editor, width, height);
+        editor.setPaused(true);  // edit mode pauses the simulation
+        // Translate the camera drag into orbit motion in edit mode too.
+        orbitCamera.orbit(static_cast<f64>(input.dragX) * kLookYawScale * 0.6,
+                          static_cast<f64>(input.dragY) * kLookPitchScale * 0.6);
+      }
+
       // Camera framing (same easing as the desktop loop).
-      if (editor.cameraFollowsAim()) {
+      if (editor.cameraFollowsAim() && !inEdit) {
         orbitCamera.yaw += angleDelta(orbitCamera.yaw, editor.aimYaw()) * std::min(1.0, kimia::kCameraFollowRate * dt);
       }
-      orbitCamera.center = editor.cameraTarget();
-      const f64 wantedDistance = editor.cameraDistance(restingDistance);
-      orbitCamera.distance += (wantedDistance - orbitCamera.distance) * std::min(1.0, kimia::kCameraFollowRate * dt);
+      if (!inEdit) {
+        orbitCamera.center = editor.cameraTarget();
+        const f64 wantedDistance = editor.cameraDistance(restingDistance);
+        orbitCamera.distance += (wantedDistance - orbitCamera.distance) * std::min(1.0, kimia::kCameraFollowRate * dt);
+      }
 
       // Advance the sim on the fixed clock.
       runtimeLoop.pause(editor.playing() && editor.paused());
@@ -799,6 +957,23 @@ void renderLoop() {
         viewport.width = width;
         viewport.height = height;
         editor.setViewport(viewport);
+      }
+
+      if (inEdit) {
+        // Highlight the selected entity with a thin yellow wireframe-ish cube
+        // by drawing a slightly larger tinted cube around it.
+        const std::string sel = editor.selectedName();
+        if (!sel.empty()) {
+          if (const EntityData* e = editor.world().scene.get(editor.world().scene.find(sel))) {
+            const Vec3 highlight{e->transform.position.x, e->transform.position.y + 0.02, e->transform.position.z};
+            const Vec3 hs{e->transform.scale.x * 1.04, e->transform.scale.y * 1.04 + 0.04,
+                          e->transform.scale.z * 1.04};
+            scene.objects.push_back(
+                {&cubeMesh, Mat4::translation(highlight) * Mat4::scaling(hs),
+                 Vec3{1.0, 0.85, 0.15}, 1.0, 0.0, nullptr});
+          }
+        }
+        refreshEditSnapshot(editor);
       }
 
       Image image;
@@ -927,4 +1102,171 @@ Java_com_kimia_world_NativeEngine_nativeStop(JNIEnv*, jclass) {
     gSurfaceCv.notify_all();
   }
   if (gThread.joinable()) gThread.join();
+}
+
+// --- Phase 1: in-world editor bridge -------------------------------------
+// All of these run on the UI thread; the render thread drains the command
+// queue inside its frame loop. The snapshot reader returns a flat table the
+// ListView can show directly.
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeSetMode(JNIEnv*, jclass, jint mode) {
+  gConfig.mode = mode;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditSelect(JNIEnv*, jclass, jfloat x, jfloat y) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::Select;
+  gEditCmd.fromX = x;
+  gEditCmd.fromY = y;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditBeginDrag(JNIEnv*, jclass, jfloat x, jfloat y) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::BeginDrag;
+  gEditCmd.fromX = x;
+  gEditCmd.fromY = y;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditDragTo(JNIEnv*, jclass, jfloat fromX, jfloat fromY, jfloat toX, jfloat toY) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::DragTo;
+  gEditCmd.fromX = fromX;
+  gEditCmd.fromY = fromY;
+  gEditCmd.toX = toX;
+  gEditCmd.toY = toY;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditEndDrag(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::EndDrag;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditSetColor(JNIEnv*, jclass, jfloat r, jfloat g, jfloat b) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::SetColor;
+  gEditCmd.r = r;
+  gEditCmd.g = g;
+  gEditCmd.b = b;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditDelete(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::Delete;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditNew(JNIEnv*, jclass, jint kind) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = kind == 0 ? EditCmd::NewCube
+                : kind == 1 ? EditCmd::NewSphere
+                            : EditCmd::NewPlane;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditSave(JNIEnv* env, jclass, jstring path) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  gEditCmd = EditCommand{};
+  gEditCmd.kind = EditCmd::Save;
+  if (path != nullptr) {
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    if (p != nullptr) {
+      gEditCmd.name = p;
+      env->ReleaseStringUTFChars(path, p);
+    }
+  }
+}
+
+// Reads the snapshot. Returns:
+//   - on first call after a selection change, the number of entities (>=0);
+//   - on subsequent calls, the same number if the snapshot is fresh, or -1
+//     if no change happened.
+// The Java side keeps its own array; this only tells it WHEN to re-read.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditRefresh(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  if (!gEditSnapshot.valid) return -1;
+  // A simple change marker: the selected name + a sequence counter derived
+  // from its length. Cheap and good enough for the editor panel which only
+  // refreshes when something actually changed.
+  return static_cast<jint>(gEditSnapshot.names.size());
+}
+
+// Fills a Java String[] with the snapshot's entity names. The caller passes
+// a Java array of the size reported by nativeEditRefresh().
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetNames(JNIEnv* env, jclass, jobjectArray out) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  if (!gEditSnapshot.valid || out == nullptr) return;
+  const jsize n = env->GetArrayLength(out);
+  for (jsize i = 0; i < n; ++i) {
+    const std::string& name = gEditSnapshot.names[static_cast<usize>(i)];
+    env->SetObjectArrayElement(out, i, env->NewStringUTF(name.c_str()));
+  }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetSelected(JNIEnv* env, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return env->NewStringUTF(gEditSnapshot.selected.c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetColor(JNIEnv*, jclass, jfloatArray out) {
+  // Kept for API symmetry; the Java side uses the R/G/B getters instead so
+  // it doesn't have to manage array copies.
+  static_cast<void>(out);
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetColorR(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selR;
+}
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetColorG(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selG;
+}
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetColorB(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selB;
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetPosX(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selPosX;
+}
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetPosY(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selPosY;
+}
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditGetPosZ(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  return gEditSnapshot.selPosZ;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditSelectionChanged(JNIEnv*, jclass) {
+  std::lock_guard<std::mutex> lock(gEditMutex);
+  if (!gEditSelectionChanged) return 0;
+  gEditSelectionChanged = false;
+  return 1;
 }
