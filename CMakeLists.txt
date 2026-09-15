@@ -303,6 +303,7 @@ add_executable(kimia_tests
     Tests/src/NetworkPanelTests.cpp
     Tests/src/KeyBindingsPanelTests.cpp
     Tests/src/ThemePanelTests.cpp
+    Tests/src/ColorSchemePanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -561,6 +562,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/NetworkPanel.cpp
     Engine/EditorUI/src/KeyBindingsPanel.cpp
     Engine/EditorUI/src/ThemePanel.cpp
+    Engine/EditorUI/src/ColorSchemePanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
