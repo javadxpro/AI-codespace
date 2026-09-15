@@ -240,6 +240,7 @@ add_executable(kimia_tests
     Tests/src/RuntimeTests.cpp
     Tests/src/EditorUITests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
+    Tests/src/RasterBridgeTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
 target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer kimia_editor_ui)
@@ -426,9 +427,10 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/Theme.cpp
     Engine/EditorUI/src/Icons.cpp
     Engine/EditorUI/src/HostBridge.cpp
+    Engine/EditorUI/src/RasterBridge.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
-target_link_libraries(kimia_editor_ui PUBLIC kimia_math kimia_world)
+target_link_libraries(kimia_editor_ui PUBLIC kimia_math kimia_world kimia_assets)
 target_include_directories(kimia_world PUBLIC Engine/World/include)
 target_link_libraries(kimia_world PUBLIC kimia_profile kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
@@ -461,7 +463,7 @@ if(KIMIA_BUILD_ANDROID_JNI)
   # liblog (__android_log_print) and libandroid (ANativeWindow_*). Both are
   # system libraries on every Android device; EGL/GLES stay dlopen'd at
   # runtime so there is no build-time GPU dependency.
-  target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world log android)
+  target_link_libraries(kimia_jni PRIVATE kimia_app kimia_world kimia_editor_ui log android)
   target_compile_options(kimia_jni PRIVATE ${KIMIA_STRICT_WARNINGS})
 endif()
 

@@ -215,4 +215,9 @@ const std::vector<std::string>& logLines();
 struct DockLayout;
 DockLayout& layout();
 
+// Drain the per-frame draw-command buffer into a copy the host can
+// rasterise. After this call the buffer is empty. The CPU-only
+// RasterBridge uses this on Phase 1; the GL path will replace it.
+std::vector<DrawCmd> takeDrawCmds();
+
 }  // namespace kimia::ui

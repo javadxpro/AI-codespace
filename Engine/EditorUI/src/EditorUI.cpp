@@ -436,9 +436,14 @@ void draw(FrameContext& ctx) {
 
   endFrame();
 
-  gDrawCmds.clear();
   gActivePanels.clear();
   gFrameActive = false;
+}
+
+std::vector<DrawCmd> takeDrawCmds() {
+  std::vector<DrawCmd> out;
+  out.swap(gDrawCmds);
+  return out;
 }
 
 }  // namespace kimia::ui
