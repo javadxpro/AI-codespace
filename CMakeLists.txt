@@ -252,6 +252,7 @@ add_executable(kimia_tests
     Tests/src/MiniMapPanelTests.cpp
     Tests/src/GraphPanelTests.cpp
     Tests/src/CurveEditorPanelTests.cpp
+    Tests/src/WaveformPanelTests.cpp
     Tests/src/ObjectTreeTests.cpp
     Tests/src/PropertySheetTests.cpp
     Tests/src/CameraPanelTests.cpp
@@ -271,6 +272,7 @@ add_executable(kimia_tests
     Tests/src/MiniMapPanelTests.cpp
     Tests/src/GraphPanelTests.cpp
     Tests/src/CurveEditorPanelTests.cpp
+    Tests/src/WaveformPanelTests.cpp
     Tests/src/HierarchyTreePanelTests.cpp
     Tests/src/AnimationPanelTests.cpp
     Tests/src/AudioPanelTests.cpp
@@ -281,6 +283,7 @@ add_executable(kimia_tests
     Tests/src/PostProcessPanelTests.cpp
     Tests/src/ProfilerGraphPanelTests.cpp
     Tests/src/CurveEditorPanelTests.cpp
+    Tests/src/WaveformPanelTests.cpp
     Tests/src/ColorPickerPanelTests.cpp
     Tests/src/NodeEditorPanelTests.cpp
     Tests/src/ConsolePanelTests.cpp
@@ -333,6 +336,7 @@ add_executable(kimia_tests
     Tests/src/MiniMapPanelTests.cpp
     Tests/src/GraphPanelTests.cpp
     Tests/src/CurveEditorPanelTests.cpp
+    Tests/src/WaveformPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -540,6 +544,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/GraphPanel.cpp
     Engine/EditorUI/src/CurveEditorPanel.cpp
+    Engine/EditorUI/src/WaveformPanel.cpp
     Engine/EditorUI/src/ObjectTree.cpp
     Engine/EditorUI/src/PropertySheet.cpp
     Engine/EditorUI/src/CameraPanel.cpp
@@ -559,6 +564,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/GraphPanel.cpp
     Engine/EditorUI/src/CurveEditorPanel.cpp
+    Engine/EditorUI/src/WaveformPanel.cpp
     Engine/EditorUI/src/HierarchyTreePanel.cpp
     Engine/EditorUI/src/AnimationPanel.cpp
     Engine/EditorUI/src/AudioPanel.cpp
@@ -569,6 +575,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/PostProcessPanel.cpp
     Engine/EditorUI/src/ProfilerGraphPanel.cpp
     Engine/EditorUI/src/CurveEditorPanel.cpp
+    Engine/EditorUI/src/WaveformPanel.cpp
     Engine/EditorUI/src/ColorPickerPanel.cpp
     Engine/EditorUI/src/NodeEditorPanel.cpp
     Engine/EditorUI/src/ConsolePanel.cpp
@@ -621,6 +628,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/GraphPanel.cpp
     Engine/EditorUI/src/CurveEditorPanel.cpp
+    Engine/EditorUI/src/WaveformPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
