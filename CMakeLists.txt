@@ -249,6 +249,7 @@ add_executable(kimia_tests
     Tests/src/SelectionTests.cpp
     Tests/src/LogPanelTests.cpp
     Tests/src/HelpPanelTests.cpp
+    Tests/src/MiniMapPanelTests.cpp
     Tests/src/ObjectTreeTests.cpp
     Tests/src/PropertySheetTests.cpp
     Tests/src/CameraPanelTests.cpp
@@ -265,6 +266,7 @@ add_executable(kimia_tests
     Tests/src/StatusBarPanelTests.cpp
     Tests/src/RulerPanelTests.cpp
     Tests/src/HelpPanelTests.cpp
+    Tests/src/MiniMapPanelTests.cpp
     Tests/src/HierarchyTreePanelTests.cpp
     Tests/src/AnimationPanelTests.cpp
     Tests/src/AudioPanelTests.cpp
@@ -324,6 +326,7 @@ add_executable(kimia_tests
     Tests/src/StatusBarPanelTests.cpp
     Tests/src/RulerPanelTests.cpp
     Tests/src/HelpPanelTests.cpp
+    Tests/src/MiniMapPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -528,6 +531,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/Selection.cpp
     Engine/EditorUI/src/LogPanel.cpp
     Engine/EditorUI/src/HelpPanel.cpp
+    Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/ObjectTree.cpp
     Engine/EditorUI/src/PropertySheet.cpp
     Engine/EditorUI/src/CameraPanel.cpp
@@ -544,6 +548,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/StatusBarPanel.cpp
     Engine/EditorUI/src/RulerPanel.cpp
     Engine/EditorUI/src/HelpPanel.cpp
+    Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/HierarchyTreePanel.cpp
     Engine/EditorUI/src/AnimationPanel.cpp
     Engine/EditorUI/src/AudioPanel.cpp
@@ -603,6 +608,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/StatusBarPanel.cpp
     Engine/EditorUI/src/RulerPanel.cpp
     Engine/EditorUI/src/HelpPanel.cpp
+    Engine/EditorUI/src/MiniMapPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
