@@ -241,6 +241,7 @@ add_executable(kimia_tests
     Tests/src/EditorUITests.cpp
     Tests/src/GizmoTests.cpp
     Tests/src/UndoStackTests.cpp
+    Tests/src/AssetBrowserTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -437,6 +438,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/AtlasBuilder.cpp
     Engine/EditorUI/src/EditorGl.cpp
     Engine/EditorUI/src/UndoStack.cpp
+    Engine/EditorUI/src/AssetBrowser.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
