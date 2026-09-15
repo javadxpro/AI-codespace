@@ -283,6 +283,7 @@ add_executable(kimia_tests
     Tests/src/SplitterPanelTests.cpp
     Tests/src/NotificationPanelTests.cpp
     Tests/src/ProgressBarPanelTests.cpp
+    Tests/src/TabBarPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -521,6 +522,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/SplitterPanel.cpp
     Engine/EditorUI/src/NotificationPanel.cpp
     Engine/EditorUI/src/ProgressBarPanel.cpp
+    Engine/EditorUI/src/TabBarPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
