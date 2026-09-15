@@ -289,6 +289,7 @@ add_executable(kimia_tests
     Tests/src/LayerPanelTests.cpp
     Tests/src/RenderSettingsPanelTests.cpp
     Tests/src/InputPanelTests.cpp
+    Tests/src/GameProfilePanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -533,6 +534,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/LayerPanel.cpp
     Engine/EditorUI/src/RenderSettingsPanel.cpp
     Engine/EditorUI/src/InputPanel.cpp
+    Engine/EditorUI/src/GameProfilePanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
