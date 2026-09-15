@@ -856,11 +856,12 @@ void paintNativeEditor(Image& image, const WorldEditor& editor) {
 
   kimia::ui::draw(ctx);
 
-  // Drain the per-frame draw commands and rasterise them into the image.
-  // We then forward any UI commands back into the engine — the same path
-  // the Java side already uses for SelectEntity / SetPosition / SetColor.
+  // Drain the per-frame draw commands and composite them over the
+  // captured scene. rasteriseOver() handles both the GPU (RGBA) and the
+  // software (RGB) outputs, so the editor overlay survives whichever
+  // renderer actually drew this frame.
   const std::vector<kimia::ui::DrawCmd> cmds = kimia::ui::takeDrawCmds();
-  kimia::ui::rasteriseInto(cmds, image);
+  kimia::ui::rasteriseOver(cmds, image);
   for (const kimia::ui::UiCommand& cmd : ctx.commands) {
     switch (cmd.kind) {
       case kimia::ui::UiCommandKind::SelectEntity:
@@ -1051,10 +1052,25 @@ void renderLoop() {
       applyInput(editor, orbitCamera, input);
 
       const bool inEdit = gConfig.mode == 1;
-      if (inEdit) {
+      // Phase 2: when the native EditorUI overlay is enabled, the in-world
+      // EditCommand path is disabled — the native UI is the only editor.
+      // The ListView + colour sliders stay around for the legacy path so
+      // a developer can still disable the new overlay and exercise the
+      // old code on-device.
+      const bool nativeUi = gConfig.useNativeEditor;
+      if (inEdit && !nativeUi) {
         processEditCommands(editor, width, height);
         editor.setPaused(true);  // edit mode pauses the simulation
         // Translate the camera drag into orbit motion in edit mode too.
+        orbitCamera.orbit(static_cast<f64>(input.dragX) * kLookYawScale * 0.6,
+                          static_cast<f64>(input.dragY) * kLookPitchScale * 0.6);
+      } else if (inEdit && nativeUi) {
+        // The native EditorUI handles its own commands. Keep the world
+        // paused so the Scene View panel shows a stable camera framing.
+        editor.setPaused(true);
+        // Touch drag still drives the orbit camera when it lands inside
+        // the Scene View region — the native UI doesn't currently absorb
+        // drags because Scene View is empty in Phase 2.
         orbitCamera.orbit(static_cast<f64>(input.dragX) * kLookYawScale * 0.6,
                           static_cast<f64>(input.dragY) * kLookPitchScale * 0.6);
       }
@@ -1103,7 +1119,9 @@ void renderLoop() {
                  Vec3{1.0, 0.85, 0.15}, 1.0, 0.0, nullptr});
           }
         }
-        refreshEditSnapshot(editor);
+        // The legacy ListView refresh loop only runs when the native UI is
+        // off; otherwise paintNativeEditor keeps the engine in sync.
+        if (!nativeUi) refreshEditSnapshot(editor);
       }
 
       Image image;
@@ -1136,6 +1154,7 @@ void renderLoop() {
   }
 
   LOGI("render loop stopped");
+  kimia::ui::shutdown();
 }
 
 }  // namespace

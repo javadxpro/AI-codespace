@@ -12,7 +12,7 @@
 
 namespace {
 
-// Build a small RGBA image filled with opaque black.
+// Build a small RGBA image filled with transparent black.
 kimia::Image makeImage(kimia::i32 w, kimia::i32 h) {
   kimia::Image img;
   img.width = w;
@@ -57,7 +57,7 @@ KIMIA_TEST(RasterBridge_RasteriseRectClearsBuffer) {
   KIMIA_REQUIRE(pixelAt(img, 1, 1) == 0);
 }
 
-  KIMIA_TEST(RasterBridge_PaintGlyphMarksPixels) {
+KIMIA_TEST(RasterBridge_PaintGlyphMarksPixels) {
   // '#' has bits set across its body; after painting it, several pixels
   // inside its 5x7 cell should have alpha > 0.
   auto img = makeImage(8, 10);
@@ -90,4 +90,66 @@ KIMIA_TEST(RasterBridge_ClipsOffscreenRect) {
   KIMIA_REQUIRE(pixelAt(img, 7, 7) == 255);
   // Pixel at (0, 0) was never touched.
   KIMIA_REQUIRE(pixelAt(img, 0, 0) == 0);
+}
+
+KIMIA_TEST(RasterBridge_RasteriseOverCompositesOnRgbFrame) {
+  // The software renderer only emits an RGB frame; the editor overlay has
+  // to composite on top of that. rasteriseOver is the entry point that
+  // owns that path — it must paint onto the RGB buffer without expecting
+  // alpha storage in the destination.
+  kimia::Image rgb;
+  rgb.width = 4;
+  rgb.height = 4;
+  rgb.channels = 3;
+  rgb.pixels.assign(static_cast<size_t>(rgb.width) *
+                        static_cast<size_t>(rgb.height) * 3u, 0u);
+
+  std::vector<kimia::ui::DrawCmd> cmds;
+  kimia::ui::DrawCmd dc;
+  dc.kind = kimia::ui::DrawKind::Rect;
+  dc.rect = {0.0f, 0.0f, 4.0f, 4.0f};
+  dc.color = kimia::ui::Color{1.0f, 0.0f, 0.0f, 1.0f};
+  dc.corner = 0.0f;
+  cmds.push_back(dc);
+
+  kimia::ui::rasteriseOver(cmds, rgb);
+
+  // Red square on top of black: red pixel in the centre.
+  KIMIA_REQUIRE(rgb.pixels[0] > 200);   // R
+  KIMIA_REQUIRE(rgb.pixels[1] < 50);    // G
+  KIMIA_REQUIRE(rgb.pixels[2] < 50);    // B
+}
+
+KIMIA_TEST(RasterBridge_RasteriseOverKeepsUntouchedPixels) {
+  // Pixels outside any rect must keep their original RGB value.
+  kimia::Image rgb;
+  rgb.width = 4;
+  rgb.height = 4;
+  rgb.channels = 3;
+  rgb.pixels.assign(static_cast<size_t>(rgb.width) *
+                        static_cast<size_t>(rgb.height) * 3u, 0u);
+  // Pre-fill with green at every pixel.
+  for (size_t i = 0; i < rgb.pixels.size(); i += 3) {
+    rgb.pixels[i + 0] = 0;
+    rgb.pixels[i + 1] = 200;
+    rgb.pixels[i + 2] = 0;
+  }
+
+  std::vector<kimia::ui::DrawCmd> cmds;
+  kimia::ui::DrawCmd dc;
+  dc.kind = kimia::ui::DrawKind::Rect;
+  dc.rect = {0.0f, 0.0f, 2.0f, 2.0f};   // top-left quadrant only
+  dc.color = kimia::ui::Color{1.0f, 0.0f, 0.0f, 1.0f};
+  dc.corner = 0.0f;
+  cmds.push_back(dc);
+  kimia::ui::rasteriseOver(cmds, rgb);
+
+  // Top-left pixel: red.
+  KIMIA_REQUIRE(rgb.pixels[0] > 200);
+  KIMIA_REQUIRE(rgb.pixels[1] < 50);
+  // Bottom-right pixel: green, untouched.
+  const size_t br = (static_cast<size_t>(3) * rgb.width + 3) * 3;
+  KIMIA_REQUIRE(rgb.pixels[br + 0] == 0);
+  KIMIA_REQUIRE(rgb.pixels[br + 1] == 200);
+  KIMIA_REQUIRE(rgb.pixels[br + 2] == 0);
 }

@@ -44,4 +44,11 @@ void paintRoundedRect(::kimia::Image& image, const Rect& r, const Color& color,
 void paintGlyph(::kimia::Image& image, char ascii, f32 x, f32 y, i32 scale,
                 const Color& color);
 
+// Rasterise commands into a temporary RGBA buffer of the same size as
+// `target`, then alpha-composite the result back onto `target`.
+// Used by the Android jni_glue when the underlying renderer only produced
+// an RGB frame (the software path); without this we'd silently drop the
+// editor overlay on devices that can't keep GLES3 up.
+void rasteriseOver(const std::vector<DrawCmd>& cmds, ::kimia::Image& target);
+
 }  // namespace kimia::ui

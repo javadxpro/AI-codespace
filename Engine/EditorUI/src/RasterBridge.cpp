@@ -231,4 +231,47 @@ void paintGlyph(::kimia::Image& image, char ascii, f32 x, f32 y, i32 scale,
   rasteriseInto(v, image);
 }
 
+void rasteriseOver(const std::vector<DrawCmd>& cmds, ::kimia::Image& target) {
+  if (cmds.empty() || target.isEmpty()) return;
+  // Build a same-sized RGBA overlay; raster the editor onto it; then
+  // alpha-composite onto the target. The target keeps its RGB (the scene
+  // frame) and gains the editor's translucent panels.
+  ::kimia::Image overlay;
+  overlay.width = target.width;
+  overlay.height = target.height;
+  overlay.channels = 4;
+  overlay.pixels.assign(static_cast<usize>(target.width) *
+                            static_cast<usize>(target.height) * 4u,
+                        0u);
+  rasteriseInto(cmds, overlay);
+
+  const usize count = static_cast<usize>(target.width) *
+                      static_cast<usize>(target.height);
+  const i32 tCh = target.channels;
+  for (usize i = 0; i < count; ++i) {
+    const usize o = i * 4u;
+    const u8 oa = overlay.pixels[o + 3u];
+    if (oa == 0) continue;  // editor didn't touch this pixel
+    const f32 sa = oa / 255.0f;
+    const f32 sr = overlay.pixels[o + 0u] / 255.0f;
+    const f32 sg = overlay.pixels[o + 1u] / 255.0f;
+    const f32 sb = overlay.pixels[o + 2u] / 255.0f;
+    const usize t = i * static_cast<usize>(tCh);
+    f32 dr = target.pixels[t + 0u] / 255.0f;
+    f32 dg = target.pixels[t + 1u] / 255.0f;
+    f32 db = target.pixels[t + 2u] / 255.0f;
+    target.pixels[t + 0u] = static_cast<u8>(std::clamp((sr * sa + dr * (1.0f - sa)) * 255.0f,
+                                                       0.0f, 255.0f));
+    target.pixels[t + 1u] = static_cast<u8>(std::clamp((sg * sa + dg * (1.0f - sa)) * 255.0f,
+                                                       0.0f, 255.0f));
+    target.pixels[t + 2u] = static_cast<u8>(std::clamp((sb * sa + db * (1.0f - sa)) * 255.0f,
+                                                       0.0f, 255.0f));
+    if (tCh == 4) {
+      const f32 da = target.pixels[t + 3u] / 255.0f;
+      target.pixels[t + 3u] = static_cast<u8>(std::clamp((sa + da * (1.0f - sa)) * 255.0f,
+                                                         0.0f, 255.0f));
+    }
+  }
+}
+
 }  // namespace kimia::ui
