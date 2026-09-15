@@ -3,10 +3,17 @@
 
 namespace kimia::ui {
 
-enum class ViewportMode { Perspective, Top, Front, Side };
+enum class GizmoMode { None, Move, Rotate, Scale };
+enum class ViewportShading { Lit, Unlit, Wireframe, Albedo, Normals };
 
 void drawViewportPanel(const Rect& rect,
-                       ViewportMode mode,
-                       const std::string& title);
+                       GizmoMode gizmo,
+                       ViewportShading shading,
+                       bool playing,
+                       const std::string& cameraName,
+                       f32 gridSize,
+                       bool showGrid,
+                       bool showStats,
+                       f32 zoom);
 
 }
