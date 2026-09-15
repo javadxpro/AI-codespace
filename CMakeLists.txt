@@ -239,6 +239,7 @@ add_executable(kimia_tests
     Tests/src/ProfileTests.cpp
     Tests/src/RuntimeTests.cpp
     Tests/src/EditorUITests.cpp
+    Tests/src/EditorUIIntegrationTests.cpp
 )
 target_include_directories(kimia_tests PRIVATE Tests/include Engine/Core/include)
 target_link_libraries(kimia_tests PRIVATE kimia_core kimia_math kimia_assets kimia_scene kimia_physics kimia_profile kimia_app kimia_golf kimia_world kimia_raytracer kimia_editor_ui)
@@ -424,9 +425,10 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/Panel.cpp
     Engine/EditorUI/src/Theme.cpp
     Engine/EditorUI/src/Icons.cpp
+    Engine/EditorUI/src/HostBridge.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
-target_link_libraries(kimia_editor_ui PUBLIC kimia_math)
+target_link_libraries(kimia_editor_ui PUBLIC kimia_math kimia_world)
 target_include_directories(kimia_world PUBLIC Engine/World/include)
 target_link_libraries(kimia_world PUBLIC kimia_profile kimia_scene kimia_physics kimia_assets)
 target_compile_options(kimia_world PRIVATE ${KIMIA_STRICT_WARNINGS})
