@@ -61,11 +61,13 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
   private Spinner backendSpinner;
   private CheckBox shadowsCheck;
   private CheckBox msaaCheck;
+  private CheckBox nativeUiCheck;
 
   private String filesDir;
   private boolean started = false;
   private boolean editing = false;
   private boolean dragInFlight = false;
+  private boolean useNativeUi = false;  // Phase 2: native EditorUI overlay
 
   private String game = "golf";
   private int backend = NativeEngine.BACKEND_AUTO;
@@ -137,6 +139,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
   // --- Touch routing -------------------------------------------------------
   // One touch listener does everything: drag in edit mode, normal game touch
   // everywhere else. The actual interpretation lives in the native engine.
+  //
+  // Phase 2: when the native EditorUI overlay is enabled we ALWAYS forward
+  // touches to it (it owns the gesture layer). The native UI decides
+  // whether to forward the event to the in-world editor (e.g. when the
+  // user taps a Scene View panel, dragging inside it pans the camera).
   private final View.OnTouchListener touchListener = new View.OnTouchListener() {
     @Override
     public boolean onTouch(View v, MotionEvent event) {
@@ -144,6 +151,18 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
       final int index = event.getActionIndex();
       final float x = event.getX(index);
       final float y = event.getY(index);
+
+      if (useNativeUi) {
+        // Forward to the native EditorUI overlay. The native UI also drives
+        // the editor itself when in edit mode, so we don't need to send the
+        // event to the old EditCommand path here.
+        NativeEngine.nativeEditorTouch(action, index, x, y);
+        // If we're NOT in edit mode, the gesture is just camera control
+        // through the Scene View region — also forward it as a regular
+        // touch so the chase camera still rotates.
+        if (!editing) NativeEngine.nativeTouch(action, index, x, y);
+        return true;
+      }
 
       if (editing) {
         handleEditTouch(action, index, x, y);
@@ -215,6 +234,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
   private void startEngine() {
     NativeEngine.nativeStart(filesDir, game, backend, width, height, fps, shadows, msaa);
     NativeEngine.nativeSetMode(editing ? NativeEngine.MODE_EDIT : NativeEngine.MODE_PLAY);
+    NativeEngine.nativeSetUseNativeEditor(useNativeUi);
     started = true;
     final SurfaceHolder holder = surfaceView.getHolder();
     if (holder.getSurface() != null && holder.getSurface().isValid()) {
@@ -273,6 +293,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     fps = p.getInt("fps", 60);
     shadows = p.getBoolean("shadows", true);
     msaa = p.getBoolean("msaa", false);
+    useNativeUi = p.getBoolean("nativeUi", false);
   }
 
   private void saveSettings() {
@@ -285,6 +306,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
         .putInt("fps", fps)
         .putBoolean("shadows", shadows)
         .putBoolean("msaa", msaa)
+        .putBoolean("nativeUi", useNativeUi)
         .apply();
   }
 
@@ -331,7 +353,11 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
 
   private void toggleEdit() {
     editing = !editing;
-    editPanel.setVisibility(editing ? View.VISIBLE : View.GONE);
+    // Phase 2: when the native EditorUI overlay is on, the Java editPanel
+    // stays hidden — the in-process EditorUI draws Object Tree / Property
+    // Sheet / Toolbar / Log itself. We still flip the engine mode so the
+    // simulation pauses and picker behaviour matches the new UI.
+    editPanel.setVisibility((editing && !useNativeUi) ? View.VISIBLE : View.GONE);
     editButton.setBackgroundColor(editing ? 0xCC0E6FBA : 0x66000000);
     NativeEngine.nativeSetMode(editing ? NativeEngine.MODE_EDIT : NativeEngine.MODE_PLAY);
     if (editing) settingsPanel.setVisibility(View.GONE);
@@ -383,6 +409,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     msaaCheck.setChecked(msaa);
     addRow(column, "", msaaCheck);
 
+    nativeUiCheck = new CheckBox(this);
+    nativeUiCheck.setText("Use native EditorUI overlay (Phase 2)");
+    nativeUiCheck.setTextColor(Color.WHITE);
+    nativeUiCheck.setChecked(useNativeUi);
+    addRow(column, "Editor", nativeUiCheck);
+
     final Button apply = new Button(this);
     apply.setText("Apply & Restart");
     apply.setOnClickListener(v -> {
@@ -394,9 +426,19 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
       backend = BACKEND_VALUES[backendSpinner.getSelectedItemPosition()];
       shadows = shadowsCheck.isChecked();
       msaa = msaaCheck.isChecked();
+      useNativeUi = nativeUiCheck.isChecked();
       saveSettings();
       settingsPanel.setVisibility(View.GONE);
       hideSystemBars();
+      NativeEngine.nativeSetUseNativeEditor(useNativeUi);
+      // The native EditorUI is its own panel set; hide the Java ListView
+      // editor panel so the user only sees one thing at a time.
+      if (useNativeUi && editing) {
+        editPanel.setVisibility(View.GONE);
+        startEditorRefreshLoop();
+      } else if (!useNativeUi && editing) {
+        editPanel.setVisibility(View.VISIBLE);
+      }
       restartEngine();
     });
     column.addView(apply, new LinearLayout.LayoutParams(

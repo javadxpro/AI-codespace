@@ -174,9 +174,10 @@ void rasteriseInto(const std::vector<DrawCmd>& cmds, ::kimia::Image& image) {
         }
       }
     } else {
-      const i32 code = static_cast<i32>(dc.glyph) != 0
-                          ? static_cast<i32>(dc.glyph)
-                          : static_cast<unsigned char>(dc.ascii);
+      // For now Phase 2 rasterises only the ASCII path: extended Glyphs
+      // (tool icons, tree carets) will be added once we move to the GL
+      // shader path that already knows how to look them up via glyphBitmap.
+      const i32 code = static_cast<unsigned char>(dc.ascii);
       if (code < 0x20 || code > 0x7E) continue;
       const i32 col = code - 0x20;
       const i32 scale = std::clamp<i32>(dc.scale, 1, 3);

@@ -49,4 +49,10 @@ public final class NativeEngine {
   public static native float nativeEditGetPosY();
   public static native float nativeEditGetPosZ();
   public static native int nativeEditSelectionChanged();
+
+  // Phase 2: native EditorUI (rasterised overlay on top of the scene).
+  // Default disabled — the existing in-world editor keeps running until
+  // MainActivity wires the new panels in.
+  public static native void nativeSetUseNativeEditor(boolean enabled);
+  public static native void nativeEditorTouch(int action, int pointerId, float x, float y);
 }

@@ -34,6 +34,8 @@
 #include <kimia/RuntimeLoop.h>
 #include <kimia/MathUtils.h>
 #include <kimia/Version.h>
+#include <kimia/EditorUI.h>
+#include <kimia/RasterBridge.h>
 #ifdef KIMIA_EMBEDDED_ASSETS
 #include <kimia/EmbeddedAssets.h>
 #include <filesystem>
@@ -88,6 +90,7 @@ struct NativeConfig {
   bool shadows = true;
   bool msaa = false;
   i32 mode = 0;               // 0 = play, 1 = edit (phase 1: in-world editor)
+  bool useNativeEditor = false;  // phase 2: paint the new EditorUI overlay
 };
 
 // --- Shared state between the UI thread (JNI) and the render thread ------
@@ -816,8 +819,137 @@ void refreshEditSnapshot(WorldEditor& editor) {
   gEditSnapshot = snap;
 }
 
+// Phase 2: hand a SceneSnapshot to the native EditorUI and rasterise its
+// draw commands into the captured frame. The EditorUI is driven by the
+// exact same entity state the Java ListView shows, but the rendering and
+// the touch input happen in-process via RasterBridge — no JNI trip per
+// frame for the UI itself.
+void paintNativeEditor(Image& image, const WorldEditor& editor) {
+  if (image.isEmpty() || image.channels < 4) return;
+  kimia::ui::FrameContext ctx;
+  ctx.scene.valid = true;
+  ctx.scene.playing = editor.playing();
+  ctx.scene.paused = editor.paused();
+  ctx.scene.scenePath = editor.worldPath();
+  const std::string selected = editor.selectedName();
+  if (!selected.empty()) ctx.scene.selectedNames.push_back(selected);
+  // We only need a coarse snapshot for the overlay — names, transforms,
+  // colors. The Java side has the full list, but we re-read here so the
+  // editor stays the single source of truth.
+  editor.world().scene.forEach([&](kimia::EntityHandle, const EntityData& entity) {
+    kimia::ui::EntityRef ref;
+    ref.name = entity.name;
+    ref.posX = static_cast<f32>(entity.transform.position.x);
+    ref.posY = static_cast<f32>(entity.transform.position.y);
+    ref.posZ = static_cast<f32>(entity.transform.position.z);
+    ref.scaleX = static_cast<f32>(entity.transform.scale.x);
+    ref.scaleY = static_cast<f32>(entity.transform.scale.y);
+    ref.scaleZ = static_cast<f32>(entity.transform.scale.z);
+    ref.colorR = static_cast<f32>(entity.color.x);
+    ref.colorG = static_cast<f32>(entity.color.y);
+    ref.colorB = static_cast<f32>(entity.color.z);
+    ref.locked = (entity.name == "Player" || entity.name == "Ball" ||
+                  entity.name == "Ground");
+    ctx.scene.entities.push_back(ref);
+  });
+  ctx.scene.logLines = editor.hudLines();
+
+  kimia::ui::draw(ctx);
+
+  // Drain the per-frame draw commands and rasterise them into the image.
+  // We then forward any UI commands back into the engine — the same path
+  // the Java side already uses for SelectEntity / SetPosition / SetColor.
+  const std::vector<kimia::ui::DrawCmd> cmds = kimia::ui::takeDrawCmds();
+  kimia::ui::rasteriseInto(cmds, image);
+  for (const kimia::ui::UiCommand& cmd : ctx.commands) {
+    switch (cmd.kind) {
+      case kimia::ui::UiCommandKind::SelectEntity:
+        editor.selectEntity(cmd.name);
+        gEditSelected = cmd.name;
+        gEditSelectionChanged = true;
+        break;
+      case kimia::ui::UiCommandKind::ClearSelection:
+        editor.selectEntity(std::string());
+        gEditSelected.clear();
+        gEditSelectionChanged = true;
+        break;
+      case kimia::ui::UiCommandKind::SetPosition:
+        if (!cmd.name.empty()) {
+          // WorldEditor has no setEntityPosition() yet — mutate the
+          // transform in place. Scene owns the entity data; only the
+          // selected-entity position is touched here.
+          if (EntityData* e = editor.world().scene.get(editor.world().scene.find(cmd.name))) {
+            e->transform.position = Vec3{static_cast<f64>(cmd.x),
+                                         static_cast<f64>(cmd.y),
+                                         static_cast<f64>(cmd.z)};
+          }
+        }
+        break;
+      case kimia::ui::UiCommandKind::SetColor:
+        if (!cmd.name.empty()) {
+          editor.setEntityColor(cmd.name, Vec3{cmd.r, cmd.g, cmd.b});
+        }
+        break;
+      case kimia::ui::UiCommandKind::CreateCube:
+      case kimia::ui::UiCommandKind::CreateSphere:
+      case kimia::ui::UiCommandKind::CreatePlane: {
+        const char* kind = cmd.kind == kimia::ui::UiCommandKind::CreateCube   ? "cube"
+                         : cmd.kind == kimia::ui::UiCommandKind::CreateSphere ? "sphere"
+                                                                               : "plane";
+        const std::string name = editor.createObject(kind, Vec3{0.0, 0.0, 0.0});
+        if (!name.empty()) {
+          editor.selectEntity(name);
+          gEditSelected = name;
+          gEditSelectionChanged = true;
+        }
+        break;
+      }
+      case kimia::ui::UiCommandKind::DeleteSelected:
+        if (!gEditSelected.empty()) {
+          editor.deleteEntity(gEditSelected);
+          gEditSelected.clear();
+          gEditSelectionChanged = true;
+        }
+        break;
+      case kimia::ui::UiCommandKind::SaveScene: {
+        std::string error;
+        const std::string path = cmd.name.empty()
+                                     ? (editor.worldPath().empty()
+                                            ? std::string("my_world.kimia")
+                                            : editor.worldPath())
+                                     : cmd.name;
+        if (!editor.saveWorld(path, error)) {
+          LOGE("saveWorld failed: %s", error.c_str());
+        } else {
+          editor.setWorldPath(path);
+        }
+        break;
+      }
+      case kimia::ui::UiCommandKind::PlayPressed: editor.enterPlayMode(); break;
+      case kimia::ui::UiCommandKind::PausePressed: editor.setPaused(true); break;
+      case kimia::ui::UiCommandKind::StopPressed: editor.setPaused(true); break;
+      case kimia::ui::UiCommandKind::StepPressed:
+        editor.setPaused(false);
+        editor.setPaused(true);
+        break;
+      default: break;
+    }
+  }
+}
+
 void renderLoop() {
   const std::string root = unpackAssets(gConfig.filesDir);
+
+  // Phase 2: boot the new native EditorUI alongside the existing in-world
+  // edit mode. The CPU raster path paints it into the captured frame
+  // before we blit to GL. Phase 3 will replace the Java ListView with this
+  // one once it's exercised on-device.
+  {
+    std::string editorErr;
+    if (!kimia::ui::initialize(editorErr)) {
+      LOGE("EditorUI init failed: %s", editorErr.c_str());
+    }
+  }
 
   WorldEditor editor;
   editor.setWorldPath(gConfig.filesDir + "/my_world.kimia");
@@ -980,6 +1112,7 @@ void renderLoop() {
         if (renderer.captureImage(width, height, image)) {
           drawHud(image, editor);
           drawControls(image, editor);
+          if (gConfig.useNativeEditor) paintNativeEditor(image, editor);
           overlay.blit(image);
         }
         egl.swapBuffers();
@@ -988,6 +1121,7 @@ void renderLoop() {
         kimia::renderSoftware(scene, width, height, colors.clear, image);
         drawHud(image, editor);
         drawControls(image, editor);
+        if (gConfig.useNativeEditor) paintNativeEditor(image, editor);
         presentSoftware(window, image);
       }
 
@@ -1054,6 +1188,10 @@ Java_com_kimia_world_NativeEngine_nativeSurfaceChanged(JNIEnv*, jclass, jint wid
   gViewHeight = height;
   ++gGeneration;  // re-create the EGL surface at the new size
   gSurfaceCv.notify_all();
+  // Phase 2: hand the new size to the native EditorUI. Safe to call before
+  // the render thread is up; the resize is idempotent and re-read on the
+  // next draw().
+  kimia::ui::resize(width, height);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -1110,6 +1248,39 @@ Java_com_kimia_world_NativeEngine_nativeStop(JNIEnv*, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_kimia_world_NativeEngine_nativeSetMode(JNIEnv*, jclass, jint mode) {
   gConfig.mode = mode;
+}
+
+// Phase 2: toggle the new native EditorUI overlay. Default is off, so the
+// existing in-world editor and the Java ListView keep working unchanged.
+// When enabled, the EditorUI is rasterised on top of the captured frame.
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeSetUseNativeEditor(JNIEnv*, jclass, jboolean enabled) {
+  gConfig.useNativeEditor = (enabled == JNI_TRUE);
+}
+
+// Phase 2: forward a touch event to the native EditorUI. This is the
+// mirror of nativeTouch() for the old in-world editor: EditorUI owns its
+// own gesture state and figures out tap/drag/pinch from raw MotionEvents.
+// We only forward events while the native editor is enabled so a finger
+// that hits the in-world editor first still drives the camera correctly.
+extern "C" JNIEXPORT void JNICALL
+Java_com_kimia_world_NativeEngine_nativeEditorTouch(JNIEnv*, jclass, jint action, jint pointerId,
+                                                   jfloat x, jfloat y) {
+  if (!gConfig.useNativeEditor) return;
+  kimia::ui::PointerAction uiAction = kimia::ui::PointerAction::Move;
+  switch (action) {
+    case 0: case 5: uiAction = kimia::ui::PointerAction::Down; break;   // down / pointer_down
+    case 1: case 6: uiAction = kimia::ui::PointerAction::Up; break;     // up / pointer_up
+    case 2:         uiAction = kimia::ui::PointerAction::Move; break;
+    case 3:         uiAction = kimia::ui::PointerAction::Cancel; break;
+    default:        return;
+  }
+  kimia::ui::PointerEvent ev;
+  ev.id = pointerId;
+  ev.action = uiAction;
+  ev.x = x;
+  ev.y = y;
+  kimia::ui::submitPointer(ev);
 }
 
 extern "C" JNIEXPORT void JNICALL
