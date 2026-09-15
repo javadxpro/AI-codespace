@@ -272,6 +272,7 @@ add_executable(kimia_tests
     Tests/src/PostProcessPanelTests.cpp
     Tests/src/ProfilerGraphPanelTests.cpp
     Tests/src/CurveEditorPanelTests.cpp
+    Tests/src/ColorPickerPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -499,6 +500,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/PostProcessPanel.cpp
     Engine/EditorUI/src/ProfilerGraphPanel.cpp
     Engine/EditorUI/src/CurveEditorPanel.cpp
+    Engine/EditorUI/src/ColorPickerPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
