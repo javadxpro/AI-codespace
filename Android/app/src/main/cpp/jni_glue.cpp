@@ -700,8 +700,6 @@ void applyInput(WorldEditor& editor, OrbitCamera& orbit, const FrameInput& in) {
 }
 
 // --- The render loop ------------------------------------------------------
-namespace {
-
 // Phase 1 editor: drains the edit command queue and applies it to the world
 // (selection, drag, colour, delete, add, save). The viewport's pick is the
 // engine's own — pickEntityAt() — so a tap lands on the entity the eye sees.
