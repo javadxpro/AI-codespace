@@ -316,6 +316,7 @@ add_executable(kimia_tests
     Tests/src/PerformancePanelTests.cpp
     Tests/src/MemoryPanelTests.cpp
     Tests/src/GpuPanelTests.cpp
+    Tests/src/CrashLogPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -587,6 +588,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/PerformancePanel.cpp
     Engine/EditorUI/src/MemoryPanel.cpp
     Engine/EditorUI/src/GpuPanel.cpp
+    Engine/EditorUI/src/CrashLogPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
