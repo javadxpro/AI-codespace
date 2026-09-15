@@ -1,76 +1,118 @@
-// InspectorPanel tests — see Engine/EditorUI/include/kimia/InspectorPanel.h.
-
 #include <kimia_test.h>
 #include <kimia/InspectorPanel.h>
 
-KIMIA_TEST(InspectorPanel_DrawEmptyDoesNotCrash) {
-  kimia::ui::drawInspectorPanel({0, 0, 320, 200}, "Empty", {});
+KIMIA_TEST(Inspector_DrawEmptyDoesNotCrash) {
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Obj", "Empty", {}, 0);
 }
 
-KIMIA_TEST(InspectorPanel_DrawOneRow) {
-  std::vector<kimia::ui::InspectorRow> v(1);
-  v[0].label = "Mass";
-  v[0].value = "1.0 kg";
-  kimia::ui::drawInspectorPanel({0, 0, 320, 200}, "Cube", v);
+KIMIA_TEST(Inspector_DrawOneFloat) {
+  std::vector<kimia::ui::InspectorProp> v(1);
+  v[0].name = "Speed";
+  v[0].kind = kimia::ui::InspectorKind::Float;
+  v[0].v0 = 1.5f;
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Player", "Cube", v, 0);
 }
 
-KIMIA_TEST(InspectorPanel_DrawManyRows) {
-  std::vector<kimia::ui::InspectorRow> v;
-  for (int i = 0; i < 20; ++i) {
-    kimia::ui::InspectorRow r;
-    r.label = "field_" + std::to_string(i);
-    r.value = "value_" + std::to_string(i);
-    // Cycle through theme colours so we exercise all 3 paths.
-    if (i % 3 == 0)      r.valueColor = {0.298f, 0.686f, 0.314f, 1.0f};  // kSuccess
-    else if (i % 3 == 1) r.valueColor = {1.000f, 0.722f, 0.180f, 1.0f};  // kWarning
-    else                 r.valueColor = {0.957f, 0.263f, 0.212f, 1.0f};  // kError
-    v.push_back(r);
+KIMIA_TEST(Inspector_DrawManyKinds) {
+  std::vector<kimia::ui::InspectorProp> v;
+  {
+    kimia::ui::InspectorProp p; p.name = "Health";
+    p.kind = kimia::ui::InspectorKind::Int; p.v0 = 100;
+    v.push_back(p);
   }
-  kimia::ui::drawInspectorPanel({0, 0, 320, 200}, "Many", v);
-}
-
-KIMIA_TEST(InspectorPanel_DrawWithEmptyTitle) {
-  std::vector<kimia::ui::InspectorRow> v(1);
-  v[0].label = "x";
-  v[0].value = "1";
-  kimia::ui::drawInspectorPanel({0, 0, 320, 200}, "", v);
-}
-
-KIMIA_TEST(InspectorPanel_DrawWithVeryLongValue) {
-  // Truncation test — long value should still render without crash.
-  std::vector<kimia::ui::InspectorRow> v(1);
-  v[0].label = "long";
-  v[0].value = "A_Very_Long_Value_That_Should_Be_Truncated_Or_Clipped_Without_Crashing_ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  kimia::ui::drawInspectorPanel({0, 0, 200, 200}, "Long", v);
-}
-
-KIMIA_TEST(InspectorPanel_DrawAtPhonePortrait) {
-  std::vector<kimia::ui::InspectorRow> v;
-  for (int i = 0; i < 10; ++i) {
-    kimia::ui::InspectorRow r;
-    r.label = "l" + std::to_string(i);
-    r.value = "v" + std::to_string(i);
-    v.push_back(r);
+  {
+    kimia::ui::InspectorProp p; p.name = "Alive";
+    p.kind = kimia::ui::InspectorKind::Bool; p.v0 = 1;
+    v.push_back(p);
   }
-  kimia::ui::drawInspectorPanel({0, 0, 240, 320}, "Phone", v);
+  {
+    kimia::ui::InspectorProp p; p.name = "Name";
+    p.kind = kimia::ui::InspectorKind::String; p.s = "Hero";
+    v.push_back(p);
+  }
+  {
+    kimia::ui::InspectorProp p; p.name = "UV";
+    p.kind = kimia::ui::InspectorKind::Vec2;
+    p.v0 = 0.5f; p.v1 = 0.25f;
+    v.push_back(p);
+  }
+  {
+    kimia::ui::InspectorProp p; p.name = "Position";
+    p.kind = kimia::ui::InspectorKind::Vec3;
+    p.v0 = 1; p.v1 = 2; p.v2 = 3;
+    v.push_back(p);
+  }
+  {
+    kimia::ui::InspectorProp p; p.name = "Quat";
+    p.kind = kimia::ui::InspectorKind::Vec4;
+    p.v0 = 0; p.v1 = 0; p.v2 = 0; p.v3 = 1;
+    v.push_back(p);
+  }
+  {
+    kimia::ui::InspectorProp p; p.name = "Color";
+    p.kind = kimia::ui::InspectorKind::Color;
+    p.v0 = 1; p.v1 = 0.5f; p.v2 = 0.25f; p.v3 = 1;
+    v.push_back(p);
+  }
+  kimia::ui::drawInspectorPanel({0, 0, 320, 320},
+    "Hero", "Character", v, 0);
 }
 
-KIMIA_TEST(InspectorPanel_DrawAtTabletLandscape) {
-  std::vector<kimia::ui::InspectorRow> v;
+KIMIA_TEST(Inspector_DrawWithDisabledProps) {
+  std::vector<kimia::ui::InspectorProp> v;
+  kimia::ui::InspectorProp p; p.name = "A";
+  p.kind = kimia::ui::InspectorKind::Float;
+  p.v0 = 1.5f; p.enabled = false; v.push_back(p);
+  kimia::ui::InspectorProp q; q.name = "B";
+  q.kind = kimia::ui::InspectorKind::Float;
+  q.v0 = 2.5f; q.enabled = true; v.push_back(q);
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Obj", "T", v, 0);
+}
+
+KIMIA_TEST(Inspector_DrawAtScroll) {
+  std::vector<kimia::ui::InspectorProp> v;
   for (int i = 0; i < 30; ++i) {
-    kimia::ui::InspectorRow r;
-    r.label = "l" + std::to_string(i);
-    r.value = "v" + std::to_string(i);
-    v.push_back(r);
+    kimia::ui::InspectorProp p;
+    p.name = "P" + std::to_string(i);
+    p.kind = kimia::ui::InspectorKind::Float;
+    p.v0 = static_cast<kimia::f32>(i);
+    v.push_back(p);
   }
-  kimia::ui::drawInspectorPanel({0, 0, 800, 400}, "Tablet", v);
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Big", "Type", v, -50);
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Big", "Type", v, 100);
 }
 
-KIMIA_TEST(InspectorPanel_RowDefaultColorIsText) {
-  // Default-constructed InspectorRow: label/value empty, valueColor
-  // matches theme::kText.
-  kimia::ui::InspectorRow r;
-  KIMIA_REQUIRE(r.label.empty());
-  KIMIA_REQUIRE(r.value.empty());
-  KIMIA_REQUIRE(r.valueColor.r > 0.0f);
+KIMIA_TEST(Inspector_DrawWithUnknownKind) {
+  std::vector<kimia::ui::InspectorProp> v(1);
+  v[0].name = "X";
+  v[0].kind = static_cast<kimia::ui::InspectorKind>(99);
+  kimia::ui::drawInspectorPanel({0, 0, 280, 200}, "Obj", "T", v, 0);
+}
+
+KIMIA_TEST(Inspector_DrawAtPhonePortrait) {
+  std::vector<kimia::ui::InspectorProp> v;
+  for (int i = 0; i < 10; ++i) {
+    kimia::ui::InspectorProp p;
+    p.name = "p" + std::to_string(i);
+    p.kind = kimia::ui::InspectorKind::Float;
+    p.v0 = static_cast<kimia::f32>(i) * 0.5f;
+    v.push_back(p);
+  }
+  kimia::ui::drawInspectorPanel({0, 0, 240, 320}, "O", "T", v, 0);
+}
+
+KIMIA_TEST(Inspector_DrawAtTabletLandscape) {
+  std::vector<kimia::ui::InspectorProp> v;
+  for (int i = 0; i < 30; ++i) {
+    kimia::ui::InspectorProp p;
+    p.name = "field_" + std::to_string(i);
+    p.kind = (i % 4 == 0) ? kimia::ui::InspectorKind::Int
+            : (i % 4 == 1) ? kimia::ui::InspectorKind::Bool
+            : (i % 4 == 2) ? kimia::ui::InspectorKind::String
+            : kimia::ui::InspectorKind::Float;
+    p.v0 = static_cast<kimia::f32>(i);
+    p.s = "v" + std::to_string(i);
+    v.push_back(p);
+  }
+  kimia::ui::drawInspectorPanel({0, 0, 480, 320}, "Hero", "Character", v, 0);
 }
