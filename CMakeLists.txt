@@ -264,6 +264,7 @@ add_executable(kimia_tests
     Tests/src/ColorPalettePanelTests.cpp
     Tests/src/NodeGraphPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/ObjectTreeTests.cpp
     Tests/src/PropertySheetTests.cpp
     Tests/src/CameraPanelTests.cpp
@@ -273,6 +274,7 @@ add_executable(kimia_tests
     Tests/src/TooltipPanelTests.cpp
     Tests/src/VersionPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/StatusBarTests.cpp
     Tests/src/ContextMenuPanelTests.cpp
     Tests/src/ProfilerPanelTests.cpp
@@ -295,6 +297,7 @@ add_executable(kimia_tests
     Tests/src/ColorPalettePanelTests.cpp
     Tests/src/NodeGraphPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/HierarchyTreePanelTests.cpp
     Tests/src/AnimationPanelTests.cpp
     Tests/src/AudioPanelTests.cpp
@@ -317,6 +320,7 @@ add_executable(kimia_tests
     Tests/src/ColorPalettePanelTests.cpp
     Tests/src/NodeGraphPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/ColorPickerPanelTests.cpp
     Tests/src/NodeEditorPanelTests.cpp
     Tests/src/ConsolePanelTests.cpp
@@ -328,6 +332,7 @@ add_executable(kimia_tests
     Tests/src/ColorPalettePanelTests.cpp
     Tests/src/NodeGraphPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/MinimapPanelTests.cpp
     Tests/src/ViewportPanelTests.cpp
     Tests/src/ToolbarPanelTests.cpp
@@ -389,6 +394,7 @@ add_executable(kimia_tests
     Tests/src/ColorPalettePanelTests.cpp
     Tests/src/NodeGraphPanelTests.cpp
     Tests/src/InspectorPanelTests.cpp
+    Tests/src/HierarchyPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -608,6 +614,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ColorPalettePanel.cpp
     Engine/EditorUI/src/NodeGraphPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/ObjectTree.cpp
     Engine/EditorUI/src/PropertySheet.cpp
     Engine/EditorUI/src/CameraPanel.cpp
@@ -617,6 +624,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/TooltipPanel.cpp
     Engine/EditorUI/src/VersionPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/StatusBar.cpp
     Engine/EditorUI/src/ContextMenuPanel.cpp
     Engine/EditorUI/src/ProfilerPanel.cpp
@@ -639,6 +647,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ColorPalettePanel.cpp
     Engine/EditorUI/src/NodeGraphPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/HierarchyTreePanel.cpp
     Engine/EditorUI/src/AnimationPanel.cpp
     Engine/EditorUI/src/AudioPanel.cpp
@@ -661,6 +670,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ColorPalettePanel.cpp
     Engine/EditorUI/src/NodeGraphPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/ColorPickerPanel.cpp
     Engine/EditorUI/src/NodeEditorPanel.cpp
     Engine/EditorUI/src/ConsolePanel.cpp
@@ -672,6 +682,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ColorPalettePanel.cpp
     Engine/EditorUI/src/NodeGraphPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/MinimapPanel.cpp
     Engine/EditorUI/src/ViewportPanel.cpp
     Engine/EditorUI/src/ToolbarPanel.cpp
@@ -733,6 +744,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ColorPalettePanel.cpp
     Engine/EditorUI/src/NodeGraphPanel.cpp
     Engine/EditorUI/src/InspectorPanel.cpp
+    Engine/EditorUI/src/HierarchyPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
