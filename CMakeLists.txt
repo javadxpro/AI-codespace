@@ -263,6 +263,7 @@ add_executable(kimia_tests
     Tests/src/ProfilerPanelTests.cpp
     Tests/src/SearchPanelTests.cpp
     Tests/src/HierarchyTreePanelTests.cpp
+    Tests/src/AnimationPanelTests.cpp
     Tests/src/EditorUIIntegrationTests.cpp
     Tests/src/RasterBridgeTests.cpp
     Tests/src/NativePainterTests.cpp
@@ -481,6 +482,7 @@ add_library(kimia_editor_ui STATIC
     Engine/EditorUI/src/ProfilerPanel.cpp
     Engine/EditorUI/src/SearchPanel.cpp
     Engine/EditorUI/src/HierarchyTreePanel.cpp
+    Engine/EditorUI/src/AnimationPanel.cpp
     Engine/EditorUI/src/Gizmo.cpp
 )
 target_include_directories(kimia_editor_ui PUBLIC Engine/EditorUI/include)
