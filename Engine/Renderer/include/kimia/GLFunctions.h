@@ -65,6 +65,10 @@ enum : GLenum {
   GL_RENDERER = 0x1F01,
   GL_VERSION = 0x1F02,
   GL_SHADING_LANGUAGE_VERSION = 0x8B8C,
+  GL_TRUE = 1,
+  GL_FALSE = 0,
+  GL_STREAM_DRAW = 0x88E0,
+  GL_DYNAMIC_DRAW = 0x88E8,
 };
 
 using GLGetProcFn = void* (*)(const char* name);
@@ -158,6 +162,10 @@ public:
   void uniform3f(GLint location, GLfloat x, GLfloat y, GLfloat z) const {
     if (uniform3fFn != nullptr) uniform3fFn(location, x, y, z);
   }
+  void uniform2f(GLint location, GLfloat x, GLfloat y) const {
+    // No GL2 uniform2f on this loader; piggyback on uniform3f with z=0.
+    if (uniform3fFn != nullptr) uniform3fFn(location, x, y, 0.0f);
+  }
   void uniform1f(GLint location, GLfloat x) const {
     if (uniform1fFn != nullptr) uniform1fFn(location, x);
   }
@@ -217,6 +225,9 @@ public:
   }
   void drawElements(GLenum mode, GLsizei count, GLenum type, const void* indices) const {
     if (drawElementsFn != nullptr) drawElementsFn(mode, count, type, indices);
+  }
+  void drawArrays(GLenum mode, GLint first, GLsizei count) const {
+    if (drawArraysFn != nullptr) drawArraysFn(mode, first, count);
   }
   void readPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels) const {
     if (readPixelsFn != nullptr) readPixelsFn(x, y, width, height, format, type, pixels);
@@ -300,6 +311,7 @@ private:
   void (*cullFaceFn)(GLenum) = nullptr;
   void (*frontFaceFn)(GLenum) = nullptr;
   void (*drawElementsFn)(GLenum, GLsizei, GLenum, const void*) = nullptr;
+  void (*drawArraysFn)(GLenum, GLint, GLsizei) = nullptr;
   void (*readPixelsFn)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) = nullptr;
   void (*getIntegervFn)(GLenum, GLint*) = nullptr;
   const GLubyte* (*getStringFn)(GLenum) = nullptr;

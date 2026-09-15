@@ -121,6 +121,7 @@ bool GLFunctions::load(GLGetProcFn proc) {
   WIRE(cullFace, glCullFace);
   WIRE(frontFace, glFrontFace);
   WIRE(drawElements, glDrawElements);
+  WIRE(drawArrays, glDrawArrays);
   WIRE(readPixels, glReadPixels);
   WIRE(getIntegerv, glGetIntegerv);
   WIRE(getString, glGetString);
@@ -207,6 +208,7 @@ bool GLFunctions::load(GLGetProcFn proc) {
   LOAD(cullFace);
   LOAD(frontFace);
   LOAD(drawElements);
+  LOAD(drawArrays);
   LOAD(readPixels);
   LOAD(getIntegerv);
   LOAD(getString);
@@ -286,6 +288,7 @@ void GLFunctions::unload() {
   cullFaceFn = nullptr;
   frontFaceFn = nullptr;
   drawElementsFn = nullptr;
+  drawArraysFn = nullptr;
   readPixelsFn = nullptr;
   getIntegervFn = nullptr;
   getStringFn = nullptr;
